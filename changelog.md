@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Redesigned the interface as an original amber-and-ink “local git desk” with a file index, review surface, and action ledger.
+
 ## 0.1.0
 
 - Added a localhost-only Go server that opens a vanilla JavaScript UI in the browser.

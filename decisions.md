@@ -18,6 +18,8 @@
 
 ## UI
 
+- Visual direction: a private amber-and-ink “local git desk,” not a clone of another tool.
+- Layout vocabulary: file index, review surface, and action ledger.
 - Vanilla JavaScript, no build step.
 - Configurable panel visibility, size, and order are planned; v1 has panel toggles and a global config file.
 - Fixed familiar editor shortcuts.

@@ -14,7 +14,7 @@ Open the printed local URL in a browser. The app starts in the current Terminal 
 
 - file tree with path filter
 - multi-file tabs with in-memory unsaved edits
-- read-only file view and plain textarea editing
+- read-only file view and plain textarea editingsdasda 
 - working-tree, staged, and ref-range diffs
 - file create, rename, delete
 - stage, unstage, discard

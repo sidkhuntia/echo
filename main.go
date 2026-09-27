@@ -48,6 +48,7 @@ type Stash struct {
 
 type GitStatus struct {
 	Git      bool              `json:"git"`
+	Root     string            `json:"root"`
 	Branch   string            `json:"branch"`
 	Statuses map[string]string `json:"statuses"`
 	Staged   map[string]bool   `json:"staged"`
@@ -255,7 +256,7 @@ func (a *App) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) gitStatus() GitStatus {
-	status := GitStatus{Git: true, Statuses: map[string]string{}, Staged: map[string]bool{}}
+	status := GitStatus{Git: true, Root: a.root, Statuses: map[string]string{}, Staged: map[string]bool{}}
 	if _, err := exec.LookPath("git"); err != nil {
 		status.Git = false
 		status.Error = "git not found"

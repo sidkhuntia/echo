@@ -56,6 +56,7 @@ function renderTabs() {
 function renderEditor() {
   const tab = state.tabs[state.active]
   $('#file-path').textContent = tab?.path || ''
+  $('#stage-count').textContent = tab ? `${tab.content.split('\n').length} lines` : ''
   $('#editor').value = tab?.content || ''
   $('#highlight').textContent = tab?.content || ''
   $('#editor').classList.toggle('active', tab?.mode === 'edit')
@@ -80,9 +81,10 @@ async function saveFile() {
 function renderGit() {
   const s = state.status || {}
   $('#branch').textContent = s.branch || 'not a git repo'
-  $('#repo').textContent = location.pathname
+  $('#repo').textContent = s.root || location.pathname
   $('#branch-select').innerHTML = (s.branches || []).map(b => `<option>${esc(b)}</option>`).join('')
   const changes = Object.entries(s.statuses || {})
+  $('#change-count').textContent = changes.length ? `${changes.length} open` : 'clean'
   $('#changes').innerHTML = changes.length ? changes.map(([p, code]) => `<div class="change" data-path="${esc(p)}"><span class="${code[0] !== ' ' && code[0] !== '?' ? 'staged' : 'code'}">${esc(code)}</span><code>${esc(p)}</code><button data-act="stage">${code[0] !== ' ' && code[0] !== '?' ? 'unstage' : 'stage'}</button><button data-act="discard">discard</button></div>`).join('') : '<div class="list-row"><span>clean</span></div>'
   $('#changes').querySelectorAll('.change').forEach(row => {
     row.querySelector('[data-act="stage"]').onclick = e => { e.stopPropagation(); git(row.dataset.path, (state.status.statuses[row.dataset.path] || ' ')[0] !== ' ' && (state.status.statuses[row.dataset.path] || ' ')[0] !== '?' ? 'unstage' : 'add') }
