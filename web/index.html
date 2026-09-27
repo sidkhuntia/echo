@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>echo</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">echo</div>
+  <div id="repo" class="repo"></div>
+  <div class="spacer"></div>
+  <button id="tree-toggle" title="Toggle file tree">Tree</button>
+  <button id="git-toggle" title="Toggle Git panel">Git</button>
+  <button id="settings" title="Settings">Settings</button>
+</header>
+<main class="workspace">
+  <aside id="tree-panel" class="panel tree-panel">
+    <div class="panel-head"><span>Files</span><span class="row"><button id="new-file" title="Create file">New</button><button id="rename-file" title="Rename selected">Rename</button><button id="delete-file" title="Delete selected">Delete</button><button id="refresh" title="Refresh">Refresh</button></span></div>
+    <input id="file-filter" class="filter" placeholder="Filter paths">
+    <div id="tree" class="tree"></div>
+  </aside>
+  <section class="panel center-panel">
+    <div class="panel-head tabs-head">
+      <div class="tabs" id="tabs"></div>
+      <div class="head-actions">
+        <button id="edit-toggle">Edit</button>
+        <button id="save" disabled>Save</button>
+        <button id="diff-toggle">Diff</button>
+      </div>
+    </div>
+    <div class="subbar">
+      <select id="diff-scope">
+        <option value="worktree">Working tree</option>
+        <option value="staged">Staged</option>
+        <option value="range">Range</option>
+      </select>
+      <input id="diff-from" class="ref" placeholder="from ref">
+      <input id="diff-to" class="ref" placeholder="to ref">
+      <label class="check"><input id="ignore-ws" type="checkbox"> ignore whitespace</label>
+      <span id="file-path" class="file-path"></span>
+    </div>
+    <pre id="highlight" class="code-view"></pre>
+    <textarea id="editor" class="editor" spellcheck="false" wrap="off"></textarea>
+    <pre id="diff" class="diff-view"></pre>
+  </section>
+  <aside id="git-panel" class="panel git-panel">
+    <div class="panel-head"><span>Git</span><span id="branch" class="branch"></span></div>
+    <div class="git-scroll">
+      <div class="commit-box">
+        <textarea id="commit-message" placeholder="Commit message"></textarea>
+        <div class="row"><button id="commit">Commit</button><button id="amend">Amend</button></div>
+      </div>
+      <div class="section"><div class="section-head">Changes</div><div id="changes"></div></div>
+      <div class="section"><div class="section-head">Branches</div><div class="row"><select id="branch-select"></select><button id="switch-branch">Switch</button></div><div class="row"><input id="new-branch" placeholder="new branch"><button id="create-branch">Create</button></div><div class="row"><button id="pull">Pull</button><button id="push">Push</button><button id="merge">Merge</button><button id="rebase">Rebase</button></div></div>
+      <div class="section"><div class="section-head">Stashes</div><div class="row"><input id="stash-message" placeholder="stash message"><button id="stash-create">Create</button></div><div id="stashes"></div></div>
+      <div class="section"><div class="section-head">History</div><div id="history"></div></div>
+    </div>
+  </aside>
+</main>
+<div id="status" class="status"></div>
+<div id="help" class="modal" hidden><div class="modal-card"><button class="close" data-close>×</button><h2>Shortcuts</h2><pre>⌘K / ⌘P  file search
+⌘B        toggle tree
+⌘J        toggle Git panel
+⌘D        toggle diff
+⌘S        save file
+?          this help
+Esc        close</pre></div></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# Local build output
+echo
+
+# Editor and OS state
+.vscode/
+.DS_Store
