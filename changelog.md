@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Redesigned the interface as an original amber-and-ink “local git desk” with a file index, review surface, and action ledger.
+- Expanded `decisions.md` into a complete decision log covering product, architecture, Git, editor, UI, security, defaults, and deferrals.
 
 ## 0.1.0
 
