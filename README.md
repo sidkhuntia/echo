@@ -1,6 +1,6 @@
 # echo
 
-A small local-first Git review and editing app for macOS.
+A small local-first proof desk for reviewing code written by coding agents, on macOS.
 
 ## Run
 
@@ -14,8 +14,11 @@ Open the printed local URL in a browser. The app starts in the current Terminal 
 
 - file tree with path filter
 - multi-file tabs with in-memory unsaved edits
-- read-only file view and plain textarea editingsdasda 
-- working-tree, staged, and ref-range diffs
+- read-only file view and plain textarea editing
+- review queue of changed files with proofed marks that reset when a file changes again
+- per-file diffs including untracked files; all-changes, unstaged, staged, ref-range, and single-commit scopes
+- saves never overwrite a file an agent changed after you opened it
+- keys: `n`/`p` file, `j`/`k` hunk, `x` proof, `o` open, `⌘K` find a file
 - file create, rename, delete
 - stage, unstage, discard
 - commit, amend, rebase, pull, push, branch create/switch, merge

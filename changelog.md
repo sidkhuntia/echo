@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Reframed echo as a proof desk for reviewing code written by coding agents.
+- Added a review queue of changed files with +/− counts, "proofed" marks that reset when a file changes again, and a proofed tally in the masthead.
+- Diffs now render per file with line numbers, sticky headers, folding, and per-file open/stage/discard; lockfiles and very large diffs start folded.
+- Added an "all changes" scope (working tree vs `HEAD`) as the default, and untracked files now appear as new-file diffs.
+- Clicking a commit in history shows its diff.
+- Added `n`/`p` file, `j`/`k` hunk, `x` proof, and `o` open shortcuts, and a fuzzy `⌘K` file finder.
+- Saving refuses to overwrite a file that changed on disk since it was opened; clean tabs reload on external edits and dirty tabs show a conflict banner.
+- Discard now removes untracked files too.
+- Security: reject foreign `Host`/`Origin` headers and non-JSON writes, and reject refs that look like Git options.
+- The SSE stream only sends status when it changed, and Git runs without optional locks.
+- Fixed: tree status badges, `?` opening help while typing, rebase reading the diff "from" box, `⌘↵` commit, and tabs that could not be closed.
+- Added Go tests for path safety, ref validation, the request guard, status/diff parsing, stale saves, and discard.
+- Redesigned the interface with a dark ink and light paper theme.
 - Redesigned the interface as an original amber-and-ink “local git desk” with a file index, review surface, and action ledger.
 - Expanded `decisions.md` into a complete decision log covering product, architecture, Git, editor, UI, security, defaults, and deferrals.
 

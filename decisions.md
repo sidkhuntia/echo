@@ -17,7 +17,9 @@ Status meanings:
 - **Accepted:** the product is for personal daily use, not a team platform.
 - **Accepted:** echo is local-first. It operates on one repository at a time.
 - **Accepted:** the tool should feel like a focused desk, not a general-purpose IDE clone.
-- **Default:** the tool focuses on the review loop instead of AI agents, pull-request hosting, or collaboration.
+- **Accepted:** echo's main job is reviewing code written by coding agents: seeing what changed, proofing it file by file, and accepting or rejecting it.
+- **Accepted:** echo reviews agent output; it does not launch, drive, or talk to agents.
+- **Default:** the tool focuses on the review loop instead of pull-request hosting or collaboration.
 
 ## 2. Platform and distribution
 
@@ -102,10 +104,17 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** support ignoring whitespace when comparing changes.
 - **Accepted:** support working-tree, staged, branch/base, and arbitrary ref-range views.
 - **Default:** the v1 API uses `git diff --unified=3`.
+- **Accepted:** the default diff scope is "all changes": the working tree against `HEAD` (or the empty tree before the first commit), so staging a file never hides it from review.
+- **Accepted:** untracked files appear in working-tree diffs as new-file diffs, because agents create files constantly.
+- **Default:** untracked files larger than 1 MB are listed without their contents.
+- **Default:** diffs use `--no-renames`, so every diff entry maps to exactly one path in the change list.
+- **Default:** the review surface renders one section per file with old/new line numbers and a sticky file header.
+- **Default:** lockfiles, generated files, and files with more than 1500 diff lines start folded.
+- **Accepted:** clicking a commit in history shows that commit's diff (`git show`, first parent for merges).
 - **Default:** the v1 UI renders a unified line-based diff.
 - **Default:** the v1 UI supports the ignore-whitespace option using `--ignore-all-space`.
 - **Default:** range diffs use Git ref syntax such as `from..to`.
-- **Default:** the v1 UI includes working-tree, staged, and range scope selectors.
+- **Default:** the UI includes all-changes, unstaged, staged, ref-range, and single-commit scope selectors.
 - **Deferred:** split diff rendering.
 - **Deferred:** word-level diff rendering.
 
@@ -122,6 +131,8 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** file mutations should be available from a context menu and toolbar.
 - **Default:** the v1 file tree is a filtered, path-sorted list with indentation implied by the path.
 - **Default:** the v1 file index filters paths as the user types.
+- **Accepted:** the file index has two views: a review queue of changed files (the default) and all files.
+- **Accepted:** `⌘K`/`⌘P` open a fuzzy path finder instead of a browser prompt.
 - **Default:** the initial implementation skips `.git`, hidden directories, `node_modules`, `dist`, `build`, `.cache`, and `.next` from the tree.
 - **Default:** file create, rename, and delete use the local filesystem directly in the first version; Git-aware rename behavior can be tightened later.
 - **Default:** file delete removes the selected file without a confirmation dialog.
@@ -144,6 +155,10 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** the interface should behave like a normal editor for basic navigation and file viewing.
 - **Default:** the read-only file surface currently shows plain text until LSP highlighting is implemented.
 - **Default:** file changes are held in browser memory and marked as dirty in the tab.
+- **Accepted:** saving sends the hash of the content that was opened; the server refuses the save with `409` if the file changed on disk since, so an agent's edit is never silently overwritten.
+- **Accepted:** clean tabs reload automatically when their file changes on disk; dirty tabs show a banner offering the disk version or an explicit overwrite.
+- **Default:** tabs can be closed; closing a dirty tab asks first because the unsaved edits exist nowhere else.
+- **Default:** binary files are detected (NUL bytes in the first 8000 bytes) and not shown or saved.
 - **Deferred:** LSP syntax highlighting.
 - **Deferred:** split editor panes.
 - **Deferred:** editor undo/redo features beyond native textarea behavior.
@@ -177,6 +192,15 @@ The following Git capabilities were accepted as part of the product direction:
 - **Deferred:** split tab groups.
 - **Deferred:** recent-repository list.
 
+## 9a. Review marks
+
+- **Accepted:** each changed file can be marked "proofed", like GitHub's "Viewed".
+- **Accepted:** a mark stores the file's content hash; if the file changes afterwards, the mark turns into "changed since proofed" and the file returns to the queue.
+- **Accepted:** the masthead shows how many changed files are proofed.
+- **Default:** marks are stored in browser `localStorage`, keyed by workspace root, and pruned when a file leaves the change set.
+- **Default:** marking a file with `x` folds it and moves to the next unproofed file.
+- **Default:** marks apply to the all-changes, unstaged, and staged scopes; commit and range diffs are read-only.
+
 ## 10. Conflicts
 
 - **Accepted:** merge and rebase conflicts should be visible while reviewing.
@@ -207,7 +231,10 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** detect filesystem and Git changes made from Terminal or another editor.
 - **Accepted:** do not require a manual refresh for normal external Git operations.
 - **Accepted:** use Server-Sent Events for live updates.
-- **Default:** SSE broadcasts Git status updates every two seconds.
+- **Default:** the server polls Git status every two seconds and only sends an SSE event when the status changed.
+- **Default:** status includes each changed file's content hash, cached by size and mtime, so edits to an already-modified file are still detected.
+- **Default:** every Git command runs with `--no-optional-locks`, so echo's polling never contends for `index.lock` with an agent's Git commands.
+- **Default:** Git commands run with `GIT_TERMINAL_PROMPT=0`, so a push that needs credentials fails instead of hanging.
 - **Default:** the implementation keeps the refresh loop deliberately simple rather than using native filesystem event libraries.
 - **Default:** the UI also performs an explicit refresh after app actions.
 - **Default:** status updates include the working-tree status map, staged state, branch, recent commits, branches, and stashes.
@@ -261,6 +288,8 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** no remote font service is required at runtime.
 - **Default:** subtle grid lines, grain, and paper-like contrast provide texture without a heavy design system.
 - **Default:** the header carries the workspace identity, branch, and panel toggles.
+- **Default:** the review concept is a "proof desk": files are proofed like galley proofs, with a stamp as the review mark and a ruled tally for progress.
+- **Default:** the ink palette follows a dark OS theme and a warm paper palette follows a light one.
 - **Default:** the bottom console shows status and keyboard hints.
 
 ## 17. Safety and security
@@ -273,6 +302,9 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** the server rejects paths that escape the repository root.
 - **Default:** file reads and writes are constrained to the current workspace.
 - **Default:** the server binds to localhost only.
+- **Accepted:** the server rejects requests whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding), whose `Origin` is another site, and writes that are not `application/json` (cross-site form posts).
+- **Accepted:** user-supplied refs and branch names that start with `-` or contain whitespace or control characters are rejected, so they cannot become Git options.
+- **Default:** discard deletes untracked files (`git clean -f -- <path>`) and restores tracked ones, so agent-created files can be rejected.
 - **Default:** no remote host flag is implemented.
 - **Default:** no embedded credential store exists.
 - **Default:** no telemetry or analytics data is collected.
@@ -290,7 +322,7 @@ These are YAGNI decisions for v1:
 - No TypeScript build pipeline.
 - No multi-repository workspace.
 - No pull-request hosting or GitHub API integration.
-- No AI agent integration.
+- No AI agent integration (echo reviews agent output; it does not run agents).
 - No collaboration or presence features.
 - No theme marketplace.
 - No plugin system.
@@ -298,6 +330,7 @@ These are YAGNI decisions for v1:
 - No conflict-resolution workflow UI.
 - No virtualized editor.
 - No content search.
+- No database for review marks; they live in browser storage.
 - No full LSP feature set.
 - No per-repository configuration.
 - No closed-tab restore.

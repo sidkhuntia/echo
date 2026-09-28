@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -22,6 +27,12 @@ import (
 //go:embed web
 var webFS embed.FS
 
+// emptyTree is Git's well-known empty tree, used as the diff base before the first commit.
+const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+// maxUntrackedDiff caps the size of an untracked file rendered as a new-file diff.
+const maxUntrackedDiff = 1 << 20
+
 type Config struct {
 	Vim        bool           `json:"vim"`
 	DiffMode   string         `json:"diffMode"`
@@ -30,9 +41,19 @@ type Config struct {
 }
 
 type App struct {
-	root string
-	cfg  Config
-	mu   sync.Mutex
+	root  string
+	hosts map[string]bool
+	cfg   Config
+	mu    sync.Mutex
+	sigs  map[string]fileSig
+}
+
+type fileSig struct {
+	mod    time.Time
+	size   int64
+	hash   string
+	lines  int
+	binary bool
 }
 
 type Commit struct {
@@ -46,17 +67,25 @@ type Stash struct {
 	Subject string `json:"subject"`
 }
 
+type Change struct {
+	Path    string `json:"path"`
+	Code    string `json:"code"`
+	Staged  bool   `json:"staged"`
+	Added   int    `json:"added"`
+	Deleted int    `json:"deleted"`
+	Binary  bool   `json:"binary,omitempty"`
+	Hash    string `json:"hash"`
+}
+
 type GitStatus struct {
-	Git      bool              `json:"git"`
-	Root     string            `json:"root"`
-	Branch   string            `json:"branch"`
-	Statuses map[string]string `json:"statuses"`
-	Staged   map[string]bool   `json:"staged"`
-	Files    []string          `json:"files"`
-	Commits  []Commit          `json:"commits"`
-	Branches []string          `json:"branches"`
-	Stashes  []Stash           `json:"stashes"`
-	Error    string            `json:"error,omitempty"`
+	Git      bool     `json:"git"`
+	Root     string   `json:"root"`
+	Branch   string   `json:"branch"`
+	Changes  []Change `json:"changes"`
+	Commits  []Commit `json:"commits"`
+	Branches []string `json:"branches"`
+	Stashes  []Stash  `json:"stashes"`
+	Error    string   `json:"error,omitempty"`
 }
 
 type TreeNode struct {
@@ -64,6 +93,15 @@ type TreeNode struct {
 	Path     string     `json:"path"`
 	Dir      bool       `json:"dir"`
 	Children []TreeNode `json:"children,omitempty"`
+}
+
+type gitRequest struct {
+	Action   string   `json:"action"`
+	Paths    []string `json:"paths"`
+	Message  string   `json:"message"`
+	From     string   `json:"from"`
+	To       string   `json:"to"`
+	StashRef string   `json:"stashRef"`
 }
 
 func main() {
@@ -83,9 +121,9 @@ func main() {
 		fatal(err)
 	}
 
-	app := &App{root: root, cfg: loadConfig()}
+	app := newApp(root, *port)
 	addr := "127.0.0.1:" + strconv.Itoa(*port)
-	ln, err := listen(addr)
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		fatal(err)
 	}
@@ -100,8 +138,14 @@ func main() {
 	}
 }
 
-func listen(addr string) (net.Listener, error) {
-	return net.Listen("tcp", addr)
+func newApp(root string, port int) *App {
+	p := strconv.Itoa(port)
+	return &App{
+		root:  root,
+		cfg:   loadConfig(),
+		sigs:  map[string]fileSig{},
+		hosts: map[string]bool{"127.0.0.1:" + p: true, "localhost:" + p: true},
+	}
 }
 
 func (a *App) routes() http.Handler {
@@ -119,7 +163,29 @@ func (a *App) routes() http.Handler {
 		panic(err)
 	}
 	mux.Handle("/", http.FileServer(http.FS(assets)))
-	return mux
+	return a.guard(mux)
+}
+
+// guard only admits requests from echo's own page: a foreign Host means DNS rebinding,
+// a foreign Origin means another site, and a non-JSON write is a CSRF-style simple request.
+func (a *App) guard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !a.hosts[r.Host] {
+			http.Error(w, "forbidden host", http.StatusForbidden)
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
+			http.Error(w, "forbidden origin", http.StatusForbidden)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/json" {
+				http.Error(w, "content type must be application/json", http.StatusUnsupportedMediaType)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (a *App) handleTree(w http.ResponseWriter, r *http.Request) {
@@ -179,15 +245,21 @@ func (a *App) handleFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	writeJSON(w, map[string]string{"path": filepath.ToSlash(rel), "content": string(data)})
+	sig, _ := readSig(bytes.NewReader(data))
+	content := string(data)
+	if sig.binary {
+		content = ""
+	}
+	writeJSON(w, map[string]any{"path": filepath.ToSlash(rel), "content": content, "hash": sig.hash, "binary": sig.binary})
 }
 
 func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Action  string `json:"action"`
-		Path    string `json:"path"`
-		NewPath string `json:"newPath"`
-		Content string `json:"content"`
+		Action   string `json:"action"`
+		Path     string `json:"path"`
+		NewPath  string `json:"newPath"`
+		Content  string `json:"content"`
+		BaseHash string `json:"baseHash"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -200,10 +272,25 @@ func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 	}
 	switch req.Action {
 	case "", "save":
+		// A base hash means "only save if the file is still what I opened", so an
+		// agent's edit made while the tab was open is never silently overwritten.
+		if req.BaseHash != "" {
+			current, err := os.ReadFile(path)
+			if errors.Is(err, fs.ErrNotExist) {
+				http.Error(w, "file was deleted on disk since it was opened", http.StatusConflict)
+				return
+			}
+			if err == nil && hashBytes(current) != req.BaseHash {
+				http.Error(w, "file changed on disk since it was opened", http.StatusConflict)
+				return
+			}
+		}
 		if err := os.WriteFile(path, []byte(req.Content), 0o644); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		writeJSON(w, map[string]any{"ok": true, "hash": hashBytes([]byte(req.Content))})
+		return
 	case "create":
 		if req.NewPath == "" {
 			req.NewPath = req.Path
@@ -256,39 +343,47 @@ func (a *App) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) gitStatus() GitStatus {
-	status := GitStatus{Git: true, Root: a.root, Statuses: map[string]string{}, Staged: map[string]bool{}}
+	status := GitStatus{Git: true, Root: a.root, Changes: []Change{}}
 	if _, err := exec.LookPath("git"); err != nil {
 		status.Git = false
 		status.Error = "git not found"
 		return status
 	}
-	if out, err := a.git("branch", "--show-current"); err == nil {
-		status.Branch = strings.TrimSpace(out)
-	} else {
+	out, err := a.git("branch", "--show-current")
+	if err != nil {
 		status.Git = false
 		status.Error = err.Error()
 		return status
 	}
-	out, err := a.git("status", "--porcelain=v1", "--untracked-files=all")
+	status.Branch = strings.TrimSpace(out)
+	if status.Branch == "" {
+		if head, err := a.git("rev-parse", "--short", "HEAD"); err == nil {
+			status.Branch = "detached@" + strings.TrimSpace(head)
+		}
+	}
+	out, err = a.git("status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all")
 	if err != nil {
 		status.Error = err.Error()
 		return status
 	}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if len(line) < 4 {
-			continue
-		}
-		code := line[:2]
-		path := line[3:]
-		if idx := strings.Index(path, " -> "); idx >= 0 {
-			path = path[idx+4:]
-		}
-		path = strings.TrimSpace(path)
-		status.Statuses[path] = code
-		status.Staged[path] = code[0] != ' ' && code[0] != '?'
-		status.Files = append(status.Files, path)
+	status.Changes = parsePorcelain(out)
+	stats := map[string]Change{}
+	if out, err := a.git("diff", "--numstat", "-z", "--no-renames", a.base(), "--"); err == nil {
+		stats = parseNumstat(out)
 	}
-	sort.Strings(status.Files)
+	for i := range status.Changes {
+		c := &status.Changes[i]
+		sig, ok := a.sig(c.Path)
+		c.Hash = "deleted"
+		if ok {
+			c.Hash = sig.hash
+		}
+		if s, found := stats[c.Path]; found {
+			c.Added, c.Deleted, c.Binary = s.Added, s.Deleted, s.Binary
+		} else if c.Code == "??" && ok {
+			c.Added, c.Binary = sig.lines, sig.binary
+		}
+	}
 	if out, err := a.git("log", "-n", "100", "--format=%h%x09%s%x09%an"); err == nil {
 		status.Commits = parseCommits(out)
 	}
@@ -301,40 +396,113 @@ func (a *App) gitStatus() GitStatus {
 	return status
 }
 
-func (a *App) handleGit(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Action   string   `json:"action"`
-		Paths    []string `json:"paths"`
-		Message  string   `json:"message"`
-		From     string   `json:"from"`
-		To       string   `json:"to"`
-		StashRef string   `json:"stashRef"`
+// base is the tree that "all changes" compares against: HEAD, or the empty tree before the first commit.
+func (a *App) base() string {
+	if _, err := a.git("rev-parse", "--verify", "-q", "HEAD"); err != nil {
+		return emptyTree
 	}
+	return "HEAD"
+}
+
+// sig returns a workspace file's content hash, re-reading it only when size or mtime change.
+func (a *App) sig(rel string) (fileSig, bool) {
+	path, err := a.safePath(rel)
+	if err != nil {
+		return fileSig{}, false
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return fileSig{}, false
+	}
+	a.mu.Lock()
+	cached, ok := a.sigs[rel]
+	a.mu.Unlock()
+	if ok && cached.size == info.Size() && cached.mod.Equal(info.ModTime()) {
+		return cached, true
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return fileSig{}, false
+	}
+	defer f.Close()
+	sig, err := readSig(f)
+	if err != nil {
+		return fileSig{}, false
+	}
+	sig.mod, sig.size = info.ModTime(), info.Size()
+	a.mu.Lock()
+	a.sigs[rel] = sig
+	a.mu.Unlock()
+	return sig, true
+}
+
+// readSig hashes content and counts its lines the way git does; NUL bytes in the first 8000 bytes mean binary.
+func readSig(r io.Reader) (fileSig, error) {
+	var sig fileSig
+	h := sha256.New()
+	buf := make([]byte, 32<<10)
+	var read int
+	var last byte
+	for {
+		n, err := r.Read(buf)
+		chunk := buf[:n]
+		h.Write(chunk)
+		if read < 8000 && bytes.IndexByte(chunk[:min(n, 8000-read)], 0) >= 0 {
+			sig.binary = true
+		}
+		sig.lines += bytes.Count(chunk, []byte{'\n'})
+		if n > 0 {
+			last = chunk[n-1]
+		}
+		read += n
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return sig, err
+		}
+	}
+	if read > 0 && last != '\n' {
+		sig.lines++
+	}
+	if sig.binary {
+		sig.lines = 0
+	}
+	sig.hash = hex.EncodeToString(h.Sum(nil))[:16]
+	return sig, nil
+}
+
+func hashBytes(b []byte) string {
+	sig, _ := readSig(bytes.NewReader(b))
+	return sig.hash
+}
+
+func (a *App) handleGit(w http.ResponseWriter, r *http.Request) {
+	var req gitRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	args, err := a.gitArgs(req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	var out string
+	var err error
+	if req.Action == "discard" {
+		out, err = a.discard(req.Paths)
+	} else {
+		args, argErr := a.gitArgs(req)
+		if argErr != nil {
+			http.Error(w, argErr.Error(), http.StatusBadRequest)
+			return
+		}
+		out, err = a.gitCombined(args...)
 	}
-	out, err := a.git(args...)
 	if err != nil {
-		http.Error(w, strings.TrimSpace(out+err.Error()), http.StatusBadGateway)
+		http.Error(w, strings.TrimSpace(out+"\n"+err.Error()), http.StatusBadGateway)
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "output": out})
 }
 
-func (a *App) gitArgs(req struct {
-	Action   string   `json:"action"`
-	Paths    []string `json:"paths"`
-	Message  string   `json:"message"`
-	From     string   `json:"from"`
-	To       string   `json:"to"`
-	StashRef string   `json:"stashRef"`
-}) ([]string, error) {
+func (a *App) gitArgs(req gitRequest) ([]string, error) {
 	paths := req.Paths
 	for i := range paths {
 		if _, err := a.safePath(paths[i]); err != nil {
@@ -346,8 +514,6 @@ func (a *App) gitArgs(req struct {
 		return append([]string{"add", "--"}, paths...), nil
 	case "unstage":
 		return append([]string{"restore", "--staged", "--"}, paths...), nil
-	case "discard":
-		return append([]string{"restore", "--staged", "--worktree", "--"}, paths...), nil
 	case "commit":
 		if strings.TrimSpace(req.Message) == "" {
 			return nil, errors.New("commit message required")
@@ -358,26 +524,17 @@ func (a *App) gitArgs(req struct {
 			return nil, errors.New("commit message required")
 		}
 		return []string{"commit", "--amend", "-m", req.Message}, nil
-	case "rebase":
-		if req.From == "" {
-			return nil, errors.New("rebase target required")
+	case "rebase", "merge", "branch:create", "branch:switch":
+		if err := validRef(req.From); err != nil {
+			return nil, err
 		}
-		return []string{"rebase", req.From}, nil
-	case "branch:create":
-		if req.From == "" {
-			return nil, errors.New("branch name required")
+		switch req.Action {
+		case "branch:create":
+			return []string{"switch", "-c", req.From}, nil
+		case "branch:switch":
+			return []string{"switch", req.From}, nil
 		}
-		return []string{"switch", "-c", req.From}, nil
-	case "branch:switch":
-		if req.From == "" {
-			return nil, errors.New("branch name required")
-		}
-		return []string{"switch", req.From}, nil
-	case "merge":
-		if req.From == "" {
-			return nil, errors.New("merge target required")
-		}
-		return []string{"merge", req.From}, nil
+		return []string{req.Action, req.From}, nil
 	case "pull":
 		return []string{"pull"}, nil
 	case "push":
@@ -387,50 +544,146 @@ func (a *App) gitArgs(req struct {
 			req.Message = "echo stash"
 		}
 		return []string{"stash", "push", "-u", "-m", req.Message}, nil
-	case "stash:apply":
-		if req.StashRef == "" {
-			return nil, errors.New("stash ref required")
+	case "stash:apply", "stash:pop", "stash:drop":
+		if err := validRef(req.StashRef); err != nil {
+			return nil, err
 		}
-		return []string{"stash", "apply", req.StashRef}, nil
-	case "stash:pop":
-		if req.StashRef == "" {
-			return nil, errors.New("stash ref required")
-		}
-		return []string{"stash", "pop", req.StashRef}, nil
-	case "stash:drop":
-		if req.StashRef == "" {
-			return nil, errors.New("stash ref required")
-		}
-		return []string{"stash", "drop", req.StashRef}, nil
+		return []string{"stash", strings.TrimPrefix(req.Action, "stash:"), req.StashRef}, nil
 	default:
 		return nil, fmt.Errorf("unknown git action: %s", req.Action)
 	}
 }
 
+// validRef keeps user-typed refs from being read as git options or split into extra words.
+func validRef(ref string) error {
+	if ref == "" {
+		return errors.New("ref required")
+	}
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("invalid ref %q: refs cannot start with '-'", ref)
+	}
+	for _, r := range ref {
+		if r <= ' ' || r == 0x7f {
+			return fmt.Errorf("invalid ref %q: refs cannot contain spaces or control characters", ref)
+		}
+	}
+	return nil
+}
+
+// discard restores tracked paths and deletes untracked ones, so files an agent created can be rejected too.
+func (a *App) discard(paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", errors.New("paths required")
+	}
+	for _, p := range paths {
+		if _, err := a.safePath(p); err != nil {
+			return "", err
+		}
+	}
+	out, err := a.git(append([]string{"ls-files", "--others", "--exclude-standard", "-z", "--"}, paths...)...)
+	if err != nil {
+		return "", err
+	}
+	untracked := map[string]bool{}
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			untracked[p] = true
+		}
+	}
+	var tracked, extra []string
+	for _, p := range paths {
+		if untracked[filepath.ToSlash(filepath.Clean(p))] {
+			extra = append(extra, p)
+		} else {
+			tracked = append(tracked, p)
+		}
+	}
+	if len(extra) > 0 {
+		if out, err := a.gitCombined(append([]string{"clean", "-f", "-q", "--"}, extra...)...); err != nil {
+			return out, err
+		}
+	}
+	if len(tracked) > 0 {
+		return a.gitCombined(append([]string{"restore", "--staged", "--worktree", "--"}, tracked...)...)
+	}
+	return "", nil
+}
+
 func (a *App) handleDiff(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	args := []string{"diff", "--no-ext-diff", "--unified=3"}
-	if q.Get("scope") == "staged" {
-		args = append(args, "--cached")
+	flags := []string{"--no-ext-diff", "--no-color", "--no-renames", "--unified=3"}
+	if q.Get("ignoreWhitespace") == "1" {
+		flags = append(flags, "--ignore-all-space")
 	}
-	if q.Get("scope") == "range" {
+	args := append([]string{"diff"}, flags...)
+	untracked := false
+	switch q.Get("scope") {
+	case "", "head":
+		args = append(args, a.base())
+		untracked = true
+	case "worktree":
+		untracked = true
+	case "staged":
+		args = append(args, "--cached")
+	case "range":
 		from, to := q.Get("from"), q.Get("to")
-		if from == "" || to == "" {
-			http.Error(w, "from and to required", http.StatusBadRequest)
-			return
+		for _, ref := range []string{from, to} {
+			if err := validRef(ref); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 		args = append(args, from+".."+to)
+	case "commit":
+		ref := q.Get("ref")
+		if err := validRef(ref); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		args = append(append([]string{"show", "--format=", "--diff-merges=first-parent"}, flags...), ref)
+	default:
+		http.Error(w, "unknown diff scope", http.StatusBadRequest)
+		return
 	}
-	if q.Get("ignoreWhitespace") == "1" {
-		args = append(args, "--ignore-all-space")
-	}
-	args = append(args, "--")
-	out, err := a.git(args...)
+	out, err := a.git(append(args, "--")...)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	if untracked {
+		out += a.untrackedDiff()
+	}
 	writeJSON(w, map[string]string{"text": out})
+}
+
+// untrackedDiff renders untracked files as new-file diffs; plain `git diff` leaves them out.
+func (a *App) untrackedDiff() string {
+	out, err := a.git("ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, rel := range strings.Split(out, "\x00") {
+		if rel == "" {
+			continue
+		}
+		path, err := a.safePath(rel)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if info.Size() > maxUntrackedDiff {
+			fmt.Fprintf(&b, "diff --git a/%s b/%s\nnew file mode 100644\necho: %d bytes, too large to diff\n", rel, rel, info.Size())
+			continue
+		}
+		// --no-index exits 1 when the files differ, so the error is expected; stdout is the diff.
+		d, _ := a.git("diff", "--no-index", "--no-color", "--no-ext-diff", "--", "/dev/null", rel)
+		b.WriteString(d)
+	}
+	return b.String()
 }
 
 func (a *App) handleStream(w http.ResponseWriter, r *http.Request) {
@@ -444,8 +697,13 @@ func (a *App) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	var last []byte
 	send := func() {
 		data, _ := json.Marshal(a.gitStatus())
+		if bytes.Equal(data, last) {
+			return
+		}
+		last = data
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
@@ -494,10 +752,31 @@ func (a *App) safePath(rel string) (string, error) {
 	return clean, nil
 }
 
-func (a *App) git(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+// gitCmd never takes optional locks, so echo's polling cannot collide with an agent's git commands.
+func (a *App) gitCmd(args ...string) *exec.Cmd {
+	cmd := exec.Command("git", append([]string{"--no-optional-locks", "-c", "core.quotePath=false"}, args...)...)
 	cmd.Dir = a.root
-	out, err := cmd.CombinedOutput()
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	return cmd
+}
+
+// git returns stdout only, so warnings on stderr never leak into parsed output.
+func (a *App) git(args ...string) (string, error) {
+	cmd := a.gitCmd(args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			err = errors.New(msg)
+		}
+	}
+	return string(out), err
+}
+
+// gitCombined returns stdout and stderr together, for actions like push whose progress goes to stderr.
+func (a *App) gitCombined(args ...string) (string, error) {
+	out, err := a.gitCmd(args...).CombinedOutput()
 	return string(out), err
 }
 
@@ -507,6 +786,41 @@ func parseLines(s string) []string {
 		if line = strings.TrimSpace(line); line != "" {
 			out = append(out, line)
 		}
+	}
+	return out
+}
+
+// parsePorcelain reads `git status --porcelain=v1 -z` entries: "XY path", with renames followed by the old path.
+func parsePorcelain(s string) []Change {
+	out := []Change{}
+	entries := strings.Split(s, "\x00")
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		if len(entry) < 4 {
+			continue
+		}
+		code := entry[:2]
+		out = append(out, Change{Path: entry[3:], Code: code, Staged: code[0] != ' ' && code[0] != '?'})
+		if code[0] == 'R' || code[0] == 'C' {
+			i++
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
+}
+
+// parseNumstat reads `git diff --numstat -z --no-renames` records: "added\tdeleted\tpath"; binary files use "-".
+func parseNumstat(s string) map[string]Change {
+	out := map[string]Change{}
+	for _, rec := range strings.Split(s, "\x00") {
+		parts := strings.SplitN(rec, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		c := Change{Path: parts[2], Binary: parts[0] == "-"}
+		c.Added, _ = strconv.Atoi(parts[0])
+		c.Deleted, _ = strconv.Atoi(parts[1])
+		out[c.Path] = c
 	}
 	return out
 }
