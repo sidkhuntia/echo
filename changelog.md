@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Redesigned the interface as a minimal three-pane layout: a title bar with "Go to file", progress, and panel toggles; a sidebar; the Review/Files surface; and a Git panel with Commit and History tabs.
+- Added 14 open-source themes (echo ink/paper, GitHub, Solarized, Catppuccin, Rosé Pine, Nord, Gruvbox, Tokyo Night, Dracula) with a searchable theme picker; "System" follows macOS appearance, and the choice is saved in the config.
+- The sidebar's Files view is now a collapsible folder tree with change counts on folders.
+- Review wording is now plain: "Mark reviewed" and "Reviewed" with a check circle; diff headers show a five-block add/delete balance.
 - Reframed echo as a proof desk for reviewing code written by coding agents.
 - Added a review queue of changed files with +/− counts, "proofed" marks that reset when a file changes again, and a proofed tally in the masthead.
 - Diffs now render per file with line numbers, sticky headers, folding, and per-file open/stage/discard; lockfiles and very large diffs start folded.

@@ -2,7 +2,7 @@ const $ = s => document.querySelector(s)
 const state = {
   tree: [], treeStale: true, tabs: [], active: -1, selected: '',
   status: null, changes: new Map(), reviewed: {}, folded: new Map(), justStamped: '',
-  config: { vim: false }, mode: 'diff', rail: 'changes',
+  config: { vim: false, theme: 'system' }, mode: 'diff', rail: 'changes', dirOpen: new Map(),
   diffFiles: [], diffSeq: 0, current: -1, commit: '',
   palette: { items: [], sel: 0 },
 }
@@ -43,8 +43,9 @@ function codeLetter(c) {
   return y === 'U' ? 'U' : y
 }
 const codeWord = { M: 'modified', A: 'new', D: 'deleted', R: 'renamed', C: 'copied', U: 'conflict', T: 'type' }
-const codeTag = c => `<span class="code-tag ${codeLetter(c)}">${codeWord[codeLetter(c)] || c.code.trim()}</span>`
-const statHTML = c => c.binary ? '<span class="tiny">bin</span>' : `<span class="add">+${c.added}</span> <span class="del">−${c.deleted}</span>`
+const badge = (letter, word = codeWord[letter]) => `<span class="st ${letter}" title="${word || letter}">${letter}</span>`
+const codeTag = c => badge(codeLetter(c), codeWord[codeLetter(c)] || c.code.trim())
+const statHTML = c => c.binary ? '<span class="faint">bin</span>' : `${c.added ? `<span class="add">+${c.added}</span>` : ''}${c.deleted ? `<span class="del">−${c.deleted}</span>` : ''}`
 // A file is "fully staged" when something is in the index and nothing is left in the worktree.
 const fullyStaged = c => c.staged && c.code[1] === ' '
 
@@ -65,7 +66,7 @@ function reviewState(path) {
 
 function toggleReviewed(path, advance = false) {
   const c = state.changes.get(path)
-  if (!c) return setStatus('only working changes can be proofed')
+  if (!c) return setStatus('Only working-tree changes can be marked reviewed')
   const done = reviewState(path) !== 'done'
   if (done) state.reviewed[path] = c.hash
   else delete state.reviewed[path]
@@ -81,7 +82,7 @@ function toggleReviewed(path, advance = false) {
       if (next >= 0) goFile(next)
     }
   }
-  setStatus(done ? `proofed ${path}` : `unmarked ${path}`, done ? 'ok' : '')
+  setStatus(done ? `Reviewed ${path}` : `Unmarked ${path}`, done ? 'ok' : '')
 }
 
 function renderTally() {
@@ -134,6 +135,7 @@ async function ensureTree() {
 function setRail(rail) {
   state.rail = rail
   document.querySelectorAll('.rail-switch button').forEach(b => b.classList.toggle('on', b.dataset.rail === rail))
+  $('#tree-panel').classList.toggle('rail-files', rail === 'files')
   $('#queue').hidden = rail !== 'changes'
   $('#files-pane').hidden = rail !== 'files'
   if (rail === 'files') ensureTree().then(renderTree)
@@ -145,11 +147,11 @@ function renderQueue() {
   const all = [...state.changes.values()]
   $('#change-count').textContent = all.length || ''
   if (state.status && !state.status.git) {
-    q.innerHTML = `<div class="empty"><b>Not a repository.</b>Browsing and editing still work; git actions are off.</div>`
+    q.innerHTML = `<div class="empty"><b>Not a Git repository</b>Browsing and editing still work; Git actions are off.</div>`
     return
   }
   if (!all.length) {
-    q.innerHTML = `<div class="empty"><b>Clean desk.</b>Nothing to proof — the working tree matches HEAD.</div>`
+    q.innerHTML = `<div class="empty"><b>No changes</b>The working tree matches HEAD.</div>`
     return
   }
   const filter = $('#file-filter').value.toLowerCase()
@@ -159,29 +161,72 @@ function renderQueue() {
   const cur = currentPath()
   const row = c => {
     const rv = reviewState(c.path)
-    return `<div class="qrow rv-${rv} ${c.path === cur ? 'current' : ''}" data-path="${esc(c.path)}" title="${esc(c.path)}">
-      <span class="mark-dot" data-act="review" title="toggle proofed (x)"></span>
+    const title = rv === 'stale' ? `${c.path} — changed since you reviewed it` : c.path
+    return `<div class="qrow rv-${rv} ${c.path === cur ? 'current' : ''}" data-path="${esc(c.path)}" title="${esc(title)}">
+      <span class="tick" data-act="review" title="Mark reviewed (x)"></span>
       <span class="qpath">${nameFirst(c.path)}</span>
-      <span class="qstat">${statHTML(c)}</span>
-      <span class="qmeta">${codeTag(c)}${c.staged ? '<span class="staged-tag">staged</span>' : ''}${rv === 'stale' ? '<span class="stale-tag" title="changed since you proofed it">changed</span>' : ''}</span>
-      <span class="qacts"><button data-act="stage">${fullyStaged(c) ? 'unstage' : 'stage'}</button><button data-act="discard">discard</button></span>
+      <span class="qmeta">${c.staged ? '<span class="staged-dot" title="staged"></span>' : ''}${statHTML(c)}${codeTag(c)}</span>
+      <span class="qacts"><button class="btn quiet sm" data-act="stage">${fullyStaged(c) ? 'Unstage' : 'Stage'}</button><button class="btn quiet sm" data-act="discard">Discard</button></span>
     </div>`
   }
+  const group = (label, n) => `<div class="group-label"><span>${label}</span><span class="count">${n}</span></div>`
   q.innerHTML =
-    (todo.length ? `<div class="group-label"><span>to proof</span><span>${todo.length}</span></div>${todo.map(row).join('')}` : '') +
-    (done.length ? `<div class="group-label"><span>proofed</span><span>${done.length}</span></div>${done.map(row).join('')}` : '') +
+    (todo.length ? group('To review', todo.length) + todo.map(row).join('') : '') +
+    (done.length ? group('Reviewed', done.length) + done.map(row).join('') : '') +
     (!list.length ? `<div class="empty">No changed path matches “${esc(filter)}”.</div>` : '')
+}
+
+// Build a folder tree from the flat, sorted path list. Folders open by default when they hold a change or the open file.
+function buildTree(paths) {
+  const root = { dirs: new Map(), files: [], changed: 0 }
+  for (const p of paths) {
+    const parts = p.split('/')
+    let node = root
+    const lineage = [root]
+    for (let i = 0; i < parts.length - 1; i++) {
+      const dir = parts.slice(0, i + 1).join('/')
+      if (!node.dirs.has(parts[i])) node.dirs.set(parts[i], { path: dir, dirs: new Map(), files: [], changed: 0 })
+      node = node.dirs.get(parts[i])
+      lineage.push(node)
+    }
+    node.files.push(p)
+    if (state.changes.has(p)) lineage.forEach(n => n.changed++)
+  }
+  return root
 }
 
 function renderTree() {
   if (state.rail !== 'files') return
   const filter = $('#file-filter').value.toLowerCase()
-  const files = state.tree.filter(f => !filter || f.path.toLowerCase().includes(filter)).slice(0, 3000)
+  const files = state.tree.map(f => f.path).filter(p => !filter || p.toLowerCase().includes(filter)).slice(0, 3000)
   const open = activeTab()?.path
-  $('#tree').innerHTML = files.map(f => {
-    const c = state.changes.get(f.path)
-    return `<div class="tree-row ${state.selected === f.path || open === f.path ? 'active' : ''}" data-path="${esc(f.path)}" title="${esc(f.path)}"><span>${nameFirst(f.path)}</span>${c ? `<span class="code-tag ${codeLetter(c)}">${codeLetter(c)}</span>` : ''}</div>`
-  }).join('') || `<div class="empty">No path matches.</div>`
+  const isOpen = d => filter ? true : state.dirOpen.has(d.path) ? state.dirOpen.get(d.path) : d.changed > 0 || (open || '').startsWith(d.path + '/')
+  const pad = depth => `style="padding-left:${6 + depth * 14}px"`
+  const name = n => {
+    if (!filter) return esc(n)
+    const at = n.toLowerCase().indexOf(filter)
+    return at < 0 ? esc(n) : `${esc(n.slice(0, at))}<mark>${esc(n.slice(at, at + filter.length))}</mark>${esc(n.slice(at + filter.length))}`
+  }
+  const render = (node, depth) => {
+    let h = ''
+    for (const [n, d] of [...node.dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const o = isOpen(d)
+      h += `<div class="tnode dir" data-dir="${esc(d.path)}" ${pad(depth)} title="${esc(d.path)}"><span class="tw">${o ? '▾' : '▸'}</span><svg class="i ic" viewBox="0 0 16 16"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><span class="nm">${esc(n)}</span>${d.changed ? `<span class="count">${d.changed}</span>` : ''}</div>`
+      if (o) h += render(d, depth + 1)
+    }
+    for (const p of node.files) {
+      const c = state.changes.get(p)
+      h += `<div class="tnode ${state.selected === p || open === p ? 'active' : ''}" data-path="${esc(p)}" ${pad(depth)} title="${esc(p)}"><span class="tw"></span><svg class="i ic" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg><span class="nm">${name(basename(p))}</span>${c ? codeTag(c) : ''}</div>`
+    }
+    return h
+  }
+  $('#tree').innerHTML = render(buildTree(files), 0) || `<div class="empty">No path matches.</div>`
+}
+
+function toggleDir(path) {
+  const row = $(`#tree .tnode.dir[data-dir="${CSS.escape(path)}"]`)
+  state.dirOpen.set(path, row?.querySelector('.tw').textContent !== '▾')
+  renderTree()
 }
 
 function stageToggle(path) {
@@ -249,15 +294,15 @@ async function loadDiff() {
   const params = new URLSearchParams({ scope: sc, ignoreWhitespace: $('#ignore-ws').checked ? '1' : '0' })
   if (sc === 'range') {
     const from = $('#diff-from').value.trim(), to = $('#diff-to').value.trim()
-    if (!from || !to) return diffMessage('Two refs, one comparison.', 'Type a “from” and “to” ref — a branch, tag, or commit.')
+    if (!from || !to) return diffMessage('Compare two refs', 'Type a “from” and “to” ref — a branch, tag, or commit.')
     params.set('from', from); params.set('to', to)
   }
   if (sc === 'commit') {
     const ref = $('#diff-commit').value.trim()
-    if (!ref) return diffMessage('Pick a commit.', 'Click one in recent history, or type a hash.')
+    if (!ref) return diffMessage('Pick a commit', 'Choose one under History in the Git panel, or type a hash.')
     params.set('ref', ref)
   }
-  if (state.status && !state.status.git) return diffMessage('No repository here.', 'Open files from the index to read or edit them.')
+  if (state.status && !state.status.git) return diffMessage('No repository here', 'Open files from the sidebar to read or edit them.')
   const seq = ++state.diffSeq
   try {
     const data = await api('/api/diff?' + params)
@@ -265,7 +310,7 @@ async function loadDiff() {
     state.diffFiles = parseDiff(data.text)
     renderDiff()
   } catch (e) {
-    if (seq === state.diffSeq) diffMessage('Can’t diff that.', e.message)
+    if (seq === state.diffSeq) diffMessage('Can’t diff that', e.message)
   }
 }
 
@@ -284,9 +329,9 @@ function isFolded(f) {
 function renderDiff() {
   const files = state.diffFiles
   const added = files.reduce((s, f) => s + f.added, 0), deleted = files.reduce((s, f) => s + f.deleted, 0)
-  $('#diff-summary').innerHTML = files.length ? `${files.length} file${files.length === 1 ? '' : 's'} · <span class="add">+${added}</span> <span class="del">−${deleted}</span>` : ''
+  $('#diff-summary').innerHTML = files.length ? `${files.length} file${files.length === 1 ? '' : 's'}  <span class="add">+${added}</span> <span class="del">−${deleted}</span>` : ''
   if (!files.length) {
-    const why = { head: ['Nothing to proof.', 'The working tree matches HEAD. When an agent writes something, it lands here.'], worktree: ['No unstaged changes.', 'Everything is staged or clean.'], staged: ['Nothing staged.', 'Stage files from the index to build a commit.'] }[scope()] || ['No differences.', 'These refs point at the same content.']
+    const why = { head: ['Nothing to review', 'The working tree matches HEAD. When an agent writes something, it shows up here.'], worktree: ['No unstaged changes', 'Everything is staged or clean.'], staged: ['Nothing staged', 'Stage files from the sidebar to build a commit.'] }[scope()] || ['No differences', 'These refs point at the same content.']
     return diffMessage(...why)
   }
   const view = $('#diff'), top = view.scrollTop
@@ -297,6 +342,14 @@ function renderDiff() {
   updateCurrent()
 }
 
+// Five blocks, GitHub-style, showing the add/delete balance of a file.
+function blocksHTML(f) {
+  const total = f.added + f.deleted
+  if (!total) return ''
+  const a = Math.round((f.added / total) * 5)
+  return `<span class="blocks">${[0, 1, 2, 3, 4].map(k => `<i class="${k < a ? 'a' : 'd'}"></i>`).join('')}</span>`
+}
+
 function fileHTML(f, i) {
   const reviewable = REVIEWABLE.includes(scope())
   const c = reviewable ? state.changes.get(f.path) : null
@@ -304,10 +357,11 @@ function fileHTML(f, i) {
   const folded = isFolded(f)
   const kind = f.isNew ? 'new' : f.isDeleted ? 'deleted' : 'modified'
   const letter = f.isNew ? 'A' : f.isDeleted ? 'D' : 'M'
-  const stamp = c ? `<button class="stamp ${rv === 'done' ? 'done' : rv === 'stale' ? 'stale' : ''} ${state.justStamped === f.path ? 'just' : ''}" data-act="review" title="x">${rv === 'done' ? '✓ proofed' : rv === 'stale' ? '↻ re-proof' : 'mark proofed'}</button>` : ''
+  const label = rv === 'done' ? 'Reviewed' : rv === 'stale' ? 'Review again' : 'Mark reviewed'
+  const proof = c ? `<button class="proof rv-${rv} ${state.justStamped === f.path ? 'just' : ''}" data-act="review" title="${rv === 'stale' ? 'Changed since you reviewed it · ' : ''}x"><span class="tick"></span>${label}</button>` : ''
   const acts = [
-    !f.isDeleted ? '<button data-act="open" title="o">open</button>' : '',
-    c ? `<button data-act="stage">${fullyStaged(c) ? 'unstage' : 'stage'}</button><button data-act="discard">discard</button>` : '',
+    !f.isDeleted ? '<button class="btn quiet sm" data-act="open" title="o">Open</button>' : '',
+    c ? `<button class="btn quiet sm" data-act="stage">${fullyStaged(c) ? 'Unstage' : 'Stage'}</button><button class="btn quiet sm" data-act="discard">Discard</button>` : '',
   ].join('')
   let body = ''
   if (!folded) {
@@ -316,9 +370,10 @@ function fileHTML(f, i) {
     else if (!f.hunks.length) body = `<div class="dnote">${f.isNew ? 'Empty new file.' : 'Mode or metadata change only.'}</div>`
     else body = f.hunks.map(hunkHTML).join('')
   }
-  const why = folded && !state.folded.has(f.path) && rv !== 'done' ? (GENERATED.test(f.path) ? ' · generated' : f.lines > 1500 ? ' · large' : '') : ''
+  const why = folded && !state.folded.has(f.path) ? (rv === 'done' ? 'reviewed' : GENERATED.test(f.path) ? 'generated' : f.lines > 1500 ? 'large' : '') : ''
+  const stat = f.binary ? '' : `${f.added ? `<span class="add">+${f.added}</span>` : ''}${f.deleted ? `<span class="del">−${f.deleted}</span>` : ''}${blocksHTML(f)}`
   return `<section class="dfile ${folded ? 'folded' : ''}" data-i="${i}">
-    <header class="dfile-head"><span class="fold">▸</span><span class="code-tag ${letter}">${kind}</span><span class="dpath" title="${esc(f.path)}">${fullPath(f.path)}</span><span class="dstat">${f.binary ? '' : `<span class="add">+${f.added}</span> <span class="del">−${f.deleted}</span>`}<span class="tiny">${why}</span></span><span class="spacer"></span><span class="dacts">${acts}</span>${stamp}</header>
+    <header class="dfile-head"><span class="fold">▶</span>${badge(letter, kind)}<span class="dpath" title="${esc(f.path)}">${fullPath(f.path)}</span><span class="dstat">${stat}${why ? `<span class="note">· ${why}</span>` : ''}</span><span class="spacer"></span><span class="dacts">${acts}</span>${proof}</header>
     <div class="dbody">${body}</div>
   </section>`
 }
@@ -329,7 +384,7 @@ function hunkHTML(h) {
     const sign = l.t === 'add' ? '+' : l.t === 'del' ? '−' : ''
     return `<span class="no ${cls}">${l.o ?? ''}</span><span class="no ${cls}">${l.n ?? ''}</span><span class="sg ${cls}">${sign}</span><span class="tx ${cls}">${esc(l.text) || ' '}</span>`
   }).join('')
-  return `<div class="hunk"><div class="hunk-head">${esc(h.range)} <b>${esc(h.context)}</b></div>${rows}</div>`
+  return `<div class="hunk"><div class="hunk-head"><span>${esc(h.range)}</span><b>${esc(h.context)}</b></div>${rows}</div>`
 }
 
 function rerenderFile(i) {
@@ -452,7 +507,7 @@ function closeTab(i) {
 }
 
 function renderTabs() {
-  $('#tabs').innerHTML = state.tabs.map((t, i) => `<div class="tab ${i === state.active && state.mode === 'file' ? 'active' : ''} ${t.content !== t.saved ? 'dirty' : ''}" data-i="${i}" title="${esc(t.path)}"><span>${esc(basename(t.path))}</span><button class="x" data-close="${i}" title="close"><span>×</span></button></div>`).join('')
+  $('#tabs').innerHTML = state.tabs.map((t, i) => `<div class="tab ${i === state.active && state.mode === 'file' ? 'active' : ''} ${t.content !== t.saved ? 'dirty' : ''}" data-i="${i}" title="${esc(t.path)}"><span>${esc(basename(t.path))}</span><button class="x" data-close="${i}" title="Close"><span>×</span></button></div>`).join('')
 }
 
 function renderEditor() {
@@ -461,16 +516,17 @@ function renderEditor() {
   const editing = file && tab?.mode === 'edit' && !tab.binary
   $('#edit-toggle').hidden = !file || !tab || tab.binary
   $('#save').hidden = !file || !tab || tab.binary
-  $('#file-path').innerHTML = tab ? fullPath(tab.path) : ''
+  $('#file-path').innerHTML = tab ? `${dirname(tab.path) ? `<i>${esc(dirname(tab.path))}/</i>` : ''}<b>${esc(basename(tab.path))}</b>` : ''
+  $('#file-crumb').hidden = !file || !tab
   $('#stage-count').textContent = tab && !tab.binary ? `${tab.content.split('\n').length} lines${tab.content !== tab.saved ? ' · unsaved' : ''}` : ''
   $('#highlight').classList.toggle('active', file && !editing)
   $('#editor').classList.toggle('active', editing)
   $('#save').disabled = !tab || tab.content === tab.saved
-  $('#edit-toggle').textContent = tab?.mode === 'edit' ? 'view' : 'edit'
+  $('#edit-toggle').textContent = tab?.mode === 'edit' ? 'Done' : 'Edit'
   if (editing && $('#editor').value !== tab.content) $('#editor').value = tab.content
   if (file && !editing) {
-    if (!tab) $('#highlight').innerHTML = `<div class="empty"><b>No file open.</b>Press ⌘K to jump to one, or pick it from the index.</div>`
-    else if (tab.binary) $('#highlight').innerHTML = `<div class="empty"><b>Binary file.</b>Not shown.</div>`
+    if (!tab) $('#highlight').innerHTML = `<div class="empty"><b>No file open</b>Press <kbd>⌘K</kbd> or pick a file from the sidebar.</div>`
+    else if (tab.binary) $('#highlight').innerHTML = `<div class="empty"><b>Binary file</b>Not shown.</div>`
     else {
       const lines = tab.content.split('\n')
       if (lines.length > 1 && lines.at(-1) === '') lines.pop()
@@ -486,8 +542,8 @@ function renderBanner() {
   if (state.mode !== 'file' || !tab?.conflict) { b.hidden = true; return }
   const deleted = tab.conflict === 'deleted'
   b.innerHTML = `<span class="grow"><b>${esc(basename(tab.path))}</b> ${deleted ? 'was deleted on disk.' : 'changed on disk while you had unsaved edits.'}</span>
-    ${deleted ? '<button data-banner="close">close tab</button>' : '<button data-banner="reload">take disk version</button>'}
-    <button data-banner="overwrite" class="accent">${deleted ? 'recreate with mine' : 'keep mine & overwrite'}</button>`
+    ${deleted ? '<button class="btn sm" data-banner="close">Close tab</button>' : '<button class="btn sm" data-banner="reload">Take disk version</button>'}
+    <button class="btn sm primary" data-banner="overwrite">${deleted ? 'Recreate with mine' : 'Keep mine and overwrite'}</button>`
   b.hidden = false
 }
 
@@ -511,7 +567,7 @@ async function syncTabs() {
     if (data.hash === tab.hash) continue
     if (tab.content === tab.saved) {
       Object.assign(tab, { content: data.content, saved: data.content, hash: data.hash, binary: data.binary, conflict: '' })
-      if (tab === activeTab()) setStatus(`reloaded ${tab.path} — it changed on disk`)
+      if (tab === activeTab()) setStatus(`Reloaded ${tab.path} — it changed on disk`)
     } else tab.conflict = 'changed'
     changed = true
   }
@@ -526,7 +582,7 @@ async function saveFile(force = false) {
     const res = await post('/api/file', { action: 'save', path: tab.path, content: tab.content, baseHash: force ? '' : tab.hash })
     Object.assign(tab, { saved: tab.content, hash: res.hash, conflict: '' })
     renderTabs(); renderEditor()
-    setStatus('saved ' + tab.path, 'ok')
+    setStatus('Saved ' + tab.path, 'ok')
   } catch (e) {
     if (e.status === 409) {
       tab.conflict = /deleted/.test(e.message) ? 'deleted' : 'changed'
@@ -538,7 +594,7 @@ async function saveFile(force = false) {
 
 async function fileAction(action) {
   const current = state.selected || activeTab()?.path
-  if (action !== 'create' && !current) return setStatus('select a file first')
+  if (action !== 'create' && !current) return setStatus('Select a file first')
   const path = action === 'create' ? prompt('New file path') : current
   if (!path) return
   const newPath = action === 'rename' ? prompt('New path', path) : ''
@@ -561,6 +617,7 @@ function setMode(m) {
   document.querySelectorAll('.mode-switch button').forEach(b => b.classList.toggle('on', b.dataset.mode === m))
   $('#diff-bar').hidden = m !== 'diff'
   $('#file-bar').hidden = m !== 'file'
+  $('#file-crumb').hidden = m !== 'file' || !activeTab()
   $('#diff').classList.toggle('active', m === 'diff')
   renderTabs(); renderEditor(); markQueueCurrent()
 }
@@ -569,14 +626,14 @@ function setMode(m) {
 function renderGit() {
   const s = state.status || {}
   $('#branch').textContent = s.branch || (s.git === false ? 'no repository' : '—')
-  $('#repo').innerHTML = s.root ? `<i>${esc(dirname(s.root))}/</i><b>${esc(basename(s.root))}</b>` : ''
+  $('#repo').textContent = s.root ? basename(s.root) : ''
   $('#repo').title = s.root || ''
   const keep = $('#branch-select').value
   $('#branch-select').innerHTML = (s.branches || []).map(b => `<option ${b === (keep || s.branch) ? 'selected' : ''}>${esc(b)}</option>`).join('')
   const staged = [...state.changes.values()].filter(c => c.staged).length
-  $('#staged-count').textContent = staged ? `${staged} staged` : 'nothing staged'
-  $('#stashes').innerHTML = (s.stashes || []).map(x => `<div class="list-row"><span title="${esc(x.subject)}"><b>${esc(x.ref)}</b> ${esc(x.subject)}</span><button data-ref="${esc(x.ref)}">apply</button></div>`).join('') || '<div class="list-row muted"><span>drawer is empty</span></div>'
-  $('#history').innerHTML = (s.commits || []).map(c => `<div class="list-row commit-row" data-hash="${esc(c.hash)}" title="${esc(c.subject)} — ${esc(c.author)}"><span><b>${esc(c.hash)}</b>${esc(c.subject)}</span></div>`).join('') || '<div class="list-row muted"><span>no commits yet</span></div>'
+  $('#staged-count').textContent = staged ? `${staged} staged` : 'Nothing staged'
+  $('#stashes').innerHTML = (s.stashes || []).map(x => `<div class="list-row"><span title="${esc(x.subject)}"><b>${esc(x.ref)}</b> ${esc(x.subject)}</span><button class="btn sm" data-ref="${esc(x.ref)}">Apply</button></div>`).join('') || '<div class="list-row muted"><span>No stashes</span></div>'
+  $('#history').innerHTML = (s.commits || []).map(c => `<div class="list-row commit-row" data-hash="${esc(c.hash)}" title="${esc(c.subject)} — ${esc(c.author)}"><span><b>${esc(c.hash)}</b>${esc(c.subject)}</span></div>`).join('') || '<div class="list-row muted"><span>No commits yet</span></div>'
   renderHistoryCurrent()
 }
 
@@ -588,7 +645,7 @@ async function gitAction(body) {
   try {
     setStatus(`git ${body.action}…`)
     const out = await post('/api/git', body)
-    setStatus(out.output || `${body.action} done`, 'ok')
+    setStatus(out.output || `git ${body.action} done`, 'ok')
     if (body.action === 'commit' || body.action === 'amend') $('#commit-message').value = ''
   } catch (e) { setStatus(e.message, 'err') }
   await refreshAll()
@@ -653,6 +710,69 @@ function choosePalette(i) {
   else goTo(it.p)
 }
 
+// ---------- themes ----------
+// Ids match the [data-theme] blocks in themes.css. "system" follows macOS: echo paper when light, echo ink when dark.
+const THEMES = [
+  ['echo-paper', 'echo paper', 'light', 'echo'], ['github-light', 'GitHub Light', 'light', 'Primer'], ['solarized-light', 'Solarized Light', 'light', 'Solarized'],
+  ['catppuccin-latte', 'Catppuccin Latte', 'light', 'Catppuccin'], ['rose-pine-dawn', 'Rosé Pine Dawn', 'light', 'Rosé Pine'],
+  ['echo-ink', 'echo ink', 'dark', 'echo'], ['github-dark', 'GitHub Dark', 'dark', 'Primer'], ['nord', 'Nord', 'dark', 'Nord'],
+  ['gruvbox-dark', 'Gruvbox Dark', 'dark', 'Gruvbox'], ['solarized-dark', 'Solarized Dark', 'dark', 'Solarized'], ['catppuccin-mocha', 'Catppuccin Mocha', 'dark', 'Catppuccin'],
+  ['tokyo-night', 'Tokyo Night', 'dark', 'Tokyo Night'], ['rose-pine', 'Rosé Pine', 'dark', 'Rosé Pine'], ['dracula', 'Dracula', 'dark', 'Dracula'],
+]
+const osLight = matchMedia('(prefers-color-scheme: light)')
+const themeId = () => THEMES.some(t => t[0] === state.config.theme) ? state.config.theme : 'system'
+
+function applyTheme() {
+  const id = themeId()
+  document.documentElement.dataset.theme = id === 'system' ? (osLight.matches ? 'echo-paper' : 'echo-ink') : id
+  try { localStorage.setItem('echo:theme', id) } catch {}
+}
+
+const swatches = new Map()
+function swatchHTML(id) {
+  if (!swatches.has(id)) {
+    const probe = document.createElement('div')
+    probe.dataset.theme = id
+    document.body.appendChild(probe)
+    const cs = getComputedStyle(probe)
+    swatches.set(id, ['--surface', '--fg', '--accent', '--add', '--del'].map(v => `<i style="background:${cs.getPropertyValue(v)}"></i>`).join(''))
+    probe.remove()
+  }
+  return `<span class="swatch">${swatches.get(id)}</span>`
+}
+
+function renderThemes() {
+  const q = $('#theme-filter').value.trim().toLowerCase()
+  const cur = themeId()
+  const item = (id, name, note, sw) => `<div class="th ${cur === id ? 'on' : ''}" data-theme-id="${id}"><span class="ok">${cur === id ? '✓' : ''}</span>${swatchHTML(sw)}${esc(name)}<small>${esc(note)}</small></div>`
+  const group = kind => {
+    const list = THEMES.filter(t => t[2] === kind && t[1].toLowerCase().includes(q))
+    return list.length ? `<h5>${kind === 'light' ? 'Light' : 'Dark'}</h5>` + list.map(t => item(t[0], t[1], t[3], t[0])).join('') : ''
+  }
+  const system = !q || 'system'.includes(q) ? item('system', 'System', 'echo paper / ink', osLight.matches ? 'echo-paper' : 'echo-ink') : ''
+  $('#theme-list').innerHTML = (system + group('light') + group('dark')) || '<div class="empty">No theme matches.</div>'
+}
+
+async function setTheme(id) {
+  state.config.theme = id
+  applyTheme()
+  renderThemes()
+  try { await post('/api/config', state.config) } catch (e) { setStatus(e.message, 'err') }
+}
+
+function toggleThemes(open = $('#theme-pop').hidden) {
+  $('#theme-pop').hidden = !open
+  if (!open) return
+  $('#theme-filter').value = ''
+  renderThemes()
+  $('#theme-filter').focus()
+}
+
+function setInspector(tab) {
+  $('#insp').dataset.insp = tab
+  document.querySelectorAll('.insp-switch button').forEach(b => b.classList.toggle('on', b.dataset.insp === tab))
+}
+
 // ---------- wiring ----------
 $('#queue').addEventListener('click', e => {
   const row = e.target.closest('.qrow')
@@ -669,7 +789,9 @@ $('#queue').addEventListener('dblclick', e => {
   if (row && !e.target.closest('[data-act]') && state.tree.some(f => f.path === row.dataset.path)) openFile(row.dataset.path)
 })
 $('#tree').addEventListener('click', e => {
-  const row = e.target.closest('.tree-row')
+  const dir = e.target.closest('.tnode.dir')
+  if (dir) return toggleDir(dir.dataset.dir)
+  const row = e.target.closest('.tnode')
   if (row) { state.selected = row.dataset.path; openFile(row.dataset.path) }
 })
 $('#diff').addEventListener('click', e => {
@@ -701,6 +823,18 @@ $('#banner').addEventListener('click', async e => {
 })
 document.querySelectorAll('.mode-switch button').forEach(b => b.onclick = () => setMode(b.dataset.mode))
 document.querySelectorAll('.rail-switch button').forEach(b => b.onclick = () => setRail(b.dataset.rail))
+document.querySelectorAll('.insp-switch button').forEach(b => b.onclick = () => setInspector(b.dataset.insp))
+$('#search-open').onclick = openPalette
+$('#theme-open').onclick = e => { e.stopPropagation(); toggleThemes() }
+$('#theme-filter').oninput = renderThemes
+$('#theme-filter').addEventListener('keydown', e => {
+  if (e.key === 'Escape') { e.preventDefault(); toggleThemes(false) }
+  if (e.key === 'Enter') { const first = $('#theme-list .th'); if (first) setTheme(first.dataset.themeId) }
+})
+$('#theme-list').onclick = e => { const t = e.target.closest('[data-theme-id]'); if (t) setTheme(t.dataset.themeId) }
+// Picking a theme re-renders the list, so a detached click target still counts as inside the picker.
+document.addEventListener('click', e => { if (!$('#theme-pop').hidden && e.target.isConnected && !e.target.closest('#theme-pop')) toggleThemes(false) })
+osLight.addEventListener('change', () => { applyTheme(); swatches.clear(); if (!$('#theme-pop').hidden) renderThemes() })
 $('#history').addEventListener('click', e => {
   const row = e.target.closest('.commit-row')
   if (!row) return
@@ -763,7 +897,7 @@ $('#help-open').onclick = () => { $('#help').hidden = false }
 $('#help').onclick = e => { if (e.target === $('#help') || e.target.dataset.close !== undefined) $('#help').hidden = true }
 $('#vim-mode').onchange = async () => {
   state.config.vim = $('#vim-mode').checked
-  try { await post('/api/config', state.config); setStatus('settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
+  try { await post('/api/config', state.config); setStatus('Settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
 }
 $('#palette').onclick = e => {
   if (e.target === $('#palette')) $('#palette').hidden = true
@@ -791,7 +925,7 @@ document.addEventListener('keydown', e => {
     else if (e.key === 'Enter' && e.target.id === 'commit-message') { e.preventDefault(); $('#commit').click() }
     return
   }
-  if (e.key === 'Escape') { $('#help').hidden = true; if (typing(e)) e.target.blur(); return }
+  if (e.key === 'Escape') { $('#help').hidden = true; toggleThemes(false); if (typing(e)) e.target.blur(); return }
   if (typing(e) || e.altKey) return
   const vimStep = dir => { if (state.config.vim && state.mode === 'file') $('#highlight').scrollBy(0, dir * 60) }
   switch (e.key) {
@@ -810,11 +944,13 @@ window.addEventListener('beforeunload', e => { if (state.tabs.some(t => t.conten
 
 async function loadConfig() {
   try { state.config = await api('/api/config'); $('#vim-mode').checked = !!state.config.vim } catch {}
+  applyTheme()
 }
 
 syncScopeInputs()
 loadConfig()
 refreshAll()
 const events = new EventSource('/api/stream')
+events.onopen = () => $('.live').classList.remove('off')
 events.onmessage = e => applyStatus(JSON.parse(e.data))
-events.onerror = () => setStatus('lost the echo server — retrying…', 'err')
+events.onerror = () => { $('.live').classList.add('off'); setStatus('Lost the echo server — retrying…', 'err') }

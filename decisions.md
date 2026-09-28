@@ -129,7 +129,8 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** support renaming files.
 - **Accepted:** create, delete, and rename should be Git-aware where possible.
 - **Accepted:** file mutations should be available from a context menu and toolbar.
-- **Default:** the v1 file tree is a filtered, path-sorted list with indentation implied by the path.
+- **Accepted:** the Files view in the sidebar is a folder tree built in the browser from the flat `/api/tree` path list, with change counts on folders and status badges on files.
+- **Default:** folders start open when they contain a change or the open file; toggles are kept in memory for the session; filtering shows matches with every folder open.
 - **Default:** the v1 file index filters paths as the user types.
 - **Accepted:** the file index has two views: a review queue of changed files (the default) and all files.
 - **Accepted:** `⌘K`/`⌘P` open a fuzzy path finder instead of a browser prompt.
@@ -137,7 +138,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** file create, rename, and delete use the local filesystem directly in the first version; Git-aware rename behavior can be tightened later.
 - **Default:** file delete removes the selected file without a confirmation dialog.
 - **Default:** file create and rename use browser prompts for the path input, not confirmation dialogs.
-- **Deferred:** full hierarchical tree rendering and richer context menus.
+- **Deferred:** richer context menus.
 - **Deferred:** content search across files.
 
 ## 7. Editor behavior
@@ -257,7 +258,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** panel sizes should be configurable.
 - **Accepted:** panel order should be configurable.
 - **Default:** the config file is stored under the OS user config directory as `echo/config.json`.
-- **Default:** the config contains vim mode, diff mode, panel list, and panel sizes.
+- **Default:** the config contains vim mode, theme, diff mode, panel list, and panel sizes.
 - **Default:** panel visibility toggles are available in the v1 header.
 - **Deferred:** draggable panel resizing.
 - **Deferred:** drag-to-reorder panel layout.
@@ -281,16 +282,15 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** the interface must not look like a clone of another tool.
 - **Accepted:** echo should have its own visual identity.
 - **Accepted:** the interface should feel focused, fast, personal, and review-oriented.
-- **Default:** the visual direction is an amber-and-ink “local git desk.”
-- **Default:** the three primary areas are named File Index, Review Surface, and Action Ledger.
-- **Default:** the palette uses warm paper/ink tones, amber actions, mint Git-positive states, and coral change accents.
-- **Default:** the display face is a local serif stack and the code face is a local monospace stack.
+- **Accepted:** the look is professional and minimal: system UI font, monospace only for code and paths, sentence-case labels, no grain or grid texture.
+- **Accepted:** plain review wording ("Reviewed", "Mark reviewed", a check circle) replaces the earlier proof-desk stamps and serif type.
+- **Accepted:** three panes: sidebar (Changes queue / Files tree), main surface (Review / Files), and a Git panel. The Git panel has tabs (Commit, History) so later views can be added as tabs without changing the layout.
+- **Default:** the title bar carries the repository, branch, a "Go to file" search, review progress, panel toggles, the theme picker, and help; a status bar shows the live-connection dot, status, and key hints.
+- **Accepted:** support multiple open-source themes, chosen one at a time. The default "System" follows macOS appearance: echo paper when light, echo ink when dark.
+- **Accepted:** the theme set is hand-curated rather than generated: echo ink/paper, GitHub light/dark, Solarized light/dark, Catppuccin Latte/Mocha, Rosé Pine/Dawn, Nord, Gruvbox Dark, Tokyo Night, and Dracula (all MIT-licensed palettes).
+- **Default:** each theme is one block of about 16 tokens in `web/themes.css`; `style.css` only reads tokens and derives soft/strong tints with `color-mix`.
+- **Default:** the chosen theme is saved in the global config and mirrored to `localStorage` so a small inline script can apply it before first paint.
 - **Default:** no remote font service is required at runtime.
-- **Default:** subtle grid lines, grain, and paper-like contrast provide texture without a heavy design system.
-- **Default:** the header carries the workspace identity, branch, and panel toggles.
-- **Default:** the review concept is a "proof desk": files are proofed like galley proofs, with a stamp as the review mark and a ruled tally for progress.
-- **Default:** the ink palette follows a dark OS theme and a warm paper palette follows a light one.
-- **Default:** the bottom console shows status and keyboard hints.
 
 ## 17. Safety and security
 
@@ -324,7 +324,7 @@ These are YAGNI decisions for v1:
 - No pull-request hosting or GitHub API integration.
 - No AI agent integration (echo reviews agent output; it does not run agents).
 - No collaboration or presence features.
-- No theme marketplace.
+- No theme marketplace or user-imported themes; the theme list is curated in `web/themes.css`.
 - No plugin system.
 - No native file-picker dependency.
 - No conflict-resolution workflow UI.

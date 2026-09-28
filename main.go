@@ -35,6 +35,7 @@ const maxUntrackedDiff = 1 << 20
 
 type Config struct {
 	Vim        bool           `json:"vim"`
+	Theme      string         `json:"theme"`
 	DiffMode   string         `json:"diffMode"`
 	Panels     []string       `json:"panels"`
 	PanelSizes map[string]int `json:"panelSizes"`

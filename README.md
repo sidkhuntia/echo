@@ -12,19 +12,20 @@ Open the printed local URL in a browser. The app starts in the current Terminal 
 
 ## v1
 
-- file tree with path filter
+- collapsible folder tree with path filter
 - multi-file tabs with in-memory unsaved edits
 - read-only file view and plain textarea editing
-- review queue of changed files with proofed marks that reset when a file changes again
+- review queue of changed files with reviewed marks that reset when a file changes again
 - per-file diffs including untracked files; all-changes, unstaged, staged, ref-range, and single-commit scopes
 - saves never overwrite a file an agent changed after you opened it
-- keys: `n`/`p` file, `j`/`k` hunk, `x` proof, `o` open, `⌘K` find a file
+- keys: `n`/`p` file, `j`/`k` hunk, `x` mark reviewed, `o` open, `⌘K` find a file
 - file create, rename, delete
 - stage, unstage, discard
 - commit, amend, rebase, pull, push, branch create/switch, merge
 - stash create/apply
 - live Git status over SSE
-- global config file for future panel and editor preferences
+- 14 open-source themes plus a System theme that follows macOS appearance
+- global config file for theme, editor, and panel preferences
 
 ## Development
 
