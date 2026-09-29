@@ -250,7 +250,9 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .inspector { border-left: 1px solid var(--line); }
 .pane-head { height: 44px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px; }
 .sidebar .seg { flex: 1; }
-.sidebar .seg button { flex: 1; }
+.sidebar .seg button { flex: 1; padding: 0 8px; }
+/* Four tabs do not fit the 272px rail as words, so Search is an icon, like VS Code's activity bar. */
+.sidebar .seg button[data-rail="search"] { flex: none; }
 
 /* ---------- sidebar ---------- */
 .filter-row { padding: 0 10px 8px; display: flex; gap: 6px; flex: none; }
@@ -295,6 +297,22 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .tnode .nm { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .tnode mark { background: none; color: var(--accent); font-weight: 600; }
 .tnode .st, .tnode .count { margin-left: auto; }
+.search-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.search-box { position: relative; padding: 0 10px 6px; flex: none; }
+.search-box .field { width: 100%; padding-right: 70px; }
+.search-opts { position: absolute; right: 14px; top: 0; bottom: 6px; display: flex; align-items: center; gap: 1px; }
+.search-opts .btn { font: 600 10.5px var(--mono); color: var(--faint); }
+.search-opts .btn[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.search-meta { padding: 0 12px 4px; font-size: 11px; color: var(--faint); flex: none; }
+.search-meta:empty { display: none; }
+.sgroup .gname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+.sgroup .gname b { font-weight: 500; color: var(--fg); }
+.sgroup .gname i { font-style: normal; margin-left: 6px; }
+.srow { display: flex; gap: 8px; align-items: baseline; height: 24px; line-height: 24px; padding: 0 8px 0 22px; border-radius: var(--r); cursor: pointer; white-space: nowrap; overflow: hidden; font: 11.5px var(--mono); color: var(--fg-2); }
+.srow:hover { background: var(--hover); }
+.srow .sline { flex: none; min-width: 2.5ch; text-align: right; color: var(--faint); }
+.srow .stext { overflow: hidden; text-overflow: ellipsis; }
+.srow mark { background: var(--accent-soft); color: var(--fg); border-radius: 2px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
 .tree-acts { display: flex; gap: 2px; padding: 6px 8px; border-top: 1px solid var(--line); flex: none; }
 .side-foot { border-top: 1px solid var(--line); padding: 8px 12px; display: flex; gap: 12px; color: var(--faint); font-size: 11px; flex: none; }
 .side-foot span { display: inline-flex; gap: 3px; align-items: center; }

@@ -23,6 +23,8 @@ const state = {
   qClosed: new Set(),
   // lspExt: file extensions whose language server is missing, unsupported, or failed, so they are not asked again.
   lspExt: new Map(), installing: '', lsp: [],
+  // search: the Search rail. ran is the query and options the shown results came from; ctl aborts the one in flight.
+  search: { opts: { case: false, word: false, regex: false }, ran: null, res: null, err: '', ctl: null, timer: 0, closed: new Set() },
 }
 const mod = e => e.metaKey || e.ctrlKey
 const typing = e => e.target.closest?.('input, textarea, select')
@@ -83,6 +85,8 @@ function applyStatus(s) {
   document.body.classList.toggle('no-git-repo', !s.git)
   renderGit(); renderQueue()
   if (state.rail === 'files') ensureTree().then(renderTree)
+  // Files changed on disk, so shown line numbers may be stale.
+  if (state.search.res) scheduleSearch()
   syncTabs()
   refreshGutter()
   if (LIVE.includes(scope())) state.mode === 'diff' ? scheduleDiff() : (state.diffStale = true)
@@ -120,10 +124,79 @@ function setRail(rail) {
   $('#queue').hidden = rail !== 'changes'
   $('#files-pane').hidden = rail !== 'files'
   $('#branches').hidden = rail !== 'branches'
+  $('#search-pane').hidden = rail !== 'search'
+  $('.filter-row').hidden = rail === 'search'
   $('#file-filter').placeholder = rail === 'branches' ? 'Filter branches' : 'Filter paths'
   if (rail === 'files') ensureTree().then(renderTree)
   else if (rail === 'branches') renderBranches()
+  else if (rail === 'search') $('#search-input').focus()
   else renderQueue()
+}
+
+// ---------- content search ----------
+// The server runs git grep; the browser only debounces, cancels the superseded request, and groups by file.
+function scheduleSearch(delay = 250) {
+  clearTimeout(state.search.timer)
+  state.search.timer = setTimeout(runSearch, delay)
+}
+
+async function runSearch() {
+  const s = state.search, q = $('#search-input').value
+  s.ctl?.abort()
+  if (q.length < 2) { s.ran = s.res = null; s.err = ''; return renderSearch() }
+  const ran = { q, ...s.opts }, ctl = s.ctl = new AbortController()
+  const params = new URLSearchParams({ q })
+  for (const [k, on] of Object.entries(s.opts)) if (on) params.set(k, '1')
+  try {
+    s.res = await api('/api/search?' + params, { signal: ctl.signal })
+    s.err = ''
+  } catch (e) {
+    if (ctl.signal.aborted) return
+    s.res = null
+    s.err = e.message
+  }
+  if (s.ran?.q !== ran.q) s.closed.clear()
+  s.ran = ran
+  renderSearch()
+}
+
+// searchRegex rebuilds the query in JavaScript to mark matches; git grep reports only where a line matched.
+function searchRegex({ q, case: exact, word, regex }) {
+  let src = regex ? q : q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  if (word) src = `\\b(?:${src})\\b`
+  try { return new RegExp(src, exact ? 'g' : 'gi') } catch { return null }
+}
+
+function markMatches(text, re) {
+  if (!re) return esc(text)
+  let h = '', at = 0
+  for (const m of text.matchAll(re)) {
+    if (!m[0]) break
+    h += esc(text.slice(at, m.index)) + `<mark>${esc(m[0])}</mark>`
+    at = m.index + m[0].length
+  }
+  return h + esc(text.slice(at))
+}
+
+function renderSearch() {
+  const s = state.search, box = $('#search-results'), meta = $('#search-meta')
+  if (s.err) { meta.textContent = ''; box.innerHTML = `<div class="empty"><b>Search failed</b>${esc(s.err)}</div>`; return }
+  if (!s.res) { meta.textContent = ''; box.innerHTML = ''; return }
+  const files = new Map()
+  for (const m of s.res.matches) files.has(m.path) ? files.get(m.path).push(m) : files.set(m.path, [m])
+  const n = s.res.matches.length
+  if (!n) { meta.textContent = ''; box.innerHTML = `<div class="empty">No results for “${esc(s.ran.q)}”.</div>`; return }
+  meta.textContent = s.res.truncated
+    ? `${n.toLocaleString()}+ results in ${files.size} files — refine your search`
+    : `${n.toLocaleString()} result${n === 1 ? '' : 's'} in ${files.size} file${files.size === 1 ? '' : 's'}`
+  const re = searchRegex(s.ran)
+  let h = ''
+  for (const [path, ms] of files) {
+    const closed = s.closed.has(path)
+    h += `<div class="group-label qgroup sgroup" data-path="${esc(path)}" title="${esc(path)}"><span class="tw">${closed ? '▸' : '▾'}</span><span class="gname">${nameFirst(path)}</span><span class="count">${ms.length}</span></div>`
+    if (!closed) h += ms.map(m => `<div class="srow" data-path="${esc(path)}" data-line="${m.line}" title="${esc(path)}:${m.line}"><span class="sline">${m.line}</span><span class="stext">${markMatches(m.text.trimStart(), re)}</span></div>`).join('')
+  }
+  box.innerHTML = h
 }
 
 // The Changes rail follows VS Code: conflicts, then what is staged (HEAD → index), then what is not
@@ -2071,6 +2144,24 @@ $('#queue').addEventListener('dblclick', e => {
   const row = e.target.closest('.qrow')
   if (row && !e.target.closest('[data-act]') && state.tree.some(f => f.path === row.dataset.path)) openFile(row.dataset.path)
 })
+$('#search-input').oninput = () => scheduleSearch()
+$('#search-input').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); scheduleSearch(0) } })
+document.querySelectorAll('.search-opts button').forEach(b => b.onclick = () => {
+  const on = state.search.opts[b.dataset.opt] = !state.search.opts[b.dataset.opt]
+  b.setAttribute('aria-pressed', on)
+  scheduleSearch(0)
+  $('#search-input').focus()
+})
+$('#search-results').addEventListener('click', e => {
+  const group = e.target.closest('.sgroup')
+  if (group) {
+    const c = state.search.closed, p = group.dataset.path
+    c.has(p) ? c.delete(p) : c.add(p)
+    return renderSearch()
+  }
+  const row = e.target.closest('.srow')
+  if (row) openFile(row.dataset.path, { line: Number(row.dataset.line) })
+})
 $('#tree').addEventListener('click', e => {
   const dir = e.target.closest('.tnode.dir')
   if (dir) return toggleDir(dir.dataset.dir)
@@ -2377,6 +2468,12 @@ document.addEventListener('keydown', e => {
   if (mod(e)) {
     const k = e.key.toLowerCase()
     if (k === 'o' && e.shiftKey) { e.preventDefault(); toggleRepoPop() }
+    else if (k === 'f' && e.shiftKey) {
+      e.preventDefault()
+      $('.desk').classList.remove('no-tree')
+      setRail('search')
+      $('#search-input').select()
+    }
     else if (k === 'k' || k === 'p') { e.preventDefault(); openPalette() }
     else if (k === 'b') { e.preventDefault(); toggleTree() }
     else if (k === 'j') { e.preventDefault(); toggleLedger() }

@@ -132,7 +132,7 @@ The following Git capabilities were accepted as part of the product direction:
 
 - **Accepted:** use a full file tree rather than a changed-files-only view.
 - **Accepted:** show Git status badges in the file tree.
-- **Accepted:** file search matches paths, not file contents.
+- **Accepted:** the `⌘K` file finder matches paths; content search is the separate Search tab below.
 - **Accepted:** changed files should be easy to find while reviewing.
 - **Accepted:** support creating files.
 - **Accepted:** support deleting files.
@@ -156,7 +156,12 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** file delete removes the selected file without a confirmation dialog.
 - **Default:** file create and rename use browser prompts for the path input, not confirmation dialogs.
 - **Deferred:** richer context menus.
-- **Deferred:** content search across files.
+- **Corrected decision:** content search was deferred, then added: a fourth sidebar tab, **Search** (a magnifier icon, `⌘⇧F`), like VS Code's search view. Clicking a result opens the Files editor at that line.
+- **Accepted:** the server runs `git grep -n --column -I -z`, with `--untracked` in a repository so files an agent just created are included, and `--no-index --exclude-standard` in a plain folder. Ignored and binary files are never searched, and there is no option to include them.
+- **Accepted:** the options are match case, whole word, and regular expression (`-i` off, `-w`, `-E`; otherwise `-F`). There are no include/exclude globs and no Replace; Replace would be a multi-file write outside the editor's stale-save check.
+- **Accepted:** results are grouped by file, with match counts, groups that fold, and the matches marked. git grep reports only where a line matched, so the browser rebuilds the query as a JavaScript regular expression to mark them.
+- **Accepted:** search runs as you type, 250 ms after the last key, once the query has two characters. A new query aborts the request in flight, and the server's request context kills that git grep.
+- **Default:** results stop at 2,000 matches and say "2,000+ results — refine your search", with no paging; lines are trimmed to about 200 bytes around the match. Results rerun when the repository status changes, so line numbers follow the agent's edits.
 
 ## 7. Editor behavior
 
@@ -352,7 +357,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** use familiar editor shortcuts where they fit the smaller scope.
 - **Default:** include shortcuts for file search, tree toggle, Git panel toggle, diff toggle, save, help, and escape.
 - **Default:** `e` opens the current hunk in the editor; `Esc` in the editor goes back to the review.
-- **Default:** use `⌘⇧O` for the repository switcher, `⌘K`/`⌘P` for file search, `⌘B` for the file index, `⌘J` for the action ledger, `⌘D` for diff, and `⌘S` for save on macOS.
+- **Default:** use `⌘⇧O` for the repository switcher, `⌘K`/`⌘P` for file search, `⌘⇧F` for content search, `⌘B` for the file index, `⌘J` for the action ledger, `⌘D` for diff, and `⌘S` for save on macOS.
 - **Default:** `?` opens the shortcut card.
 - **Deferred:** full vim modal navigation and command language.
 - **Deferred:** user-remappable shortcuts.
@@ -410,7 +415,6 @@ These are YAGNI decisions for v1:
 - No native file-picker dependency.
 - No conflict-resolution workflow UI.
 - No virtualized editor.
-- No content search.
 - No full LSP feature set.
 - No per-repository configuration.
 - No closed-tab restore.

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSafePath(t *testing.T) {
@@ -721,5 +722,39 @@ func TestInstances(t *testing.T) {
 		if in.Root == a.root && (in.Branch == "" || in.Changes != 2) {
 			t.Errorf("instance reports branch and changes: %+v", in)
 		}
+	}
+}
+
+func TestSearch(t *testing.T) {
+	a := testRepo(t)
+	_ = os.WriteFile(filepath.Join(a.root, ".gitignore"), []byte("ignored.txt\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(a.root, "ignored.txt"), []byte("made by an agent\n"), 0o644)
+	search := func(query string) SearchResult {
+		t.Helper()
+		w := request(a, "GET", "/api/search?"+query, "")
+		var res SearchResult
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &res) != nil {
+			t.Fatalf("%s: %d %s", query, w.Code, w.Body)
+		}
+		return res
+	}
+	if res := search("q=AGENT"); len(res.Matches) != 1 || res.Matches[0] != (Match{Path: "agent.txt", Line: 1, Text: "made by an agent"}) {
+		t.Errorf("untracked match or ignored file wrong: %+v", res.Matches)
+	}
+	if res := search("q=AGENT&case=1"); len(res.Matches) != 0 {
+		t.Errorf("match case ignored: %+v", res.Matches)
+	}
+	if res := search("q=t.o&regex=1"); len(res.Matches) != 0 {
+		t.Errorf("regex: %+v", res.Matches)
+	}
+	if res := search("q=th.ee&regex=1"); len(res.Matches) != 1 || res.Matches[0].Line != 3 {
+		t.Errorf("regex line: %+v", res.Matches)
+	}
+	if w := request(a, "GET", "/api/search?q=a(&regex=1", ""); w.Code != 400 {
+		t.Errorf("bad regex: %d", w.Code)
+	}
+	long := strings.Repeat("é", 300) + "needle" + strings.Repeat("x", 300)
+	if s := snippet(long, strings.Index(long, "needle")); !utf8.ValidString(s) || !strings.Contains(s, "needle") || len(s) > 210 {
+		t.Errorf("snippet: %q", s)
 	}
 }

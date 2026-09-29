@@ -62,6 +62,7 @@ try {
         <button data-rail="changes" class="on" role="tab">Changes <span id="change-count" class="count"></span></button>
         <button data-rail="files" role="tab">Files</button>
         <button data-rail="branches" role="tab">Branches</button>
+        <button data-rail="search" role="tab" title="Search file contents (⌘⇧F)" aria-label="Search"><svg class="i" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></button>
       </div>
     </div>
     <div class="filter-row">
@@ -78,6 +79,18 @@ try {
       </div>
     </div>
     <div id="branches" class="list" hidden></div>
+    <div id="search-pane" class="search-pane" hidden>
+      <div class="search-box">
+        <input id="search-input" class="field" placeholder="Search file contents" autocomplete="off" spellcheck="false">
+        <span class="search-opts">
+          <button class="btn quiet icon xs" data-opt="case" title="Match case" aria-pressed="false">Aa</button>
+          <button class="btn quiet icon xs" data-opt="word" title="Match whole word" aria-pressed="false"><u>ab</u></button>
+          <button class="btn quiet icon xs" data-opt="regex" title="Use regular expression" aria-pressed="false">.*</button>
+        </span>
+      </div>
+      <div id="search-meta" class="search-meta"></div>
+      <div id="search-results" class="list"></div>
+    </div>
     <div class="side-foot"><span><kbd>n</kbd><kbd>p</kbd> file</span><span><kbd>j</kbd><kbd>k</kbd> hunk</span><span><kbd>e</kbd> edit</span></div>
   </aside>
 
@@ -208,6 +221,7 @@ try {
       <dt><kbd>⌘K</kbd> <kbd>⌘P</kbd></dt><dd>Go to file</dd>
       <dt><kbd>⌘D</kbd></dt><dd>Switch Review / Files</dd>
       <dt><kbd>⌘⇧O</kbd></dt><dd>Switch repository</dd>
+      <dt><kbd>⌘⇧F</kbd></dt><dd>Search file contents</dd>
       <dt><kbd>⌘B</kbd></dt><dd>Toggle sidebar</dd>
       <dt><kbd>⌘J</kbd></dt><dd>Toggle Git panel</dd>
       <dt><kbd>⌘S</kbd></dt><dd>Save current file</dd>

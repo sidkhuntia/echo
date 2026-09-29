@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -24,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 //go:embed web
@@ -363,6 +365,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/history", a.handleLog)
 	mux.HandleFunc("/api/commit", a.handleCommit)
 	mux.HandleFunc("/api/blame", a.handleBlame)
+	mux.HandleFunc("/api/search", a.handleSearch)
 	mux.HandleFunc("/api/commit/contains", a.handleContains)
 	mux.HandleFunc("/api/stream", a.handleStream)
 	mux.HandleFunc("/api/config", a.handleConfig)
@@ -1224,6 +1227,121 @@ func (a *App) handleBlame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, parseBlame(string(out)))
+}
+
+// Match is one line found by content search.
+type Match struct {
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	Text string `json:"text"`
+}
+
+type SearchResult struct {
+	Matches   []Match `json:"matches"`
+	Truncated bool    `json:"truncated"`
+}
+
+// ponytail: hard cap and no paging; a query that hits it should be narrowed, not scrolled.
+const searchCap = 2000
+
+// handleSearch greps file contents: tracked and untracked files in a repository, the plain folder
+// otherwise, never ignored or binary files. The request context kills git when the browser aborts
+// a search that the next keystroke replaced.
+func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	res := SearchResult{Matches: []Match{}}
+	if q.Get("q") == "" {
+		writeJSON(w, res)
+		return
+	}
+	args := []string{"grep", "-n", "--column", "-I", "-z", "--no-color"}
+	if _, err := a.git("rev-parse", "--is-inside-work-tree"); err == nil {
+		args = append(args, "--untracked")
+	} else {
+		args = append(args, "--no-index", "--exclude-standard")
+	}
+	if q.Get("case") != "1" {
+		args = append(args, "-i")
+	}
+	if q.Get("word") == "1" {
+		args = append(args, "-w")
+	}
+	if q.Get("regex") == "1" {
+		args = append(args, "-E")
+	} else {
+		args = append(args, "-F")
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	cmd := a.gitCmdContext(ctx, append(args, "-e", q.Get("q"))...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err == nil {
+		err = cmd.Start()
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 64*1024), 16<<20)
+	// With -z each line is "path\0line\0column\0text".
+	for sc.Scan() {
+		if len(res.Matches) == searchCap {
+			res.Truncated = true
+			break
+		}
+		parts := strings.SplitN(sc.Text(), "\x00", 4)
+		if len(parts) < 4 {
+			continue
+		}
+		line, _ := strconv.Atoi(parts[1])
+		col, _ := strconv.Atoi(parts[2])
+		res.Matches = append(res.Matches, Match{Path: filepath.ToSlash(parts[0]), Line: line, Text: snippet(strings.TrimRight(parts[3], "\r"), col-1)})
+	}
+	if sc.Err() != nil {
+		res.Truncated = true // a line past the scanner's 16 MB limit; keep what was found
+	}
+	if res.Truncated {
+		cancel() // stop git early; cancelling after it finished would turn a clean exit into an error
+	}
+	err = cmd.Wait()
+	var exit *exec.ExitError
+	// Exit 1 means no matches; a kill after the cap is expected. Anything else (a bad regex) is the user's to fix.
+	if err != nil && !res.Truncated && !(errors.As(err, &exit) && exit.ExitCode() == 1) && r.Context().Err() == nil {
+		msg := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(stderr.String()), "fatal: "))
+		if msg == "" {
+			msg = err.Error()
+		}
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, res)
+}
+
+// snippet trims a long line to about 200 bytes around the match, cut on rune boundaries.
+func snippet(s string, at int) string {
+	const width = 200
+	if len(s) <= width {
+		return s
+	}
+	start := max(0, min(at-60, len(s)-width))
+	end := start + width
+	for start > 0 && !utf8.RuneStart(s[start]) {
+		start--
+	}
+	for end < len(s) && !utf8.RuneStart(s[end]) {
+		end++
+	}
+	out := s[start:end]
+	if start > 0 {
+		out = "…" + out
+	}
+	if end < len(s) {
+		out += "…"
+	}
+	return out
 }
 
 // parseBlame reads `git blame --porcelain`: a "<hash> <orig> <final> [<count>]" header per line,

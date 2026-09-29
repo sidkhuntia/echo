@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added content search, like VS Code's: press `⌘⇧F` or click the magnifier in the sidebar, and type. Results appear as you type, grouped by file with the matches marked; click one to open the file at that line. Toggle match case (`Aa`), whole word (`ab`), and regular expressions (`.*`). New untracked files are searched; ignored and binary files are not. Results stop at 2,000.
+
 - The page has an icon: a small `e` on the echo accent square, as an SVG in `web/favicon.svg`, so browser tabs and bookmarks stop showing a blank page icon. The head also carries a description and `color-scheme` for a correct first paint and a sensible page summary.
 
 - The editor now highlights code using language servers installed on your Mac (gopls, TypeScript, basedpyright, rust-analyzer, clangd, SourceKit-LSP, jdtls, Ruby LSP, Lua, zls, Bash). If a file's server isn't installed, a note above the editor shows the install command with Install, Copy command, and Not now; editing never waits on it.
