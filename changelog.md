@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed: in repositories with many ignored files (build output, local data folders), the Files tree could stop before `src` because the browser shows at most 3,000 paths. In a Git repository the tree now leaves out files ignored by `.gitignore`.
 - The title bar shows the current branch's incoming ↓ and outgoing ↑ commits against its upstream, with Fetch (and how long ago the last fetch was) and Sync buttons. Sync pulls using your Git pull settings, then pushes if you're ahead; a branch with no upstream shows Publish instead. The branch list shows the same counts.
 - Added a Log view (Review · Files · Log): a commit graph of every branch with lanes, branch and tag labels, author, and date, loaded 200 commits at a time as you scroll. Filter by message text or a pasted hash, branch, author, or path. The details pane shows the full message, the branches that contain the commit, and its changed files; `Enter` opens the diff and `Esc` comes back.
 - The History tab draws the same graph for the current branch, and shows branch and tag labels on commits.

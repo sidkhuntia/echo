@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -276,7 +277,12 @@ func (a *App) handleTree(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, a.tree())
 }
 
+// tree lists the repository's files. In a Git repository it asks Git, so ignored files
+// (build output, local data) stay out and cannot crowd real sources past the browser's cap.
 func (a *App) tree() []TreeNode {
+	if out, err := a.gitTree(); err == nil {
+		return out
+	}
 	var out []TreeNode
 	_ = filepath.WalkDir(a.root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -300,6 +306,39 @@ func (a *App) tree() []TreeNode {
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+func (a *App) gitTree() ([]TreeNode, error) {
+	list, err := a.git("ls-files", "--cached", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var out []TreeNode
+	for _, rel := range strings.Split(list, "\x00") {
+		if rel == "" || seen[rel] || skipPath(rel) {
+			continue
+		}
+		seen[rel] = true
+		// Deleted tracked files and submodules are listed by Git but are not files to open.
+		if info, err := os.Lstat(filepath.Join(a.root, filepath.FromSlash(rel))); err != nil || info.IsDir() {
+			continue
+		}
+		out = append(out, TreeNode{Name: path.Base(rel), Path: rel})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out, nil
+}
+
+// skipPath applies the walk's rules to a slash path: no skipped directories, no hidden files.
+func skipPath(rel string) bool {
+	parts := strings.Split(rel, "/")
+	for _, dir := range parts[:len(parts)-1] {
+		if skipDir(dir) {
+			return true
+		}
+	}
+	return strings.HasPrefix(rel, ".")
 }
 
 func skipDir(name string) bool {

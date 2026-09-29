@@ -141,6 +141,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** the file index has two views: a review queue of changed files (the default) and all files.
 - **Accepted:** `⌘K`/`⌘P` open a fuzzy path finder instead of a browser prompt.
 - **Default:** the initial implementation skips `.git`, hidden directories, `node_modules`, `dist`, `build`, `.cache`, and `.next` from the tree.
+- **Accepted:** in a Git repository the tree comes from `git ls-files --cached --others --exclude-standard`, so ignored files stay out; the same skip rules still apply. Outside Git it walks the directory.
 - **Default:** file create, rename, and delete use the local filesystem directly in the first version; Git-aware rename behavior can be tightened later.
 - **Default:** file delete removes the selected file without a confirmation dialog.
 - **Default:** file create and rename use browser prompts for the path input, not confirmation dialogs.

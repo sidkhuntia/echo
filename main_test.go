@@ -168,6 +168,23 @@ func TestGitStatusChanges(t *testing.T) {
 	}
 }
 
+func TestTreeSkipsIgnoredFiles(t *testing.T) {
+	a := testRepo(t)
+	for name, content := range map[string]string{".gitignore": "data/\n", "data/blob.bin": "x", "src/Main.java": "class Main {}\n"} {
+		os.MkdirAll(filepath.Join(a.root, filepath.Dir(name)), 0o755)
+		if err := os.WriteFile(filepath.Join(a.root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got []string
+	for _, n := range a.tree() {
+		got = append(got, n.Path)
+	}
+	if want := "agent.txt keep.txt src/Main.java"; strings.Join(got, " ") != want {
+		t.Errorf("tree = %v, want %s", got, want)
+	}
+}
+
 func request(a *App, method, url, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, url, strings.NewReader(body))
 	r.Host = "127.0.0.1:7777"
