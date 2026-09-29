@@ -94,7 +94,6 @@ try {
       <div id="file-bar" class="bar-group" hidden>
         <div id="tabs" class="tabs"></div>
         <span id="stage-count" class="summary"></span>
-        <button id="edit-toggle" class="btn" hidden>Edit</button>
         <button id="save" class="btn primary" hidden disabled>Save <kbd>⌘S</kbd></button>
       </div>
     </div>
@@ -103,6 +102,7 @@ try {
     <div class="stage">
       <div id="diff" class="diff-view active"></div>
       <div id="highlight" class="code-view"></div>
+      <div id="gutter" class="gutter" aria-hidden="true"></div>
       <textarea id="editor" class="editor" spellcheck="false" wrap="off"></textarea>
     </div>
   </section>
@@ -165,12 +165,19 @@ try {
       <dt><kbd>n</kbd> <kbd>p</kbd></dt><dd>Next / previous changed file</dd>
       <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next / previous hunk</dd>
       <dt><kbd>x</kbd></dt><dd>Mark current file reviewed</dd>
-      <dt><kbd>e</kbd></dt><dd>Edit the current hunk's new version (or double-click a line)</dd>
-      <dt><kbd>⌘S</kbd> <kbd>Esc</kbd></dt><dd>Save / cancel a hunk edit</dd>
+      <dt><kbd>e</kbd></dt><dd>Edit the current hunk in the file (or double-click a line)</dd>
       <dt><kbd>o</kbd></dt><dd>Open current file</dd>
+      <dt><kbd>Esc</kbd></dt><dd>In the editor: back to the review line you came from</dd>
       <dt><kbd>?</kbd></dt><dd>Show this card</dd>
       <dt><kbd>Esc</kbd></dt><dd>Close overlays</dd>
     </dl>
+    <div class="modal-sub">Settings</div>
+    <label class="setting">Editor change bars compare against
+      <select id="gutter-base" class="field">
+        <option value="head">HEAD — staged lines hollow</option>
+        <option value="index">Index — unstaged changes only</option>
+      </select>
+    </label>
     <label class="check"><input id="vim-mode" type="checkbox"> Vim keys in Files view (j/k scroll)</label>
   </div>
 </div>

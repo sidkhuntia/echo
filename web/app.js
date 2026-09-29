@@ -3,13 +3,13 @@ const state = {
   tree: [], treeStale: true, tabs: [], active: -1, selected: '',
   status: null, changes: new Map(), reviewed: {}, folded: new Map(), justStamped: '',
   config: { vim: false, theme: 'system', diffMode: 'unified' }, mode: 'diff', rail: 'changes', dirOpen: new Map(),
-  diffFiles: [], diffSeq: 0, current: -1, commit: '', lastScope: 'head', edit: null, diffPending: false,
+  diffFiles: [], diffSeq: 0, current: -1, commit: '', returnTo: '', statusSeq: 0,
   palette: { items: [], sel: 0 },
 }
 const mod = e => e.metaKey || e.ctrlKey
 const typing = e => e.target.closest?.('input, textarea, select')
 const REVIEWABLE = ['head', 'worktree', 'staged']
-// Scopes whose new side is the working tree, so a hunk's new version can be edited in place.
+// Scopes whose new side is the working tree, so diff line numbers match the file in the editor.
 const EDITABLE = ['head', 'worktree']
 const GENERATED = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|go\.sum|Cargo\.lock|poetry\.lock|Gemfile\.lock|composer\.lock|bun\.lockb?)$/
 
@@ -100,6 +100,7 @@ function renderTally() {
 function applyStatus(s) {
   const first = !state.status
   state.status = s
+  state.statusSeq++
   state.changes = new Map((s.changes || []).map(c => [c.path, c]))
   if (first) {
     loadReviewed()
@@ -114,6 +115,7 @@ function applyStatus(s) {
   renderGit(); renderQueue(); renderTally()
   if (state.rail === 'files') ensureTree().then(renderTree)
   syncTabs()
+  refreshGutter()
   if (state.mode === 'diff' && REVIEWABLE.includes(scope())) scheduleDiff()
 }
 
@@ -278,7 +280,8 @@ function parseDiff(text) {
     }
     const c = line[0]
     if (c === '+') { h.lines.push({ t: 'add', n: n++, text: line.slice(1) }); f.added++ }
-    else if (c === '-') { h.lines.push({ t: 'del', o: o++, text: line.slice(1) }); f.deleted++ }
+    // `at` is where a deleted line would sit in the new version, so it can still jump to the editor.
+    else if (c === '-') { h.lines.push({ t: 'del', o: o++, at: n, text: line.slice(1) }); f.deleted++ }
     else if (c === ' ') h.lines.push({ t: 'ctx', o: o++, n: n++, text: line.slice(1) })
     else if (c === '\\') h.lines.push({ t: 'meta', text: line.slice(2) })
     else continue
@@ -291,10 +294,7 @@ function parseDiff(text) {
 let diffTimer
 function scheduleDiff() { clearTimeout(diffTimer); diffTimer = setTimeout(loadDiff, 120) }
 
-// While a hunk is being edited, automatic reloads wait so the draft is never re-rendered away.
 async function loadDiff() {
-  if (state.edit) { state.diffPending = true; return }
-  state.diffPending = false
   const sc = scope()
   const params = new URLSearchParams({ scope: sc, ignoreWhitespace: $('#ignore-ws').checked ? '1' : '0' })
   if (sc === 'range') {
@@ -373,7 +373,7 @@ function fileHTML(f, i) {
     if (f.note) body = `<div class="dnote">${esc(f.note)}</div>`
     else if (f.binary) body = `<div class="dnote">Binary file — not shown.</div>`
     else if (!f.hunks.length) body = `<div class="dnote">${f.isNew ? 'Empty new file.' : 'Mode or metadata change only.'}</div>`
-    else body = f.hunks.map((h, hi) => hunkHTML(f, h, hi, canEdit(f))).join('')
+    else body = f.hunks.map(hunkHTML).join('')
   }
   const why = folded && !state.folded.has(f.path) ? (rv === 'done' ? 'reviewed' : GENERATED.test(f.path) ? 'generated' : f.lines > 1500 ? 'large' : '') : ''
   const stat = f.binary ? '' : `${f.added ? `<span class="add">+${f.added}</span>` : ''}${f.deleted ? `<span class="del">−${f.deleted}</span>` : ''}${blocksHTML(f)}`
@@ -384,22 +384,12 @@ function fileHTML(f, i) {
 }
 
 const rowClass = l => l.t === 'add' ? 'r-add' : l.t === 'del' ? 'r-del' : l.t === 'meta' ? 'r-meta' : ''
-// data-n marks text that exists in the new version; only those lines open the hunk editor.
-const textCell = (l, cls) => `<span class="tx ${cls}"${l.n != null ? ` data-n="${l.n}"` : ''}>${esc(l.text) || ' '}</span>`
+// data-n is the line in the new version; double-clicking any line opens the editor there.
+const textCell = (l, cls) => `<span class="tx ${cls}" data-n="${l.n ?? l.at}">${esc(l.text) || ' '}</span>`
 
-function hunkHTML(f, h, hi, editable) {
-  const ed = state.edit
-  if (ed && ed.path === f.path && ed.hi === hi) {
-    const where = ed.count ? `lines ${ed.start + 1}–${ed.start + ed.count}` : `insert after line ${ed.start}`
-    // The leading newline is eaten by the HTML parser, so a draft that starts with a blank line survives.
-    return `<div class="hunk editing" data-h="${hi}">
-      <div class="hunk-head"><span>Editing new version · ${where}</span><span class="spacer"></span><span class="faint"><kbd>⌘S</kbd> save · <kbd>Esc</kbd> cancel</span><button class="btn quiet sm" data-act="edit-cancel">Cancel</button><button class="btn primary sm" data-act="edit-save">Save</button></div>
-      <textarea class="hedit" spellcheck="false" wrap="off" style="height:${(ed.draft.split('\n').length + 1) * 20 + 12}px">\n${esc(ed.draft)}</textarea>
-    </div>`
-  }
+function hunkHTML(h, hi) {
   const split = state.config.diffMode === 'split'
-  const head = `<div class="hunk-head"><span>${esc(h.range)}</span><b>${esc(h.context)}</b>${editable ? '<span class="spacer"></span><button class="btn quiet sm hedit-open" data-act="edit" title="Edit the new version of this hunk (e, or double-click a line)">Edit</button>' : ''}</div>`
-  return `<div class="hunk ${split ? 'split' : ''} ${editable ? 'editable' : ''}" data-h="${hi}">${head}${split ? splitRows(h) : stackedRows(h)}</div>`
+  return `<div class="hunk ${split ? 'split' : ''}" data-h="${hi}"><div class="hunk-head"><span>${esc(h.range)}</span><b>${esc(h.context)}</b></div>${split ? splitRows(h) : stackedRows(h)}</div>`
 }
 
 function stackedRows(h) {
@@ -416,7 +406,7 @@ function splitRows(h) {
   const side = (l, isNew) => {
     if (!l) return `<span class="no r-none ${isNew ? 'ns' : ''}"></span><span class="tx r-none"></span>`
     const cls = rowClass(l)
-    return `<span class="no ${cls} ${isNew ? 'ns' : ''}">${isNew ? l.n : l.o}</span>${isNew ? textCell(l, cls) : `<span class="tx ${cls}">${esc(l.text) || ' '}</span>`}`
+    return `<span class="no ${cls} ${isNew ? 'ns' : ''}">${isNew ? l.n : l.o}</span>${textCell(l, cls)}`
   }
   let out = '', dels = [], adds = []
   const flush = () => {
@@ -440,96 +430,37 @@ function setDiffMode(m) {
   post('/api/config', state.config).catch(e => setStatus(e.message, 'err'))
 }
 
-// ---------- inline hunk edits ----------
-// Only the new version is editable, and only where it is the working tree: not staged, commit, or ref ranges.
-// Hidden whitespace is excluded because `git diff -w` context lines may not match the file on disk.
-function canEdit(f) {
-  return EDITABLE.includes(scope()) && !$('#ignore-ws').checked && !f.isDeleted && !f.binary && !f.note && !!state.status?.git
+// ---------- jump between review and editor ----------
+// The editor opens on the double-clicked line; line numbers only match the file when the diff's new side is the working tree.
+function openAtLine(path, line) {
+  openFile(path, { line: EDITABLE.includes(scope()) ? line : 0, fromReview: true })
 }
 
-async function startEdit(i, hi, line) {
-  const f = state.diffFiles[i], h = f?.hunks[hi]
-  if (!h || !canEdit(f)) return setStatus(EDITABLE.includes(scope()) ? 'Turn off “Hide whitespace” to edit' : 'Only the working-tree version can be edited — switch to All changes or Unstaged')
-  if (state.edit && !dropEdit()) return
-  let file
-  try { file = await fetchFile(f.path) } catch (e) { return setStatus(e.message, 'err') }
-  if (file.binary) return setStatus('Binary file — not editable', 'err')
-  const lines = file.content.split('\n')
-  const want = h.lines.filter(l => l.n != null)
-  const start = want.length ? want[0].n - 1 : h.nStart
-  const current = lines.slice(start, start + want.length)
-  // The diff can be a moment old; never splice into lines that no longer match what is on screen.
-  if (current.join('\n') !== want.map(l => l.text).join('\n')) {
-    setStatus(`${f.path} changed on disk since this diff loaded — reloaded it`, 'err')
-    return loadDiff()
-  }
-  const crlf = current.length ? current.every(l => l.endsWith('\r')) : file.content.includes('\r\n')
-  const draft = current.map(l => crlf ? l.slice(0, -1) : l).join('\n')
-  state.edit = { path: f.path, hi, start, count: want.length, lines, hash: file.hash, crlf, draft, orig: draft }
-  state.folded.set(f.path, false)
-  // Editor rows are as tall as diff rows, so keeping the scroll position leaves the clicked line under the pointer.
-  const view = $('#diff'), top = view.scrollTop
-  rerenderFile(i)
-  const ta = $('#diff .hedit')
-  if (!ta) return
-  const upto = line ? draft.split('\n').slice(0, Math.max(0, line - 1 - start)).join('\n').length + (line - 1 > start ? 1 : 0) : 0
-  ta.focus({ preventScroll: true })
-  ta.setSelectionRange(upto, upto)
-  view.scrollTop = top
-  setStatus(`Editing ${f.path}`)
-}
-
-// dropEdit forgets the draft, asking first if it has changes. It returns false if the user keeps it.
-function dropEdit() {
-  const ed = state.edit
-  if (!ed) return true
-  if (ed.draft !== ed.orig && !confirm(`Discard your edit to ${ed.path}?`)) return false
-  state.edit = null
-  setStatus(`Cancelled edit to ${ed.path}`)
-  const i = state.diffFiles.findIndex(f => f.path === ed.path)
-  if (i >= 0) rerenderFile(i)
-  if (state.diffPending) loadDiff()
-  return true
-}
-
-async function saveEdit() {
-  const ed = state.edit
-  if (!ed) return
-  const next = ed.lines.slice()
-  // An empty draft removes the lines instead of leaving one blank line behind.
-  next.splice(ed.start, ed.count, ...(ed.draft === '' ? [] : ed.draft.split('\n').map(l => ed.crlf ? l + '\r' : l)))
-  const wasDone = reviewState(ed.path) === 'done'
-  try {
-    const res = await post('/api/file', { action: 'save', path: ed.path, content: next.join('\n'), baseHash: ed.hash })
-    // Your own edit should not undo your review.
-    if (wasDone) { state.reviewed[ed.path] = res.hash; saveReviewed() }
-    state.edit = null
-    setStatus('Saved ' + ed.path, 'ok')
-    await refreshAll()
-  } catch (e) {
-    setStatus(e.status === 409 ? `${ed.path} changed on disk while you were editing — your draft is kept; copy it, then Cancel to reload` : e.message, 'err')
-  }
-}
-
-function editCurrentHunk() {
+function openCurrentHunk() {
+  const f = state.diffFiles[state.current]
+  if (!f || f.isDeleted) return
   const sec = $(`#diff .dfile[data-i="${state.current}"]`)
-  const h = sec?.querySelector('.hunk.current') || sec?.querySelector('.hunk')
-  if (h) startEdit(state.current, +h.dataset.h)
+  const h = f.hunks[+(sec?.querySelector('.hunk.current') || sec?.querySelector('.hunk'))?.dataset.h]
+  const first = h?.lines.find(l => l.t === 'add' || l.t === 'del')
+  openAtLine(f.path, first ? first.n ?? first.at : 1)
 }
 
-function rerenderFile(i) {
-  const sec = $(`#diff .dfile[data-i="${i}"]`)
-  if (!sec) return
-  sec.outerHTML = fileHTML(state.diffFiles[i], i)
-  state.justStamped = ''
-  state.current = -1
+// Esc in the editor returns to the diff line nearest the caret.
+function backToReview() {
+  const ed = $('#editor'), path = state.returnTo
+  const line = ed.value.slice(0, ed.selectionStart).split('\n').length
+  state.returnTo = ''
+  ed.blur()
+  setMode('diff')
+  const i = state.diffFiles.findIndex(f => f.path === path)
+  if (i < 0) return
+  if (isFolded(state.diffFiles[i])) { state.folded.set(path, false); rerenderFile(i) }
+  const view = $('#diff')
+  const cells = [...view.querySelectorAll(`.dfile[data-i="${i}"] .tx[data-n]`)]
+  if (!cells.length) return goFile(i)
+  const best = cells.reduce((a, c) => Math.abs(c.dataset.n - line) < Math.abs(a.dataset.n - line) ? c : a)
+  view.scrollTop = offsetIn(best, view) - view.clientHeight / 3
   updateCurrent()
-}
-
-function toggleFold(i) {
-  const f = state.diffFiles[i]
-  state.folded.set(f.path, !isFolded(f))
-  rerenderFile(i)
 }
 
 // Position of an element inside the diff scroller, independent of offsetParent quirks.
@@ -586,7 +517,6 @@ async function goTo(path) {
   setMode('diff')
   let i = state.diffFiles.findIndex(f => f.path === path)
   if (i < 0 && state.changes.has(path) && scope() !== 'head') {
-    if (!dropEdit()) return
     $('#diff-scope').value = 'head'
     syncScopeInputs()
     await loadDiff()
@@ -602,7 +532,6 @@ function syncScopeInputs() {
   $('#diff-commit').hidden = scope() !== 'commit'
   $('#ignore-ws').closest('label').hidden = false
   if (scope() !== 'commit') state.commit = ''
-  state.lastScope = scope()
   renderHistoryCurrent()
 }
 
@@ -611,22 +540,46 @@ async function fetchFile(path) {
   return api(`/api/file?path=${encodeURIComponent(path)}`)
 }
 
-async function openFile(path, focus = false) {
+// The textarea turns CRLF into LF, so tabs hold LF text and remember the file's line ending for saving.
+// A file that mixes endings is saved with LF.
+function fromDisk(data) {
+  const crlf = data.content.includes('\r\n') && !/(^|[^\r])\n/.test(data.content)
+  const content = data.content.replace(/\r\n/g, '\n')
+  return { content, saved: content, eol: crlf ? '\r\n' : '\n', hash: data.hash, binary: data.binary, conflict: '' }
+}
+
+async function openFile(path, { line = 0, fromReview = false } = {}) {
   let i = state.tabs.findIndex(t => t.path === path)
   if (i < 0) {
     try {
       const data = await fetchFile(path)
-      state.tabs.push({ path, content: data.content, saved: data.content, hash: data.hash, binary: data.binary, mode: 'view', conflict: '', seen: state.changes.get(path)?.hash ?? null })
+      state.tabs.push({ path, ...fromDisk(data), seen: state.changes.get(path)?.hash ?? null })
       i = state.tabs.length - 1
     } catch (e) { return setStatus(e.message, 'err') }
   }
   state.active = i
   state.selected = path
+  state.returnTo = fromReview ? path : ''
   setMode('file')
   renderTabs()
   renderTree()
-  if (focus && activeTab().mode === 'edit') $('#editor').focus()
-  setStatus(path)
+  if (line && !activeTab().binary) placeCaret(line)
+  setStatus(fromReview ? `${path} — Esc returns to review` : path)
+}
+
+function placeCaret(line) {
+  const ed = $('#editor'), text = ed.value
+  let at = 0
+  for (let k = 1; k < line; k++) {
+    const nl = text.indexOf('\n', at)
+    if (nl < 0) break
+    at = nl + 1
+  }
+  ed.focus({ preventScroll: true })
+  ed.setSelectionRange(at, at)
+  ed.scrollTop = Math.max(0, (line - 1) * LINE - ed.clientHeight / 3)
+  ed.scrollLeft = 0
+  paintGutter()
 }
 
 function closeTab(i) {
@@ -645,27 +598,168 @@ function renderTabs() {
 function renderEditor() {
   const file = state.mode === 'file'
   const tab = activeTab()
-  const editing = file && tab?.mode === 'edit' && !tab.binary
-  $('#edit-toggle').hidden = !file || !tab || tab.binary
-  $('#save').hidden = !file || !tab || tab.binary
+  const editing = file && !!tab && !tab.binary
+  $('#save').hidden = !editing
   $('#file-path').innerHTML = tab ? `${dirname(tab.path) ? `<i>${esc(dirname(tab.path))}/</i>` : ''}<b>${esc(basename(tab.path))}</b>` : ''
   $('#file-crumb').hidden = !file || !tab
-  $('#stage-count').textContent = tab && !tab.binary ? `${tab.content.split('\n').length} lines${tab.content !== tab.saved ? ' · unsaved' : ''}` : ''
+  $('#stage-count').textContent = editing ? `${lineCount(tab)} lines${tab.content !== tab.saved ? ' · unsaved' : ''}` : ''
   $('#highlight').classList.toggle('active', file && !editing)
   $('#editor').classList.toggle('active', editing)
+  $('#gutter').classList.toggle('active', editing)
   $('#save').disabled = !tab || tab.content === tab.saved
-  $('#edit-toggle').textContent = tab?.mode === 'edit' ? 'Done' : 'Edit'
   if (editing && $('#editor').value !== tab.content) $('#editor').value = tab.content
   if (file && !editing) {
-    if (!tab) $('#highlight').innerHTML = `<div class="empty"><b>No file open</b>Press <kbd>⌘K</kbd> or pick a file from the sidebar.</div>`
-    else if (tab.binary) $('#highlight').innerHTML = `<div class="empty"><b>Binary file</b>Not shown.</div>`
-    else {
-      const lines = tab.content.split('\n')
-      if (lines.length > 1 && lines.at(-1) === '') lines.pop()
-      $('#highlight').innerHTML = lines.map(l => `<span class="l">${esc(l) || ' '}</span>`).join('')
-    }
+    $('#highlight').innerHTML = !tab
+      ? `<div class="empty"><b>No file open</b>Press <kbd>⌘K</kbd> or pick a file from the sidebar.</div>`
+      : `<div class="empty"><b>Binary file</b>Not shown.</div>`
   }
   renderBanner()
+  refreshGutter()
+}
+
+// ---------- change bars ----------
+// Bars beside the line numbers compare the editor text with HEAD (staged lines drawn hollow) or with the index.
+const LINE = 20, PAD = 10
+const gutterBase = () => state.config.gutterBase === 'index' ? 'index' : 'head'
+
+function lineCount(tab) {
+  if (tab.countFor !== tab.content) { tab.countFor = tab.content; tab.count = tab.content.split('\n').length }
+  return tab.count
+}
+
+// Bases are refetched whenever the status changes, since a commit or stage moves HEAD or the index.
+async function ensureBase(tab) {
+  if (!state.status?.git) { tab.base = null; return }
+  if (tab.base?.seq === state.statusSeq) return
+  const seq = state.statusSeq
+  const get = rev => api(`/api/file?path=${encodeURIComponent(tab.path)}&rev=${rev}`)
+  try {
+    const [head, index] = await Promise.all([get('head'), get('index')])
+    tab.base = { seq, head, index }
+  } catch { tab.base = null }
+}
+
+async function refreshGutter() {
+  const tab = activeTab()
+  if (state.mode !== 'file' || !tab || tab.binary) return paintGutter()
+  await ensureBase(tab)
+  if (tab !== activeTab()) return
+  computeMarks(tab)
+  paintGutter()
+}
+
+function computeMarks(tab) {
+  const b = tab.base
+  const key = `${b?.seq}|${gutterBase()}`
+  if (tab.marksFor === tab.content && tab.marksKey === key) return
+  tab.marksFor = tab.content
+  tab.marksKey = key
+  tab.marks = null
+  if (!b || b.head.binary || b.index.binary) return
+  // Ignored files are in neither HEAD nor the index and never appear as changes, so they get no bars.
+  if (!b.head.exists && !b.index.exists && !state.changes.has(tab.path)) return
+  const cur = splitLines(tab.content)
+  const vsIndex = lineDiff(splitLines(b.index.exists ? b.index.content : ''), cur)
+  if (gutterBase() === 'index') { tab.marks = { kinds: vsIndex.marks, staged: [], dels: new Map([...vsIndex.dels].map(p => [p, false])) }; return }
+  const vsHead = lineDiff(splitLines(b.head.exists ? b.head.content : ''), cur)
+  // A line that differs from HEAD but not from the index is staged. Unstaged edits on top win.
+  const staged = vsHead.marks.map((k, i) => !!k && !vsIndex.marks[i])
+  // Unstaged deletions come from the index diff: next to a staged edit, HEAD sees the pair as one modified block.
+  const dels = new Map([...vsHead.dels].map(p => [p, !vsIndex.dels.has(p)]))
+  for (const p of vsIndex.dels) dels.set(p, false)
+  tab.marks = { kinds: vsHead.marks, staged, dels }
+}
+
+// Lines without the empty string after a final newline, so the phantom last line never gets a bar.
+function splitLines(text) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n')
+  if (lines.length && lines.at(-1) === '') lines.pop()
+  return lines
+}
+
+// lineDiff compares line arrays: marks[i] is 'add' or 'mod' for changed lines of b, and dels holds the
+// b positions where lines of a were removed with nothing added in their place.
+function lineDiff(a, b) {
+  let s = 0
+  while (s < a.length && s < b.length && a[s] === b[s]) s++
+  let ea = a.length, eb = b.length
+  while (ea > s && eb > s && a[ea - 1] === b[eb - 1]) { ea--; eb-- }
+  const marks = [], dels = new Set()
+  const ops = myers(a.slice(s, ea), b.slice(s, eb))
+  if (!ops) {
+    // Too different to diff cheaply: call the whole middle modified.
+    for (let i = s; i < eb; i++) marks[i] = 'mod'
+    if (eb === s && ea > s) dels.add(s)
+    return { marks, dels }
+  }
+  let j = s, removed = 0, added = []
+  const flush = () => {
+    for (const k of added) marks[k] = removed ? 'mod' : 'add'
+    if (removed && !added.length) dels.add(j)
+    removed = 0; added = []
+  }
+  for (const op of ops) {
+    if (op === '=') { flush(); j++ }
+    else if (op === '-') removed++
+    else { added.push(j); j++ }
+  }
+  flush()
+  return { marks, dels }
+}
+
+// Myers' O(ND) diff, returning '=', '-', '+' ops, or null when the edit distance passes the limit.
+function myers(a, b, limit = 2000) {
+  const n = a.length, m = b.length
+  if (!n) return Array(m).fill('+')
+  if (!m) return Array(n).fill('-')
+  const max = n + m, off = max
+  const v = new Int32Array(2 * max + 2)
+  const trace = []
+  for (let d = 0; d <= Math.min(max, limit); d++) {
+    for (let k = -d; k <= d; k += 2) {
+      let x = k === -d || (k !== d && v[off + k - 1] < v[off + k + 1]) ? v[off + k + 1] : v[off + k - 1] + 1
+      let y = x - k
+      while (x < n && y < m && a[x] === b[y]) { x++; y++ }
+      v[off + k] = x
+      if (x >= n && y >= m) { trace.push(v.slice(off - d, off + d + 1)); return backtrack(trace, n, m) }
+    }
+    trace.push(v.slice(off - d, off + d + 1))
+  }
+  return null
+}
+
+function backtrack(trace, n, m) {
+  const ops = []
+  let x = n, y = m
+  for (let d = trace.length - 1; d > 0; d--) {
+    const prev = trace[d - 1], at = kk => prev[kk + d - 1]
+    const k = x - y
+    const pk = k === -d || (k !== d && at(k - 1) < at(k + 1)) ? k + 1 : k - 1
+    const px = at(pk), py = px - pk
+    while (x > px && y > py) { ops.push('='); x--; y-- }
+    if (pk === k + 1) { ops.push('+'); y-- } else { ops.push('-'); x-- }
+  }
+  while (x > 0 && y > 0) { ops.push('='); x--; y-- }
+  return ops.reverse()
+}
+
+// Only the visible rows are drawn, so large files cost the same as small ones.
+function paintGutter() {
+  const g = $('#gutter'), ed = $('#editor'), tab = activeTab()
+  if (state.mode !== 'file' || !tab || tab.binary) { g.innerHTML = ''; return }
+  const n = lineCount(tab), mk = tab.marks
+  const first = Math.max(0, Math.floor((ed.scrollTop - PAD) / LINE) - 2)
+  const last = Math.min(n, first + Math.ceil(ed.clientHeight / LINE) + 4)
+  let h = ''
+  for (let i = first; i < last; i++) {
+    const kind = mk?.kinds[i], del = mk?.dels.get(i), end = i === n - 1 ? mk?.dels.get(n) : undefined
+    h += `<div class="gl" style="top:${PAD + i * LINE - ed.scrollTop}px">${i + 1}`
+      + (kind ? `<i class="gb ${kind}${mk.staged[i] ? ' staged' : ''}" title="${kind === 'add' ? 'Added' : 'Modified'}${mk.staged[i] ? ', staged' : ''}"></i>` : '')
+      + (del !== undefined ? `<i class="gd${del ? ' staged' : ''}"></i>` : '')
+      + (end !== undefined ? `<i class="gd end${end ? ' staged' : ''}"></i>` : '')
+      + '</div>'
+  }
+  g.innerHTML = h
 }
 
 function renderBanner() {
@@ -680,8 +774,7 @@ function renderBanner() {
 }
 
 async function reloadTab(tab) {
-  const data = await fetchFile(tab.path)
-  Object.assign(tab, { content: data.content, saved: data.content, hash: data.hash, binary: data.binary, conflict: '' })
+  Object.assign(tab, fromDisk(await fetchFile(tab.path)))
 }
 
 // Keep open tabs honest when an agent edits files: clean tabs reload quietly, dirty ones get a banner.
@@ -698,7 +791,7 @@ async function syncTabs() {
     }
     if (data.hash === tab.hash) continue
     if (tab.content === tab.saved) {
-      Object.assign(tab, { content: data.content, saved: data.content, hash: data.hash, binary: data.binary, conflict: '' })
+      Object.assign(tab, fromDisk(data))
       if (tab === activeTab()) setStatus(`Reloaded ${tab.path} — it changed on disk`)
     } else tab.conflict = 'changed'
     changed = true
@@ -709,10 +802,14 @@ async function syncTabs() {
 async function saveFile(force = false) {
   const tab = activeTab()
   if (!tab || tab.binary || state.mode !== 'file') return
-  if (tab.mode === 'edit') tab.content = $('#editor').value
+  tab.content = $('#editor').value
+  const wasDone = reviewState(tab.path) === 'done'
   try {
-    const res = await post('/api/file', { action: 'save', path: tab.path, content: tab.content, baseHash: force ? '' : tab.hash })
+    const content = tab.eol === '\r\n' ? tab.content.replace(/\n/g, '\r\n') : tab.content
+    const res = await post('/api/file', { action: 'save', path: tab.path, content, baseHash: force ? '' : tab.hash })
     Object.assign(tab, { saved: tab.content, hash: res.hash, conflict: '' })
+    // Your own edit to a file you already reviewed should not undo the review.
+    if (wasDone) { state.reviewed[tab.path] = res.hash; saveReviewed() }
     renderTabs(); renderEditor()
     setStatus('Saved ' + tab.path, 'ok')
   } catch (e) {
@@ -953,25 +1050,17 @@ $('#diff').addEventListener('click', e => {
   const i = +sec.dataset.i, f = state.diffFiles[i]
   const act = e.target.closest('[data-act]')?.dataset.act
   if (act === 'review') toggleReviewed(f.path)
-  else if (act === 'open') openFile(f.path)
+  else if (act === 'open') openFile(f.path, { fromReview: true })
   else if (act === 'stage') stageToggle(f.path)
   else if (act === 'discard') gitAction({ action: 'discard', paths: [f.path] })
-  else if (act === 'edit') startEdit(i, +e.target.closest('.hunk').dataset.h)
-  else if (act === 'edit-save') saveEdit()
-  else if (act === 'edit-cancel') dropEdit()
   else if (e.target.closest('.dfile-head')) toggleFold(i)
 })
 $('#diff').addEventListener('dblclick', e => {
-  const cell = e.target.closest('.hunk.editable .tx[data-n]')
-  if (!cell) return
+  const cell = e.target.closest('.tx[data-n]')
+  const f = cell && state.diffFiles[+cell.closest('.dfile').dataset.i]
+  if (!f || f.isDeleted) return
   window.getSelection()?.removeAllRanges()
-  startEdit(+cell.closest('.dfile').dataset.i, +cell.closest('.hunk').dataset.h, +cell.dataset.n)
-})
-$('#diff').addEventListener('input', e => {
-  if (!e.target.classList.contains('hedit') || !state.edit) return
-  state.edit.draft = e.target.value
-  e.target.style.height = 'auto'
-  e.target.style.height = e.target.scrollHeight + 'px'
+  openAtLine(f.path, +cell.dataset.n)
 })
 let scrollFrame
 $('#diff').addEventListener('scroll', () => { cancelAnimationFrame(scrollFrame); scrollFrame = requestAnimationFrame(updateCurrent) })
@@ -979,7 +1068,7 @@ $('#tabs').addEventListener('click', e => {
   const close = e.target.closest('[data-close]')
   if (close) return closeTab(+close.dataset.close)
   const tab = e.target.closest('.tab')
-  if (tab) { state.active = +tab.dataset.i; setMode('file'); renderTree() }
+  if (tab) { state.active = +tab.dataset.i; state.returnTo = ''; setMode('file'); renderTree() }
 })
 $('#banner').addEventListener('click', async e => {
   const act = e.target.closest('[data-banner]')?.dataset.banner
@@ -1012,7 +1101,6 @@ $('#history').addEventListener('click', async e => {
     setTimeout(() => row.classList.remove('copied'), 1200)
     setStatus(`Copied ${row.dataset.hash} to the clipboard`, 'ok')
   } catch (err) { setStatus('Could not copy the commit id: ' + err.message, 'err') }
-  if (!dropEdit()) return
   state.commit = row.dataset.hash
   $('#diff-scope').value = 'commit'
   $('#diff-commit').value = row.dataset.short
@@ -1028,14 +1116,6 @@ $('#stashes').addEventListener('click', e => {
   if (b) gitAction({ action: 'stash:apply', stashRef: b.dataset.ref })
 })
 
-$('#edit-toggle').onclick = () => {
-  const t = activeTab()
-  if (!t) return
-  if (t.mode === 'edit') t.content = $('#editor').value
-  t.mode = t.mode === 'edit' ? 'view' : 'edit'
-  renderEditor()
-  if (t.mode === 'edit') $('#editor').focus()
-}
 $('#editor').addEventListener('input', () => {
   const t = activeTab()
   if (!t) return
@@ -1043,7 +1123,13 @@ $('#editor').addEventListener('input', () => {
   const dirty = t.content !== t.saved
   $(`#tabs .tab[data-i="${state.active}"]`)?.classList.toggle('dirty', dirty)
   $('#save').disabled = !dirty
+  $('#stage-count').textContent = `${lineCount(t)} lines${dirty ? ' · unsaved' : ''}`
+  paintGutter()
+  clearTimeout(marksTimer)
+  marksTimer = setTimeout(() => { if (t === activeTab()) { computeMarks(t); paintGutter() } }, 120)
 })
+let marksTimer, gutterFrame
+$('#editor').addEventListener('scroll', () => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(paintGutter) })
 $('#new-file').onclick = () => fileAction('create')
 $('#rename-file').onclick = () => fileAction('rename')
 $('#delete-file').onclick = () => fileAction('delete')
@@ -1065,18 +1151,17 @@ $('#merge').onclick = () => gitAction({ action: 'merge', from: $('#branch-select
 $('#rebase').onclick = () => gitAction({ action: 'rebase', from: $('#branch-select').value })
 $('#stash-create').onclick = () => gitAction({ action: 'stash:create', message: $('#stash-message').value }).then(() => { $('#stash-message').value = '' })
 $('#file-filter').oninput = () => { renderQueue(); renderTree() }
-$('#diff-scope').onchange = () => {
-  if (!dropEdit()) { $('#diff-scope').value = state.lastScope; return }
-  syncScopeInputs(); $('#diff').scrollTop = 0; loadDiff()
-}
-$('#ignore-ws').onchange = () => {
-  if (!dropEdit()) { $('#ignore-ws').checked = !$('#ignore-ws').checked; return }
-  loadDiff()
-}
+$('#diff-scope').onchange = () => { syncScopeInputs(); $('#diff').scrollTop = 0; loadDiff() }
+$('#ignore-ws').onchange = loadDiff
 document.querySelectorAll('.layout-switch button').forEach(b => b.onclick = () => setDiffMode(b.dataset.layout))
 for (const id of ['#diff-from', '#diff-to', '#diff-commit']) $(id).addEventListener('keydown', e => { if (e.key === 'Enter') loadDiff() })
 $('#help-open').onclick = () => { $('#help').hidden = false }
 $('#help').onclick = e => { if (e.target === $('#help') || e.target.dataset.close !== undefined) $('#help').hidden = true }
+$('#gutter-base').onchange = () => {
+  state.config.gutterBase = $('#gutter-base').value
+  refreshGutter()
+  post('/api/config', state.config).then(() => setStatus('Settings saved', 'ok'), e => setStatus(e.message, 'err'))
+}
 $('#vim-mode').onchange = async () => {
   state.config.vim = $('#vim-mode').checked
   try { await post('/api/config', state.config); setStatus('Settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
@@ -1103,15 +1188,14 @@ document.addEventListener('keydown', e => {
     else if (k === 'b') { e.preventDefault(); toggleTree() }
     else if (k === 'j') { e.preventDefault(); toggleLedger() }
     else if (k === 'd') { e.preventDefault(); setMode(state.mode === 'diff' ? 'file' : 'diff') }
-    else if (k === 's') { e.preventDefault(); e.target.classList?.contains('hedit') ? saveEdit() : saveFile() }
+    else if (k === 's') { e.preventDefault(); saveFile() }
     else if (e.key === 'Enter' && e.target.id === 'commit-message') { e.preventDefault(); $('#commit').click() }
-    else if (e.key === 'Enter' && e.target.classList?.contains('hedit')) { e.preventDefault(); saveEdit() }
     return
   }
-  if (e.key === 'Escape' && e.target.classList?.contains('hedit')) { e.preventDefault(); dropEdit(); return }
+  if (e.key === 'Escape' && e.target.id === 'editor' && state.returnTo && state.returnTo === activeTab()?.path) { e.preventDefault(); backToReview(); return }
   if (e.key === 'Escape') { $('#help').hidden = true; toggleThemes(false); if (typing(e)) e.target.blur(); return }
   if (typing(e) || e.altKey) return
-  const vimStep = dir => { if (state.config.vim && state.mode === 'file') $('#highlight').scrollBy(0, dir * 60) }
+  const vimStep = dir => { if (state.config.vim && state.mode === 'file') $('#editor').scrollBy(0, dir * 60) }
   switch (e.key) {
     case '?': $('#help').hidden = false; break
     case 'n': stepFile(1); break
@@ -1119,17 +1203,18 @@ document.addEventListener('keydown', e => {
     case 'j': state.mode === 'diff' ? stepHunk(1) : vimStep(1); break
     case 'k': state.mode === 'diff' ? stepHunk(-1) : vimStep(-1); break
     case 'x': { const p = currentPath(); if (p && state.mode === 'diff') toggleReviewed(p, true); break }
-    case 'e': if (state.mode === 'diff') editCurrentHunk(); break
-    case 'o': { const p = currentPath(); if (p && state.mode === 'diff' && !state.diffFiles[state.current]?.isDeleted) openFile(p); break }
+    case 'e': if (state.mode === 'diff') openCurrentHunk(); break
+    case 'o': { const p = currentPath(); if (p && state.mode === 'diff' && !state.diffFiles[state.current]?.isDeleted) openFile(p, { fromReview: true }); break }
     default: return
   }
   e.preventDefault()
 })
-window.addEventListener('beforeunload', e => { if (state.tabs.some(t => t.content !== t.saved) || (state.edit && state.edit.draft !== state.edit.orig)) e.preventDefault() })
+window.addEventListener('beforeunload', e => { if (state.tabs.some(t => t.content !== t.saved)) e.preventDefault() })
 
 async function loadConfig() {
   try { state.config = await api('/api/config'); $('#vim-mode').checked = !!state.config.vim } catch {}
   if (state.config.diffMode !== 'split') state.config.diffMode = 'unified'
+  $('#gutter-base').value = gutterBase()
   document.querySelectorAll('.layout-switch button').forEach(b => b.classList.toggle('on', b.dataset.layout === state.config.diffMode))
   if (state.diffFiles.length) renderDiff()
   applyTheme()

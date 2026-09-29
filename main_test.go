@@ -184,6 +184,43 @@ func TestDiffIncludesUntracked(t *testing.T) {
 	}
 }
 
+func TestFileRev(t *testing.T) {
+	a := testRepo(t)
+	stage := exec.Command("git", "add", "keep.txt")
+	stage.Dir = a.root
+	if out, err := stage.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+	_ = os.WriteFile(filepath.Join(a.root, "keep.txt"), []byte("on disk\n"), 0o644)
+	cases := map[string]struct {
+		path, rev, want string
+		exists          bool
+	}{
+		"head":          {"keep.txt", "head", "one\ntwo\n", true},
+		"index":         {"keep.txt", "index", "one\n2\nthree\n", true},
+		"untracked":     {"agent.txt", "head", "", false},
+		"unknown rev":   {"keep.txt", "HEAD~1", "", false},
+		"escaping path": {"../x", "head", "", false},
+	}
+	for name, c := range cases {
+		w := request(a, "GET", "/api/file?path="+c.path+"&rev="+c.rev, "")
+		if name == "unknown rev" || name == "escaping path" {
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("%s: status %d, want 400", name, w.Code)
+			}
+			continue
+		}
+		var got struct {
+			Exists  bool
+			Content string
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &got)
+		if got.Exists != c.exists || got.Content != c.want {
+			t.Errorf("%s: got %+v, want %q exists=%v", name, got, c.want, c.exists)
+		}
+	}
+}
+
 func TestSaveRejectsStaleBase(t *testing.T) {
 	a := testRepo(t)
 	w := request(a, "GET", "/api/file?path=keep.txt", "")

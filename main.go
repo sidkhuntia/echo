@@ -37,6 +37,7 @@ type Config struct {
 	Vim        bool           `json:"vim"`
 	Theme      string         `json:"theme"`
 	DiffMode   string         `json:"diffMode"`
+	GutterBase string         `json:"gutterBase"`
 	Panels     []string       `json:"panels"`
 	PanelSizes map[string]int `json:"panelSizes"`
 }
@@ -244,6 +245,10 @@ func (a *App) handleFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if rev := r.URL.Query().Get("rev"); rev != "" {
+		a.handleFileRev(w, rel, rev)
+		return
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -255,6 +260,31 @@ func (a *App) handleFile(w http.ResponseWriter, r *http.Request) {
 		content = ""
 	}
 	writeJSON(w, map[string]any{"path": filepath.ToSlash(rel), "content": content, "hash": sig.hash, "binary": sig.binary})
+}
+
+// handleFileRev returns a file as it is at HEAD or in the index, for the editor's change bars.
+// A path missing from that version is not an error: it reports exists=false, as for a new file.
+func (a *App) handleFileRev(w http.ResponseWriter, rel, rev string) {
+	var object string
+	switch rev {
+	case "head":
+		object = "HEAD:./" + filepath.ToSlash(rel)
+	case "index":
+		object = ":./" + filepath.ToSlash(rel)
+	default:
+		http.Error(w, "unknown rev", http.StatusBadRequest)
+		return
+	}
+	out, err := a.git("show", object)
+	if err != nil {
+		writeJSON(w, map[string]any{"exists": false, "content": ""})
+		return
+	}
+	sig, _ := readSig(strings.NewReader(out))
+	if sig.binary {
+		out = ""
+	}
+	writeJSON(w, map[string]any{"exists": true, "content": out, "binary": sig.binary})
 }
 
 func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
@@ -856,7 +886,7 @@ func parseStashes(s string) []Stash {
 }
 
 func loadConfig() Config {
-	cfg := Config{DiffMode: "unified", Panels: []string{"tree", "editor", "git"}, PanelSizes: map[string]int{}}
+	cfg := Config{DiffMode: "unified", GutterBase: "head", Panels: []string{"tree", "editor", "git"}, PanelSizes: map[string]int{}}
 	data, err := os.ReadFile(configPath())
 	if err == nil {
 		_ = json.Unmarshal(data, &cfg)

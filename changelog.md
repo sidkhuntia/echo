@@ -3,7 +3,9 @@
 ## Unreleased
 
 - Added a Stacked / Split switch for diffs; split shows the old version on the left and the new on the right. The choice is saved in the config.
-- Hunks can be edited in place while reviewing, on the new (working-tree) version only: use the hunk's Edit button, `e`, or double-click a line. Saves refuse to overwrite a file an agent changed in the meantime, and keep CRLF endings.
+- Double-click any diff line, or press `e`, to open the file in the editor on that line; `Esc` returns to the same place in the review.
+- The Files editor is always editable (no Edit toggle) and has a gutter with line numbers and change bars: added, modified, and deleted lines, with staged changes drawn hollow. A setting switches the comparison between HEAD and the index.
+- Fixed: saving a CRLF file from the editor no longer converts it to LF.
 - History rows now show the author's full name and a relative time; clicking a commit copies its full id and shows its diff.
 - Redesigned the interface as a minimal three-pane layout: a title bar with "Go to file", progress, and panel toggles; a sidebar; the Review/Files surface; and a Git panel with Commit and History tabs.
 - Added 14 open-source themes (echo ink/paper, GitHub, Solarized, Catppuccin, Rosé Pine, Nord, Gruvbox, Tokyo Night, Dracula) with a searchable theme picker; "System" follows macOS appearance, and the choice is saved in the config.

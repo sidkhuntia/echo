@@ -14,16 +14,17 @@ Open the printed local URL in a browser. The app starts in the current Terminal 
 
 - collapsible folder tree with path filter
 - multi-file tabs with in-memory unsaved edits
-- read-only file view and plain textarea editing
+- plain textarea editor, always editable
 - review queue of changed files with reviewed marks that reset when a file changes again
 - per-file diffs including untracked files; all-changes, unstaged, staged, ref-range, and single-commit scopes
 - stacked or split diff layout
-- inline edits of a hunk's new version while reviewing
+- double-click a diff line to edit the file there; the editor gutter shows changes vs HEAD (staged hollow) or the index
 - history with author names; clicking a commit copies its id
 - saves never overwrite a file an agent changed after you opened it
-- keys: `n`/`p` file, `j`/`k` hunk, `x` mark reviewed, `e` edit hunk, `o` open, `⌘K` find a file
+- keys: `n`/`p` file, `j`/`k` hunk, `x` mark reviewed, `e` edit at hunk, `o` open, `⌘K` find a file
 - file create, rename, delete
 - stage, unstage, discard
+- test 2
 - commit, amend, rebase, pull, push, branch create/switch, merge
 - stash create/apply
 - live Git status over SSE

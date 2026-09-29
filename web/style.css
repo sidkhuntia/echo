@@ -299,7 +299,18 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 .code-view, .editor, .diff-view { position: absolute; inset: 0; display: none; overflow: auto; margin: 0; }
 .code-view.active, .editor.active, .diff-view.active { display: block; }
 .code-view, .editor { background: var(--sunk); font: 12.5px/20px var(--mono); tab-size: 4; }
-.editor { width: 100%; height: 100%; resize: none; border: 0; outline: none; padding: 10px 18px 40vh 74px; color: var(--fg); }
+.editor { width: 100%; height: 100%; resize: none; border: 0; outline: none; padding: 10px 18px 40vh 72px; color: var(--fg); }
+
+/* editor gutter: line numbers and change bars; solid = unstaged, hollow = staged */
+.gutter { position: absolute; top: 0; left: 0; bottom: 0; width: 60px; display: none; overflow: hidden; pointer-events: none; background: var(--sunk); z-index: 1; }
+.gutter.active { display: block; }
+.gl { position: absolute; left: 0; width: 60px; height: 20px; padding-right: 16px; text-align: right; font: 11px/20px var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
+.gb { position: absolute; top: 1px; bottom: 1px; right: 4px; width: 4px; border-radius: 1px; color: var(--add); background: currentColor; }
+.gb.mod { color: var(--info); }
+.gb.staged { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
+.gd { position: absolute; top: -5px; right: 2px; width: 0; height: 0; border: 5px solid transparent; border-left: 7px solid var(--del); }
+.gd.end { top: auto; bottom: -5px; }
+.gd.staged { opacity: .45; }
 .editor:focus { box-shadow: inset 2px 0 0 var(--accent); }
 .code-view { padding: 10px 0 40vh; counter-reset: ln; color: var(--fg-2); }
 .code-view .l { display: block; white-space: pre; padding-right: 24px; min-width: max-content; }
@@ -380,12 +391,6 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 .hunk .r-del.sg { color: var(--del); box-shadow: inset 2px 0 0 var(--del-strong); }
 .hunk .r-add.no, .hunk .r-del.no { color: var(--muted); }
 .hunk .r-meta { color: var(--muted); font-style: italic; }
-.hunk-head .spacer { flex: 1; }
-.hunk-head .btn { height: 20px; }
-.hedit-open { opacity: 0; transition: opacity .12s; }
-.hunk:hover .hedit-open, .hunk.current .hedit-open { opacity: 1; }
-.hunk.editable .tx[data-n] { cursor: text; }
-
 /* split: old | new, lines wrap so both sides stay visible */
 .hunk.split { grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); min-width: 0; }
 .hunk.split > .tx { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 8px; padding-right: 12px; }
@@ -394,26 +399,9 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 .hunk.split .r-add.tx { box-shadow: inset 2px 0 0 var(--add-strong); }
 .hunk.split .r-del.tx { box-shadow: inset 2px 0 0 var(--del-strong); }
 .hunk.split .r-none { background: color-mix(in srgb, var(--fg) 3%, transparent); }
+.hunk .tx[data-n] { cursor: text; }
 .hunk.split .meta { grid-column: 1 / -1; padding: 0 12px; color: var(--muted); font-style: italic; }
 
-/* inline edit of a hunk's new version */
-.hunk.editing { display: block; min-width: 0; }
-.hunk.editing .hunk-head { color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
-.hedit {
-  display: block;
-  width: 100%;
-  min-height: 52px;
-  resize: vertical;
-  border: 0;
-  outline: none;
-  padding: 6px 18px 6px 18px;
-  background: var(--sunk);
-  color: var(--fg);
-  font: 12px/20px var(--mono);
-  tab-size: 4;
-  overflow-x: auto;
-  overflow-y: hidden;
-}
 .diff-empty { display: grid; place-items: center; height: 70%; }
 
 /* ---------- Git panel ---------- */
@@ -479,6 +467,8 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 .keys { display: grid; grid-template-columns: 110px 1fr; gap: 8px 14px; margin: 14px 16px; font-size: 12.5px; }
 .keys dd { margin: 0; color: var(--fg-2); }
 .modal-card .check { margin: 4px 16px 0; }
+.modal-sub { margin: 4px 16px 8px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 11px; font-weight: 600; color: var(--muted); }
+.setting { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 16px 10px; font-size: 12px; color: var(--muted); }
 .palette-card { width: min(620px, calc(100vw - 32px)); }
 #palette-input { width: 100%; border: 0; border-bottom: 1px solid var(--line); padding: 14px 16px; font-size: 15px; background: transparent; outline: none; }
 .palette-list { max-height: 50vh; overflow: auto; padding: 6px; }

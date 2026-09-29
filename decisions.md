@@ -152,17 +152,20 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** the editor should be a lightweight browser editor, not a full IDE.
 - **Accepted:** the first editor choice was a basic textarea/CodeMirror-style editor.
 - **Accepted:** the final v1 editor choice is a plain textarea.
-- **Accepted:** a read-only syntax-highlighted view and a plain textarea editing mode are both needed.
+- **Corrected decision:** a separate read-only view is not needed; the plain textarea is always editable.
 - **Accepted:** saving writes the file to disk.
-- **Accepted:** while reviewing, a hunk can be edited in place, but only its new version: the lines that exist in the working tree. Deleted lines are never editable.
-- **Accepted:** inline edits are offered only where the new side is the working tree (All changes and Unstaged). Staged, commit, and ref-range diffs are read-only.
-- **Default:** inline edits are disabled while "Hide whitespace" is on, because `git diff -w` context lines may not match the file on disk.
-- **Default:** an inline edit opens from a hunk's Edit button, `e` on the current hunk, or a double-click on a new-side line (the caret lands on that line). `⌘S`/`⌘↵` save and `Esc` cancels.
-- **Default:** before editing, the browser re-reads the file and checks that the hunk's new lines still match the disk; if not, it reloads the diff instead of editing stale text.
-- **Default:** an inline save splices the hunk into the file read at edit start and sends that file's hash, so the existing stale-save `409` protects agent edits. On a conflict the draft is kept.
-- **Default:** CRLF line endings are preserved, and an empty draft removes the hunk's lines.
-- **Default:** automatic diff reloads (SSE, actions) wait while a hunk is being edited, so the draft is never re-rendered away. Changing scope asks before discarding a changed draft.
-- **Default:** if the file was marked reviewed, your own inline edit keeps it reviewed.
+- **Accepted:** editing happens in the Files editor, not inside the diff. The diff is fragments of a file, typing would reflow it, and review keys would collide with a text cursor. A short-lived in-diff hunk editor was retired for this reason.
+- **Accepted:** double-clicking any diff line (in either layout) or pressing `e` opens the file in the editor with the caret on that line; a deleted line opens where it used to be. `Esc` in the editor returns to the review, at the diff line nearest the caret.
+- **Default:** the jump uses the diff's line numbers only where the new side is the working tree (All changes, Unstaged); other scopes open the file at the top.
+- **Accepted:** the Files editor is always editable; there is no separate view/edit toggle.
+- **Accepted:** the editor gutter shows line numbers and change bars: green for added lines, blue for modified lines, a red wedge where lines were deleted.
+- **Accepted:** a setting chooses what the bars compare against. HEAD (the default) shows every change since the last commit, with staged lines drawn hollow and unstaged lines solid. Index shows only unstaged changes, like most editors.
+- **Default:** the setting lives under Settings in the `?` card and is saved in the global config as `gutterBase` (`head` or `index`).
+- **Default:** the bars are computed in the browser with a Myers line diff against the file at HEAD and in the index (`GET /api/file?path=…&rev=head|index`), update as you type, and refetch their bases when the Git status changes. Past 2000 edits the changed region is simply marked modified.
+- **Default:** files that are in neither HEAD nor the index and are not in the change set (ignored files) get no bars.
+- **Default:** only visible gutter rows are drawn, so large files cost the same as small ones.
+- **Default:** the textarea turns CRLF into LF, so tabs hold LF text and a file whose line endings are all CRLF is saved back with CRLF. A file with mixed endings is saved with LF.
+- **Default:** saving a file you had marked reviewed keeps it reviewed, since the edit is your own.
 - **Accepted:** saving does not automatically stage the file.
 - **Accepted:** staging remains an explicit Git action.
 - **Accepted:** unsaved edits stay in memory per tab.
@@ -273,7 +276,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** panel sizes should be configurable.
 - **Accepted:** panel order should be configurable.
 - **Default:** the config file is stored under the OS user config directory as `echo/config.json`.
-- **Default:** the config contains vim mode, theme, diff mode, panel list, and panel sizes.
+- **Default:** the config contains vim mode, theme, diff mode, gutter base, panel list, and panel sizes.
 - **Default:** panel visibility toggles are available in the v1 header.
 - **Deferred:** draggable panel resizing.
 - **Deferred:** drag-to-reorder panel layout.
@@ -287,7 +290,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** vim mode is opt-in, not enabled by default.
 - **Accepted:** use familiar editor shortcuts where they fit the smaller scope.
 - **Default:** include shortcuts for file search, tree toggle, Git panel toggle, diff toggle, save, help, and escape.
-- **Default:** `e` edits the current hunk's new version in the review surface.
+- **Default:** `e` opens the current hunk in the editor; `Esc` in the editor goes back to the review.
 - **Default:** use `⌘K`/`⌘P` for file search, `⌘B` for the file index, `⌘J` for the action ledger, `⌘D` for diff, and `⌘S` for save on macOS.
 - **Default:** `?` opens the shortcut card.
 - **Deferred:** full vim modal navigation and command language.
