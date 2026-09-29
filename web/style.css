@@ -428,6 +428,24 @@ body.resizing { cursor: col-resize; user-select: none; }
 .lgroup { position: sticky; top: 0; z-index: 1; display: flex; gap: 8px; align-items: baseline; padding: 8px 14px 6px; background: var(--surface); border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--fg); }
 .lgroup .faint { font-weight: 400; }
 .editor:focus { box-shadow: inset 2px 0 0 var(--accent); }
+/* word wrap: long lines wrap at the editor's right edge instead of scrolling sideways. The width is
+   published by app.js as --content-w, because the textarea's own scrollbar makes its content box
+   narrower than the stage behind it, and the layer has to break in the same place. */
+.stage.wrap .syntax .sl { width: var(--content-w, auto); height: auto; white-space: pre-wrap; overflow-wrap: break-word; }
+/* The change bar marks the line's first row; the delete caret keeps its place at the line's end. */
+.stage.wrap .gutter .gb { bottom: auto; height: 20px; }
+/* The mirror: one block per line, styled to wrap exactly like the textarea's content box. app.js sets
+   its left and width from the textarea, since tab stops and line breaks depend on both. */
+.wrap-mirror {
+  position: absolute; top: 0; left: 0;
+  visibility: hidden; pointer-events: none; overflow: hidden;
+  font: 12.5px/20px var(--mono);
+  tab-size: 4;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.wrap-mirror > div { min-height: 20px; }
+.wrap-mirror .caret { display: inline-block; width: 0; }
 .code-view { padding: 10px 0 40vh; counter-reset: ln; color: var(--fg-2); }
 .code-view .l { display: block; white-space: pre; padding-right: 24px; min-width: max-content; }
 .code-view .l::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 56px; padding-right: 18px; text-align: right; color: var(--faint); user-select: none; }
@@ -589,6 +607,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 .hunk.split .r-none { background: color-mix(in srgb, var(--fg) 3%, transparent); }
 .hunk .tx[data-n] { cursor: text; }
 .hunk.split .meta { grid-column: 1 / -1; padding: 0 12px; color: var(--muted); font-style: italic; }
+/* word wrap: a stacked hunk gives up its max-content width so the text column can wrap. The split
+   layout already wraps both sides, so it is left alone. */
+.stage.wrap .hunk:not(.split) { min-width: 0; grid-template-columns: max-content max-content 20px minmax(0, 1fr); }
+.stage.wrap .hunk:not(.split) .tx { white-space: pre-wrap; overflow-wrap: break-word; }
+.stage.wrap .hunk-head { white-space: pre-wrap; }
 
 .diff-empty { display: grid; place-items: center; height: 70%; }
 

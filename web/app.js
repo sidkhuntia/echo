@@ -20,6 +20,8 @@ const state = {
   bClosed: new Set(), railBeforeLog: '',
   // blameGutter: the per-line blame column (session only). rangeDots: '..' tip to tip, '...' from the merge base.
   blameGutter: false, rangeDots: '..',
+  // wrap: soft wrap in the editor and the stacked diff (session only, like the blame column).
+  wrap: false,
   // Changes rail groups (merge, staged, work) folded by the user.
   qClosed: new Set(),
   // widths: the side panels' dragged widths, written to the desk grid as --tree-w and --git-w.
@@ -743,7 +745,7 @@ function placeCaret(line) {
   }
   ed.focus({ preventScroll: true })
   ed.setSelectionRange(at, at)
-  ed.scrollTop = Math.max(0, (line - 1) * LINE - ed.clientHeight / 3)
+  ed.scrollTop = Math.max(0, lineTopAt(activeTab(), line - 1) - ed.clientHeight / 3)
   ed.scrollLeft = 0
   paintGutter()
 }
@@ -965,12 +967,11 @@ function paintSyntax() {
   layer.classList.toggle('active', on)
   if (!on) { layer.innerHTML = ''; return }
   const lines = tabLines(tab), row = tokenRow(tab), lex = lexLines(tab), words = KEYWORDS[kwFamily(tab.path)]
-  const first = Math.max(0, Math.floor((ed.scrollTop - PAD) / LINE) - 2)
-  const last = Math.min(lines.length, first + Math.ceil(ed.clientHeight / LINE) + 4)
+  const [first, last] = visibleRange(tab)
   let h = ''
   for (let i = first; i < last; i++) {
     const r = row(i)
-    h += `<div class="sl" style="top:${PAD + i * LINE - ed.scrollTop}px">${colorLine(lines[i], lineSpans(lineSpans(r < 0 ? null : tab.hl.lines[r], lex[i]), keywordSpans(lines[i], words)))}</div>`
+    h += `<div class="sl" style="top:${lineTop(i) - ed.scrollTop}px">${colorLine(lines[i], lineSpans(lineSpans(r < 0 ? null : tab.hl.lines[r], lex[i]), keywordSpans(lines[i], words)))}</div>`
   }
   layer.innerHTML = `<div style="transform:translateX(${-ed.scrollLeft}px)">${h}</div>`
 }
@@ -1317,6 +1318,111 @@ function lineCount(tab) {
   return tab.count
 }
 
+// ---------- word wrap ----------
+// With wrap on, a line is as tall as it needs to be, so the gutter and the syntax layer can no longer
+// sit on a fixed 20px pitch. The only measurement that agrees with the browser about tabs, wide
+// characters and words too long to fit is the browser itself: a hidden mirror, one block per line,
+// given exactly the textarea's content box. Line heights are kept as a running offset, so a keystroke
+// or a scroll costs a batch of measurements, not one per line in the file.
+let wrap = { tab: null, text: null, w: 0, n: 0, filled: 0, at: 0, h: [], top: [0] }
+
+// Same left edge, same width as the textarea's content box: shift either and tabs and long lines
+// break in a different place, and every line below the first is off by a row. The content box is
+// narrower than the stage, because the textarea's own scrollbar sits inside it, so the width is read
+// off the textarea and published for the syntax layer rather than derived from the stage.
+function wrapGeom() {
+  const ed = $('#editor'), cs = getComputedStyle(ed)
+  const left = parseFloat(cs.paddingLeft)
+  const w = ed.clientWidth - left - parseFloat(cs.paddingRight)
+  $('.stage').style.setProperty('--content-w', w + 'px')
+  return { left, w }
+}
+
+function wrapBox() {
+  const m = $('#wrap-mirror'), g = wrapGeom()
+  m.style.left = g.left + 'px'
+  m.style.width = g.w + 'px'
+  return m
+}
+
+// The measurements belong to one text wrapped at one width; anything else starts over.
+function wrapSync(tab) {
+  const n = lineCount(tab), w = wrapGeom().w
+  if (wrap.tab !== tab || wrap.text !== tab.content || wrap.w !== w || wrap.n !== n) {
+    wrap = { tab, text: tab.content, w, n, filled: 0, at: 0, h: [], top: [0] }
+  }
+}
+
+// Measure lines up to `upto`. One write and one batch of reads, so the browser lays the batch out
+// once; the blocks are dropped afterwards, since only the numbers are read again. The mirror holds
+// this batch alone, so its first child is line `wrap.filled`, not line 0.
+function wrapMeasure(tab, upto) {
+  const to = Math.min(lineCount(tab), upto)
+  if (wrap.filled >= to) return
+  const from = wrap.filled, lines = tabLines(tab), m = wrapBox()
+  let html = ''
+  for (let i = from; i < to; i++) html += `<div>${esc(lines[i])}</div>`
+  m.innerHTML = html
+  const kids = m.children
+  for (let i = from; i < to; i++) {
+    wrap.h[i] = kids[i - from].offsetHeight
+    wrap.top[i + 1] = wrap.top[i] + wrap.h[i]
+  }
+  wrap.filled = to
+  m.innerHTML = ''
+}
+
+// Which line starts at the given offset. Only the measured prefix is searched, so the walk resumes
+// from the last answer; stepping over it is arithmetic on cached numbers.
+function wrapAt(y) {
+  let i = Math.max(0, Math.min(wrap.at || 0, wrap.filled - 1))
+  while (i > 0 && wrap.top[i] > y) i--
+  while (i < wrap.filled - 1 && wrap.top[i + 1] <= y) i++
+  wrap.at = i
+  return i
+}
+
+// The lines the editor is showing. Without wrap that is a division by the line height; with wrap the
+// measured offsets decide it, and a line can be several rows tall. A jump past what has been measured
+// doubles the batch until the answer is inside it.
+function visibleRange(tab) {
+  const ed = $('#editor'), n = lineCount(tab)
+  if (!state.wrap) {
+    const first = Math.max(0, Math.floor((ed.scrollTop - PAD) / LINE) - 2)
+    return [first, Math.min(n, first + Math.ceil(ed.clientHeight / LINE) + 4)]
+  }
+  wrapSync(tab)
+  wrapMeasure(tab, Math.max(80, Math.ceil(ed.clientHeight / LINE) + 8))
+  const y = ed.scrollTop - PAD, bottom = y + ed.clientHeight + 2 * LINE
+  let first = 0
+  for (;;) {
+    first = wrapAt(y)
+    if (first < wrap.filled - 1 || wrap.filled >= n) break
+    wrapMeasure(tab, wrap.filled * 2 + 80)
+  }
+  let last = first
+  while (last < wrap.filled - 1 && wrap.top[last + 1] <= bottom) last++
+  return [Math.max(0, first - 1), Math.min(n, last + 2)]
+}
+
+// Where a line starts. The wrap case is only valid once the line is measured, which lineTopAt does.
+const lineTop = i => state.wrap ? PAD + wrap.top[i] : PAD + i * LINE
+function lineTopAt(tab, i) {
+  if (state.wrap) { wrapSync(tab); wrapMeasure(tab, i + 1) }
+  return lineTop(i)
+}
+
+// With wrap on, the caret is not at the end of a fixed row, so where it sits is asked of the mirror
+// with a marker in the line: the same block the browser just wrapped.
+function caretSpot(tab, line, col) {
+  const m = wrapBox()
+  m.innerHTML = `<div>${esc(tabLines(tab)[line].slice(0, col))}<i class="caret"></i></div>`
+  const at = m.firstElementChild.lastElementChild
+  const spot = { x: at.offsetLeft, y: at.offsetTop }
+  m.innerHTML = ''
+  return spot
+}
+
 // Bases are refetched whenever the status changes, since a commit or stage moves HEAD or the index.
 async function ensureBase(tab) {
   if (!state.status?.git) { tab.base = null; return }
@@ -1438,8 +1544,7 @@ function paintGutter() {
   const g = $('#gutter'), ed = $('#editor'), tab = activeTab()
   if (state.mode !== 'file' || !tab || tab.binary) { g.innerHTML = ''; return }
   const n = lineCount(tab), mk = tab.marks
-  const first = Math.max(0, Math.floor((ed.scrollTop - PAD) / LINE) - 2)
-  const last = Math.min(n, first + Math.ceil(ed.clientHeight / LINE) + 4)
+  const [first, last] = visibleRange(tab)
   // The blame column labels the first line of each run of lines from the same commit.
   const bl = state.blameGutter && freshBlame(tab)
   let h = ''
@@ -1451,7 +1556,7 @@ function paintGutter() {
       if (c && (i === first || bl.lines[i - 1] !== k)) who = uncommitted(c) ? '<span class="gbl new">Not committed yet</span>'
         : `<span class="gbl" data-hash="${esc(c.hash)}" title="${esc(c.summary)}\n${esc(c.author)}, ${esc(new Date(c.time * 1000).toLocaleString())}\n${esc(c.hash.slice(0, 7))} · click to see the commit">${esc(c.author)} · ${ago(c.time).replace(' ago', '')}</span>`
     }
-    h += `<div class="gl" style="top:${PAD + i * LINE - ed.scrollTop}px">${who}${i + 1}`
+    h += `<div class="gl" style="top:${lineTop(i) - ed.scrollTop}px${state.wrap ? `;height:${wrap.h[i]}px` : ''}">${who}${i + 1}`
       + (kind ? `<i class="gb ${kind}${mk.staged[i] ? ' staged' : ''}" title="${kind === 'add' ? 'Added' : 'Modified'}${mk.staged[i] ? ', staged' : ''}"></i>` : '')
       + (del !== undefined ? `<i class="gd${del ? ' staged' : ''}"></i>` : '')
       + (end !== undefined ? `<i class="gd end${end ? ' staged' : ''}"></i>` : '')
@@ -2125,14 +2230,16 @@ function paintBlameGhost() {
   let line = 1
   for (let k = text.indexOf('\n'); k >= 0 && k < pos; k = text.indexOf('\n', k + 1)) line++
   const c = b.commits[b.lines[line - 1]]
-  const top = PAD + (line - 1) * LINE - ed.scrollTop
+  const top = lineTopAt(tab, line - 1) - ed.scrollTop
   if (!c || top < 0 || top > ed.clientHeight - LINE) { g.hidden = true; return }
   const start = text.lastIndexOf('\n', pos - 1) + 1, nl = text.indexOf('\n', pos)
   const cols = [...text.slice(start, nl < 0 ? undefined : nl)].reduce((n, ch) => ch === '\t' ? n + 4 - n % 4 : n + 1, 0)
   if (!charWidth) { const cx = document.createElement('canvas').getContext('2d'); cx.font = getComputedStyle(ed).font; charWidth = cx.measureText('0000000000').width / 10 }
   g.textContent = uncommitted(c) ? 'You · not committed yet' : `${c.author}, ${ago(c.time)} · ${c.summary}`
-  g.style.top = top + 'px'
-  g.style.left = parseFloat(getComputedStyle(ed).paddingLeft) + cols * charWidth + 36 - ed.scrollLeft + 'px'
+  // A wrapped line puts the caret somewhere inside the block, so its place is measured, not counted.
+  const spot = state.wrap ? caretSpot(tab, line - 1, pos - start) : { x: cols * charWidth, y: 0 }
+  g.style.left = parseFloat(getComputedStyle(ed).paddingLeft) + spot.x + 36 - ed.scrollLeft + 'px'
+  g.style.top = top + spot.y + 'px'
   g.hidden = false
 }
 
@@ -2640,6 +2747,17 @@ $('#editor').addEventListener('input', () => {
 $('#gutter').addEventListener('click', e => { const b = e.target.closest('.gbl[data-hash]'); if (b) showCommitInLog(b.dataset.hash) })
 $('#file-history').onclick = () => { const t = activeTab(); if (t) openFileHistory(t.path) }
 $('#blame-toggle').onclick = () => { state.blameGutter = !state.blameGutter; renderEditor(); paintGutter() }
+// Wrapping changes every line's width and height, so the measured offsets belong to the old mode and
+// are dropped. The stacked diff reads the same class, so Review wraps too.
+function setWrap(on) {
+  state.wrap = on
+  $('.stage').classList.toggle('wrap', on)
+  $('#editor').wrap = on ? 'soft' : 'off'
+  wrap = { tab: null, text: null, w: 0, n: 0, filled: 0, at: 0, h: [], top: [0] }
+  if (state.mode === 'file') renderEditor()
+  setStatus(on ? 'Word wrap on' : 'Word wrap off')
+}
+$('#word-wrap').onchange = e => setWrap(e.target.checked)
 $('#range-dots').onclick = () => { setRangeDots(state.rangeDots === '..' ? '...' : '..'); loadDiff() }
 $('#log-compare').addEventListener('click', e => {
   const act = e.target.closest('[data-cmp]')?.dataset.cmp, c = state.log.compare
