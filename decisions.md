@@ -98,7 +98,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** list stashes.
 - **Accepted:** create stashes.
 - **Accepted:** apply stashes.
-- **Default:** stash pop and drop were added to the Git action API where inexpensive, but the primary required flows are list, create, and apply.
+- **Default:** stash pop and drop were added to the Git action API where inexpensive; drop is now also in the main UI, and list, create, and apply remain the primary flows.
 - **Default:** `git restore` is used for stage, unstage, and discard operations.
 - **Default:** `git add`, `git commit`, `git commit --amend`, `git rebase`, `git switch`, `git merge`, `git pull`, and `git push` are executed through the system CLI.
 - **Default:** the app does not maintain a second Git database or reimplement Git object handling.
@@ -152,6 +152,11 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** there is no "Discard all" in the group header; a one-click, unconfirmed discard of every file is too easy to hit.
 - **Default:** clicking a row while the diff shows Unstaged or Staged switches to that row's side; All changes stays as it is. Groups fold from their header for the session.
 - **Default:** the status API carries each change's staged side as `index` and unstaged side as `work` (`added`, `deleted`, `binary`), from `git diff --cached --numstat` and `git diff --numstat`.
+- **Accepted:** group headers total the lines added and deleted across the group, beside the file count. The total is summed in the browser from the per-side counts the status already carries, so no new Git call is made and the number can never disagree with the rows above it. Each group totals its own side, so a partly staged file is counted once per group it appears in.
+- **Default:** the group total follows the path filter, like the file count beside it and the bulk actions, so the header always describes what is actually listed.
+- **Default:** a binary file has no line counts to sum, so a group holding one says `bin` instead of counting it as zero lines.
+- **Default:** the Merge changes group carries no total; a conflicted file has no meaningful line count on either side.
+- **Default:** hovering a group header swaps its total for that group's Stage all or Unstage all button, matching how a row's own counts give way to its actions, so the header never shifts under the pointer.
 - **Accepted:** `⌘K`/`⌘P` open a fuzzy path finder instead of a browser prompt.
 - **Default:** the initial implementation skips `.git`, hidden directories, `node_modules`, `dist`, `build`, `.cache`, and `.next` from the tree.
 - **Accepted:** in a Git repository the tree comes from `git ls-files --cached --others --exclude-standard`, so ignored files stay out; the same skip rules still apply. Outside Git it walks the directory.
@@ -271,10 +276,11 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** list stashes.
 - **Accepted:** create stashes.
 - **Accepted:** apply stashes.
+- **Accepted:** drop stashes. The API already had `stash:drop`; the inspector now exposes it as a Drop button per row, using the ref the status reported, so a drop after another drop cannot land on the wrong stash.
+- **Default:** stash drop is unconfirmed, following the rule that destructive actions in echo do not ask first. The button's tooltip carries the consequence instead.
 - **Default:** stash creation includes untracked files with `git stash push -u`.
 - **Default:** stash messages are optional in the API, with a fallback message used by the UI.
 - **Default:** stash entries are shown with Git’s stash ref and subject.
-- **Deferred:** stash drop from the main UI.
 - **Deferred:** stash pop from the main UI.
 - **Deferred:** stash diff previews.
 
@@ -438,7 +444,7 @@ These are not rejected. They are waiting until the basic review loop is proven:
 6. Draggable panel sizing and reordering.
 7. Full vim mode.
 8. Conflict continue/abort controls.
-9. Stash pop/drop UI and stash diffs.
+9. Stash pop UI and stash diffs.
 10. Large-file truncation and streaming improvements.
 11. Native macOS filesystem events instead of polling.
 12. Better handling of Git rename/delete metadata in the file tree.

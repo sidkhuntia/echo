@@ -589,6 +589,36 @@ func TestBranchActions(t *testing.T) {
 	act(`{"action":"branch:delete","from":"-D"}`, http.StatusBadRequest)
 }
 
+// Dropping a stash removes it from the list, and dropping by the ref the status reported works even
+// though the refs renumber themselves after every drop.
+func TestStashDrop(t *testing.T) {
+	a := testRepo(t)
+	if _, err := a.gitCombined("stash", "push", "-u", "-m", "first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a.root, "agent.txt"), []byte("more\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.gitCombined("stash", "push", "-u", "-m", "second"); err != nil {
+		t.Fatal(err)
+	}
+	s := a.gitStatus()
+	if len(s.Stashes) != 2 || s.Stashes[0].Ref != "stash@{0}" || s.Stashes[0].Subject != "On main: second" {
+		t.Fatalf("stashes = %+v", s.Stashes)
+	}
+	// The top stash is stash@{0}; dropping it must leave the one that was underneath.
+	if w := request(a, http.MethodPost, "/api/git", `{"action":"stash:drop","stashRef":"stash@{0}"}`); w.Code != http.StatusOK {
+		t.Fatalf("drop: %d %s", w.Code, w.Body)
+	}
+	s = a.gitStatus()
+	if len(s.Stashes) != 1 || !strings.Contains(s.Stashes[0].Subject, "first") {
+		t.Errorf("after drop: %+v", s.Stashes)
+	}
+	if w := request(a, http.MethodPost, "/api/git", `{"action":"stash:drop","stashRef":"--index"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("option ref: %d %s", w.Code, w.Body)
+	}
+}
+
 func TestBlameFollowsEditorText(t *testing.T) {
 	a := testRepo(t)
 	run := func(args ...string) {

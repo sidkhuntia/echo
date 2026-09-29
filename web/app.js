@@ -219,6 +219,21 @@ function sideTag(c, sec) {
   return badge(y, c.code === '??' ? 'untracked' : codeWord[y] || y)
 }
 const sideStat = st => !st ? '' : st.binary ? '<span class="faint">bin</span>' : `${st.added ? `<span class="add">+${st.added}</span>` : ''}${st.deleted ? `<span class="del">−${st.deleted}</span>` : ''}`
+// A group header totals the same per-side counts its rows carry, so a partly staged file counts once in
+// each group it appears in. A binary file has no line counts to add, so it is called out instead.
+function groupStat(rows, sec) {
+  const key = sec === 'staged' ? 'index' : sec === 'work' ? 'work' : null
+  if (!key) return ''
+  let added = 0, deleted = 0, bin = false
+  for (const c of rows) {
+    const st = c[key]
+    if (!st) continue
+    if (st.binary) { bin = true; continue }
+    added += st.added; deleted += st.deleted
+  }
+  const nums = `${added ? `<span class="add">+${added}</span>` : ''}${deleted ? `<span class="del">−${deleted}</span>` : ''}`
+  return `${nums}${bin ? (nums ? ' ' : '') + '<span class="faint">bin</span>' : ''}`
+}
 const iconBtn = (act, icon, title) => `<button class="btn quiet icon xs" data-act="${act}" title="${title}">${icon}</button>`
 // The group a row belongs to decides which scope shows its diff: staged rows the index, the rest the working tree.
 const secScope = sec => sec === 'staged' ? 'staged' : 'worktree'
@@ -256,7 +271,7 @@ function renderQueue() {
     const rows = list.filter(g.has)
     if (!rows.length) continue
     const closed = state.qClosed.has(g.sec)
-    h += `<div class="group-label qgroup" data-sec="${g.sec}"><span class="tw">${closed ? '▸' : '▾'}</span><span class="gname">${g.label}</span><span class="gacts">${bulk[g.sec]}</span><span class="count">${rows.length}</span></div>`
+    h += `<div class="group-label qgroup" data-sec="${g.sec}"><span class="tw">${closed ? '▸' : '▾'}</span><span class="gname">${g.label}</span><span class="gacts">${bulk[g.sec]}</span><span class="gstat">${groupStat(rows, g.sec)}</span><span class="count">${rows.length}</span></div>`
     if (!closed) h += rows.map(c => row(c, g.sec)).join('')
   }
   q.innerHTML = h || `<div class="empty">No changed path matches “${esc(filter)}”.</div>`
@@ -1526,7 +1541,7 @@ function renderGit() {
   $('#branch-select').innerHTML = (s.branches || []).map(b => `<option value="${esc(b)}" ${b === (keep || s.branch) ? 'selected' : ''}>${esc(b)}${counts(local.get(b))}</option>`).join('')
   const staged = [...state.changes.values()].filter(c => c.staged).length
   $('#staged-count').textContent = staged ? `${staged} staged` : 'Nothing staged'
-  $('#stashes').innerHTML = (s.stashes || []).map(x => `<div class="list-row"><span title="${esc(x.subject)}"><b>${esc(x.ref)}</b> ${esc(x.subject)}</span><button class="btn sm" data-ref="${esc(x.ref)}">Apply</button></div>`).join('') || '<div class="list-row muted"><span>No stashes</span></div>'
+  $('#stashes').innerHTML = (s.stashes || []).map(x => `<div class="list-row"><span title="${esc(x.subject)}"><b>${esc(x.ref)}</b> ${esc(x.subject)}</span><button class="btn sm" data-act="apply" data-ref="${esc(x.ref)}">Apply</button><button class="btn sm quiet" data-act="drop" data-ref="${esc(x.ref)}" title="Drop this stash; its changes are only in the reflog afterwards">Drop</button></div>`).join('') || '<div class="list-row muted"><span>No stashes</span></div>'
   // History and the log reload only when HEAD or a ref moved; "contains" answers go stale at the same moment.
   const key = `${s.head || ''}:${s.refsSig || ''}`
   if (key !== state.refsKey) {
@@ -2551,9 +2566,13 @@ document.addEventListener('click', e => {
   if (!$('#repo-pop').hidden && !e.target.closest('#repo-pop')) toggleRepoPop(false)
   if (!$('#lsp-pop').hidden && !e.target.closest('#lsp-pop')) toggleLspPop(false)
 })
+// Only these two stash verbs are reachable from a row, whatever data-act the markup carries.
+// A Map, not an object, so a key like "constructor" cannot reach the prototype.
+const STASH_ACT = new Map([['apply', 'stash:apply'], ['drop', 'stash:drop']])
 $('#stashes').addEventListener('click', e => {
   const b = e.target.closest('button[data-ref]')
-  if (b) gitAction({ action: 'stash:apply', stashRef: b.dataset.ref })
+  const action = b && STASH_ACT.get(b.dataset.act)
+  if (action) gitAction({ action, stashRef: b.dataset.ref })
 })
 
 $('#editor').addEventListener('input', () => {

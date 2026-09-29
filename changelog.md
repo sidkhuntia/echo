@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Stashes can be deleted: every stash in the inspector has a Drop button next to Apply, which runs `git stash drop` on the ref the row shows. Like the other destructive actions in echo it asks nothing first, so the button's tooltip says where the changes go afterwards (the reflog).
+- The "Staged changes" and "Changes" group headers in the Changes rail now show the lines added and deleted across the whole group, next to the file count. Each group totals its own side, so a partly staged file is counted once in each group it appears in, and the numbers follow the path filter like the file count does. A binary file has no lines to add up, so the header says `bin` rather than quietly counting it as zero. Hovering a header still swaps the total for that group's Stage all or Unstage all button, so nothing shifts.
+
 - echo can now be stopped from the page, one repository at a time or all at once. The repository switcher (`⌘⇧O`) has a Stop button on each running repository and a Quit all echo processes button at the bottom; both ask first, and the tab that asked says the process is stopping. Work in flight is finished before the port closes, and the language servers are asked to exit the way the protocol says (`shutdown`, then `exit`) instead of being killed, so a half-written cache is not left behind. A repository stopped this way reopens with the usual `echo` command in its folder.
 - `Ctrl-C` in the Terminal now stops echo gracefully rather than dropping the connection: a request being served is finished, the status stream ends, the language servers exit, and the port is released. A page still open on a stopped process says it lost the server, as it would for any other interruption.
 

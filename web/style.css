@@ -293,6 +293,10 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .qgroup .tw { width: 12px; color: var(--faint); font-size: 10px; text-align: center; }
 .qgroup .gname { flex: 1; }
 .qgroup:hover .gname { color: var(--fg); }
+/* The group total gives way to the group actions on hover, like a row's own counts do. */
+.qgroup .gstat { display: flex; gap: 5px; font: 500 10.5px var(--mono); }
+.qgroup .gstat:empty { display: none; }
+.qgroup:hover .gstat { display: none; }
 .dacts .btn .i { width: 12px; height: 12px; margin-right: 3px; }
 
 .tnode { display: flex; align-items: center; gap: 6px; height: 26px; padding-right: 8px; border-radius: var(--r); cursor: pointer; color: var(--fg-2); white-space: nowrap; }
