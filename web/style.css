@@ -347,6 +347,7 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 .blocks i.a { background: var(--add); }
 .blocks i.d { background: var(--del); }
 .dstat .note { font-family: var(--sans); color: var(--faint); }
+.dstat .note.unsaved { color: var(--warn); }
 .spacer { flex: 1; }
 .dacts { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
 .dfile:hover .dacts, .dfile.current .dacts { opacity: 1; }

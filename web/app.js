@@ -4,6 +4,8 @@ const state = {
   status: null, changes: new Map(), reviewed: {}, folded: new Map(), justStamped: '',
   config: { vim: false, theme: 'system', diffMode: 'unified' }, mode: 'diff', rail: 'changes', dirOpen: new Map(),
   diffFiles: [], diffSeq: 0, current: -1, commit: '', returnTo: '', statusSeq: 0,
+  // diffStale: the diff missed an update while Files mode was showing; it reloads on the way back to Review.
+  diffStale: false, diffReady: Promise.resolve(), diffScroll: 0,
   palette: { items: [], sel: 0 },
 }
 const mod = e => e.metaKey || e.ctrlKey
@@ -116,7 +118,7 @@ function applyStatus(s) {
   if (state.rail === 'files') ensureTree().then(renderTree)
   syncTabs()
   refreshGutter()
-  if (state.mode === 'diff' && REVIEWABLE.includes(scope())) scheduleDiff()
+  if (REVIEWABLE.includes(scope())) state.mode === 'diff' ? scheduleDiff() : (state.diffStale = true)
 }
 
 async function refreshAll() {
@@ -295,6 +297,7 @@ let diffTimer
 function scheduleDiff() { clearTimeout(diffTimer); diffTimer = setTimeout(loadDiff, 120) }
 
 async function loadDiff() {
+  state.diffStale = false
   const sc = scope()
   const params = new URLSearchParams({ scope: sc, ignoreWhitespace: $('#ignore-ws').checked ? '1' : '0' })
   if (sc === 'range') {
@@ -375,10 +378,11 @@ function fileHTML(f, i) {
     else if (!f.hunks.length) body = `<div class="dnote">${f.isNew ? 'Empty new file.' : 'Mode or metadata change only.'}</div>`
     else body = f.hunks.map(hunkHTML).join('')
   }
+  const unsaved = state.tabs.some(t => t.path === f.path && t.content !== t.saved)
   const why = folded && !state.folded.has(f.path) ? (rv === 'done' ? 'reviewed' : GENERATED.test(f.path) ? 'generated' : f.lines > 1500 ? 'large' : '') : ''
   const stat = f.binary ? '' : `${f.added ? `<span class="add">+${f.added}</span>` : ''}${f.deleted ? `<span class="del">−${f.deleted}</span>` : ''}${blocksHTML(f)}`
   return `<section class="dfile ${folded ? 'folded' : ''}" data-i="${i}">
-    <header class="dfile-head"><span class="fold">▶</span>${badge(letter, kind)}<span class="dpath" title="${esc(f.path)}">${fullPath(f.path)}</span><span class="dstat">${stat}${why ? `<span class="note">· ${why}</span>` : ''}</span><span class="spacer"></span><span class="dacts">${acts}</span>${proof}</header>
+    <header class="dfile-head"><span class="fold">▶</span>${badge(letter, kind)}<span class="dpath" title="${esc(f.path)}">${fullPath(f.path)}</span><span class="dstat">${stat}${why ? `<span class="note">· ${why}</span>` : ''}${unsaved ? '<span class="note unsaved" title="The diff shows the file on disk; save with ⌘S in the editor">· unsaved edits</span>' : ''}</span><span class="spacer"></span><span class="dacts">${acts}</span>${proof}</header>
     <div class="dbody">${body}</div>
   </section>`
 }
@@ -446,12 +450,13 @@ function openCurrentHunk() {
 }
 
 // Esc in the editor returns to the diff line nearest the caret.
-function backToReview() {
+async function backToReview() {
   const ed = $('#editor'), path = state.returnTo
   const line = ed.value.slice(0, ed.selectionStart).split('\n').length
   state.returnTo = ''
   ed.blur()
-  setMode('diff')
+  setStatus(path)
+  await setMode('diff')
   const i = state.diffFiles.findIndex(f => f.path === path)
   if (i < 0) return
   if (isFolded(state.diffFiles[i])) { state.folded.set(path, false); rerenderFile(i) }
@@ -514,7 +519,7 @@ function stepHunk(dir) {
 }
 
 async function goTo(path) {
-  setMode('diff')
+  await setMode('diff')
   let i = state.diffFiles.findIndex(f => f.path === path)
   if (i < 0 && state.changes.has(path) && scope() !== 'head') {
     $('#diff-scope').value = 'head'
@@ -808,6 +813,7 @@ async function saveFile(force = false) {
     const content = tab.eol === '\r\n' ? tab.content.replace(/\n/g, '\r\n') : tab.content
     const res = await post('/api/file', { action: 'save', path: tab.path, content, baseHash: force ? '' : tab.hash })
     Object.assign(tab, { saved: tab.content, hash: res.hash, conflict: '' })
+    state.diffStale = true
     // Your own edit to a file you already reviewed should not undo the review.
     if (wasDone) { state.reviewed[tab.path] = res.hash; saveReviewed() }
     renderTabs(); renderEditor()
@@ -841,14 +847,24 @@ async function fileAction(action) {
 }
 
 // ---------- mode ----------
+// setMode returns a promise that settles once the diff is current, so callers can scroll within it.
 function setMode(m) {
+  const was = state.mode
+  if (was === 'diff' && m !== 'diff') state.diffScroll = $('#diff').scrollTop
   state.mode = m
   document.querySelectorAll('.mode-switch button').forEach(b => b.classList.toggle('on', b.dataset.mode === m))
   $('#diff-bar').hidden = m !== 'diff'
   $('#file-bar').hidden = m !== 'file'
   $('#file-crumb').hidden = m !== 'file' || !activeTab()
   $('#diff').classList.toggle('active', m === 'diff')
+  if (m === 'diff' && was !== 'diff') {
+    $('#diff').scrollTop = state.diffScroll
+    // Reload what changed while editing; otherwise re-render so "unsaved edits" notes are current.
+    if (state.diffStale) state.diffReady = loadDiff()
+    else { if (state.diffFiles.length) renderDiff(); state.diffReady = Promise.resolve() }
+  }
   renderTabs(); renderEditor(); markQueueCurrent()
+  return state.diffReady
 }
 
 // ---------- ledger ----------

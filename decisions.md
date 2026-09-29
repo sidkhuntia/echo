@@ -166,6 +166,8 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** only visible gutter rows are drawn, so large files cost the same as small ones.
 - **Default:** the textarea turns CRLF into LF, so tabs hold LF text and a file whose line endings are all CRLF is saved back with CRLF. A file with mixed endings is saved with LF.
 - **Default:** saving a file you had marked reviewed keeps it reviewed, since the edit is your own.
+- **Default:** status updates that arrive while the editor is showing mark the diff stale instead of re-rendering it hidden; returning to Review reloads it first and keeps the Review scroll position.
+- **Default:** the diff shows the file on disk, so a file with unsaved editor changes is labelled "unsaved edits" in its diff header.
 - **Accepted:** saving does not automatically stage the file.
 - **Accepted:** staging remains an explicit Git action.
 - **Accepted:** unsaved edits stay in memory per tab.
