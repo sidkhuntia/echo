@@ -30,7 +30,11 @@ Status meanings:
 - **Accepted:** the app opens its interface in the default browser.
 - **Accepted:** one repository is opened per process/session.
 - **Accepted:** the app starts in the current Terminal directory every time.
-- **Default:** the default port is `7777`.
+- **Default:** the default port is `6030`. Without `-port`, echo takes the repository's last port, else the first free port in `6030`–`6049`, so several repositories can be open at once, each in its own process and browser tab. `-port N` binds exactly `N` or fails.
+- **Accepted:** a repository keeps its port across restarts (`echo/ports.json` beside the config), because browser storage such as review marks is scoped to the origin, and so to the port.
+- **Accepted:** running echo in a repository that is already open (auto port mode) opens the existing tab and exits instead of starting a second server.
+- **Accepted:** the repository name in the title bar opens a switcher (`⌘⇧O`) listing running echo processes; `↑`/`↓` choose (starting on the first other repository, so `⌘⇧O` `Enter` hops away), `Enter` or click switches the current tab, `⌘Enter` or `⌘`-click opens a new tab. The server discovers siblings by asking each port in the range for `/api/instance`, so the page makes no cross-origin requests and the Host/Origin guard is unchanged.
+- **Accepted:** the browser never starts echo processes; opening another repository is done from Terminal.
 - **Default:** the app binds to `127.0.0.1` only.
 - **Default:** the app does not support LAN, remote, or container access in v1.
 
@@ -323,7 +327,8 @@ The following Git capabilities were accepted as part of the product direction:
 - **Deferred:** draggable panel resizing.
 - **Deferred:** drag-to-reorder panel layout.
 - **Deferred:** per-project layout profiles.
-- **Default:** recent repositories are not persisted because the app always starts in the current Terminal directory.
+- **Default:** recent repositories are not listed because the app always starts in the current Terminal directory; `ports.json` records roots only to keep each one's port.
+- **Accepted:** every echo process shares one config file, so a config POST is a patch applied to the file as it is on disk, and GET reads the file, so one repository's tab does not undo settings changed in another. Writes are atomic (temp file and rename).
 
 ## 15. Keyboard and navigation
 
@@ -333,7 +338,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** use familiar editor shortcuts where they fit the smaller scope.
 - **Default:** include shortcuts for file search, tree toggle, Git panel toggle, diff toggle, save, help, and escape.
 - **Default:** `e` opens the current hunk in the editor; `Esc` in the editor goes back to the review.
-- **Default:** use `⌘K`/`⌘P` for file search, `⌘B` for the file index, `⌘J` for the action ledger, `⌘D` for diff, and `⌘S` for save on macOS.
+- **Default:** use `⌘⇧O` for the repository switcher, `⌘K`/`⌘P` for file search, `⌘B` for the file index, `⌘J` for the action ledger, `⌘D` for diff, and `⌘S` for save on macOS.
 - **Default:** `?` opens the shortcut card.
 - **Deferred:** full vim modal navigation and command language.
 - **Deferred:** user-remappable shortcuts.

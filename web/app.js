@@ -470,7 +470,7 @@ function setDiffMode(m) {
   document.querySelectorAll('.layout-switch button').forEach(b => b.classList.toggle('on', b.dataset.layout === m))
   const cur = state.current
   if (state.diffFiles.length) { renderDiff(); if (cur >= 0) goFile(cur) }
-  post('/api/config', state.config).catch(e => setStatus(e.message, 'err'))
+  post('/api/config', { diffMode: m }).catch(e => setStatus(e.message, 'err'))
 }
 
 // ---------- jump between review and editor ----------
@@ -931,8 +931,8 @@ function setMode(m) {
 function renderGit() {
   const s = state.status || {}
   $('#branch').textContent = s.branch || (s.git === false ? 'no repository' : '—')
-  $('#repo').textContent = s.root ? basename(s.root) : ''
-  $('#repo').title = s.root || ''
+  $('#repo-name').textContent = s.root ? basename(s.root) : ''
+  document.title = s.root ? `${basename(s.root)} — ${s.branch || 'echo'}` : 'echo'
   renderTracking()
   const keep = $('#branch-select').value
   const local = new Map((s.local || []).map(b => [b.name, b]))
@@ -1070,6 +1070,7 @@ function toggleBranchPop(open = $('#branch-pop').hidden) {
   $('#branch-pop').hidden = !open
   if (!open) return closeRefMenu()
   toggleThemes(false)
+  toggleRepoPop(false)
   $('#branch-filter').value = ''
   renderBranchPop()
   $('#branch-filter').focus()
@@ -1087,6 +1088,44 @@ function renderBranchPop() {
     + sec('Remote', remote.slice(0, 50).map(r => item(r, 'remote')), Math.max(0, remote.length - 50))
     + sec('Tags', tags.slice(0, 30).map(t => item(t, 'tag')), Math.max(0, tags.length - 30))
     || '<div class="bp-more faint">No branch or tag matches.</div>'
+}
+
+// ---------- repositories ----------
+// Each repository runs in its own echo process on its own port; the server finds its siblings.
+let repos = [], repoSel = 0
+async function toggleRepoPop(open = $('#repo-pop').hidden) {
+  $('#repo-pop').hidden = !open
+  $('#repo').classList.toggle('open', open)
+  if (!open) return
+  toggleThemes(false)
+  toggleBranchPop(false)
+  $('#repo-filter').value = ''
+  $('#repo-filter').focus()
+  renderRepoPop()
+  try { repos = await api('/api/instances') } catch (e) { setStatus(e.message, 'err') }
+  // Start on the first other repository, so ⌘⇧O then Enter hops away like an app switcher.
+  repoSel = Math.max(0, repos.findIndex(r => r.port !== +location.port))
+  if (!$('#repo-pop').hidden) renderRepoPop()
+}
+
+const repoMatches = () => { const f = $('#repo-filter').value.toLowerCase(); return repos.filter(r => !f || r.root.toLowerCase().includes(f)) }
+
+function renderRepoPop() {
+  const here = +location.port, list = repoMatches()
+  repoSel = Math.min(repoSel, Math.max(0, list.length - 1))
+  $('#repo-list').innerHTML = list.map((r, i) => `<div class="th rp-row ${r.port === here ? 'on' : ''} ${i === repoSel ? 'sel' : ''}" data-port="${r.port}" data-i="${i}" title="${esc(r.root)}">
+    <span class="ok">${r.port === here ? '✓' : ''}</span>
+    <span><div class="nm">${esc(basename(r.root))}${r.branch ? ` <span class="meta">· ${esc(r.branch)}</span>` : ''}${r.changes ? ` <span class="meta">· ${r.changes} changed</span>` : ''}</div><div class="path">${esc(r.root)}</div></span>
+    <span class="port">:${r.port}</span></div>`).join('')
+    || `<div class="bp-more faint">${repos.length ? 'No open repository matches.' : 'Looking for open repositories…'}</div>`
+  $('#repo-list .sel')?.scrollIntoView({ block: 'nearest' })
+}
+
+function switchRepo(port, newTab) {
+  const url = `http://127.0.0.1:${port}/`
+  toggleRepoPop(false)
+  if (newTab) window.open(url, '_blank')
+  else if (port !== +location.port) location.href = url
 }
 
 // ---------- graph ----------
@@ -1647,12 +1686,13 @@ async function setTheme(id) {
   state.config.theme = id
   applyTheme()
   renderThemes()
-  try { await post('/api/config', state.config) } catch (e) { setStatus(e.message, 'err') }
+  try { await post('/api/config', { theme: id }) } catch (e) { setStatus(e.message, 'err') }
 }
 
 function toggleThemes(open = $('#theme-pop').hidden) {
   $('#theme-pop').hidden = !open
   if (!open) return
+  toggleRepoPop(false)
   $('#theme-filter').value = ''
   renderThemes()
   $('#theme-filter').focus()
@@ -1797,6 +1837,24 @@ $('#branches').addEventListener('contextmenu', e => {
   openRefMenu(row.dataset.ref, row.dataset.kind, row)
 })
 $('#branch').onclick = e => { e.stopPropagation(); toggleBranchPop() }
+$('#repo').onclick = e => { e.stopPropagation(); toggleRepoPop() }
+$('#repo-filter').oninput = () => { repoSel = 0; renderRepoPop() }
+$('#repo-filter').addEventListener('keydown', e => {
+  const list = repoMatches()
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && list.length) {
+    e.preventDefault()
+    repoSel = (repoSel + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length
+    renderRepoPop()
+  } else if (e.key === 'Enter' && list[repoSel]) { e.preventDefault(); switchRepo(list[repoSel].port, mod(e)) }
+})
+$('#repo-list').addEventListener('mousemove', e => {
+  const row = e.target.closest('.rp-row')
+  if (row && +row.dataset.i !== repoSel) { repoSel = +row.dataset.i; renderRepoPop() }
+})
+$('#repo-list').addEventListener('click', e => {
+  const row = e.target.closest('.rp-row')
+  if (row) switchRepo(+row.dataset.port, mod(e))
+})
 $('#branch-filter').oninput = renderBranchPop
 $('#branch-filter').addEventListener('keydown', e => {
   // Enter opens the menu of the only match, so "type a name, Enter, Enter" checks it out.
@@ -1821,6 +1879,7 @@ document.addEventListener('click', e => {
   if (!e.target.isConnected || e.target.closest('#ref-menu')) return
   if (!$('#ref-menu').hidden && !e.target.closest('[data-more], .bp-row')) closeRefMenu()
   if (!$('#branch-pop').hidden && !e.target.closest('#branch-pop')) toggleBranchPop(false)
+  if (!$('#repo-pop').hidden && !e.target.closest('#repo-pop')) toggleRepoPop(false)
 })
 $('#stashes').addEventListener('click', e => {
   const b = e.target.closest('button[data-ref]')
@@ -1862,7 +1921,7 @@ $('#log-compare').addEventListener('click', e => {
 $('#inline-blame').onchange = async () => {
   state.config.blame = $('#inline-blame').checked ? 'line' : 'off'
   renderEditor()
-  try { await post('/api/config', state.config); setStatus('Settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
+  try { await post('/api/config', { blame: state.config.blame }); setStatus('Settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
 }
 $('#new-file').onclick = () => fileAction('create')
 $('#rename-file').onclick = () => fileAction('rename')
@@ -1898,11 +1957,11 @@ $('#help').onclick = e => { if (e.target === $('#help') || e.target.dataset.clos
 $('#gutter-base').onchange = () => {
   state.config.gutterBase = $('#gutter-base').value
   refreshGutter()
-  post('/api/config', state.config).then(() => setStatus('Settings saved', 'ok'), e => setStatus(e.message, 'err'))
+  post('/api/config', { gutterBase: state.config.gutterBase }).then(() => setStatus('Settings saved', 'ok'), e => setStatus(e.message, 'err'))
 }
 $('#vim-mode').onchange = async () => {
   state.config.vim = $('#vim-mode').checked
-  try { await post('/api/config', state.config); setStatus('Settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
+  try { await post('/api/config', { vim: state.config.vim }); setStatus('Settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
 }
 $('#palette').onclick = e => {
   if (e.target === $('#palette')) $('#palette').hidden = true
@@ -1922,7 +1981,8 @@ document.addEventListener('keydown', e => {
   if (!$('#palette').hidden) return
   if (mod(e)) {
     const k = e.key.toLowerCase()
-    if (k === 'k' || k === 'p') { e.preventDefault(); openPalette() }
+    if (k === 'o' && e.shiftKey) { e.preventDefault(); toggleRepoPop() }
+    else if (k === 'k' || k === 'p') { e.preventDefault(); openPalette() }
     else if (k === 'b') { e.preventDefault(); toggleTree() }
     else if (k === 'j') { e.preventDefault(); toggleLedger() }
     else if (k === 'd') { e.preventDefault(); setMode(state.mode === 'diff' ? 'file' : 'diff') }
@@ -1935,7 +1995,7 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' && e.target.closest?.('#ref-menu, #branch-pop')) return
   if (e.key === 'Escape' && (!$('#ref-menu').hidden || !$('#branch-pop').hidden)) { e.preventDefault(); if (!$('#ref-menu').hidden) closeRefMenu(); else toggleBranchPop(false); return }
   if (e.key === 'Escape' && state.mode === 'diff' && state.fromLog && !typing(e) && $('#help').hidden) { e.preventDefault(); setMode('log'); return }
-  if (e.key === 'Escape') { $('#help').hidden = true; toggleThemes(false); if (typing(e)) e.target.blur(); return }
+  if (e.key === 'Escape') { $('#help').hidden = true; toggleThemes(false); toggleRepoPop(false); if (typing(e)) e.target.blur(); return }
   if (typing(e) || e.altKey) return
   if (state.mode === 'log') {
     const k = { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[e.key]

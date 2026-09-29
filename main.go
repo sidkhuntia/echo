@@ -49,6 +49,12 @@ const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 // netTimeout bounds fetch, pull, and push so an unreachable remote cannot hang a request forever.
 const netTimeout = 2 * time.Minute
 
+// Without -port, echo takes the first free port in this range, so several repositories can be open at once.
+const (
+	firstPort = 6030
+	lastPort  = 6049
+)
+
 // maxUntrackedDiff caps the size of an untracked file rendered as a new-file diff.
 const maxUntrackedDiff = 1 << 20
 
@@ -65,12 +71,20 @@ type Config struct {
 
 type App struct {
 	root  string
+	port  int
 	hosts map[string]bool
-	cfg   Config
 	mu    sync.Mutex
 	sigs  map[string]fileSig
 	// net serializes network actions; a second fetch/pull/push while one runs is refused, not queued.
 	net sync.Mutex
+}
+
+// Instance is what one echo process reports about itself, so its siblings can list it in the repo switcher.
+type Instance struct {
+	Root    string `json:"root"`
+	Port    int    `json:"port"`
+	Branch  string `json:"branch"`
+	Changes int    `json:"changes"`
 }
 
 type fileSig struct {
@@ -180,7 +194,7 @@ type gitRequest struct {
 }
 
 func main() {
-	port := flag.Int("port", 7777, "port to listen on")
+	port := flag.Int("port", 0, fmt.Sprintf("port to listen on (default: this repository's last port, else the first free one in %d-%d)", firstPort, lastPort))
 	noOpen := flag.Bool("no-open", false, "do not launch a browser")
 	flag.Parse()
 
@@ -196,28 +210,122 @@ func main() {
 		fatal(err)
 	}
 
-	app := newApp(root, *port)
-	addr := "127.0.0.1:" + strconv.Itoa(*port)
-	ln, err := net.Listen("tcp", addr)
+	open := func(url string) {
+		if !*noOpen {
+			_ = openBrowser(url)
+		}
+	}
+	if *port == 0 {
+		if p := runningFor(root, instances()); p != 0 {
+			url := "http://127.0.0.1:" + strconv.Itoa(p)
+			fmt.Printf("echo %s is already open at %s\n", root, url)
+			open(url)
+			return
+		}
+	}
+	ln, err := listen(root, *port)
 	if err != nil {
 		fatal(err)
 	}
-	url := "http://" + addr
+	bound := ln.Addr().(*net.TCPAddr).Port
+	if *port == 0 {
+		rememberPort(root, bound)
+	}
+
+	app := newApp(root, bound)
+	url := "http://127.0.0.1:" + strconv.Itoa(bound)
 	fmt.Printf("echo %s\n", root)
 	fmt.Printf("open %s\n", url)
-	if !*noOpen {
-		_ = openBrowser(url)
-	}
+	open(url)
 	if err := http.Serve(ln, app.routes()); err != nil {
 		fatal(err)
 	}
+}
+
+// listen binds an explicit port exactly. Otherwise it tries the repository's last port, then ports
+// no other repository has used, then any port in the range, so each repository tends to keep its
+// port and with it the browser storage (reviewed marks) that is scoped to that origin.
+func listen(root string, port int) (net.Listener, error) {
+	if port != 0 {
+		return net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	}
+	for _, p := range portOrder(root, loadPorts()) {
+		if ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(p)); err == nil {
+			return ln, nil
+		}
+	}
+	return nil, fmt.Errorf("ports %d-%d are all in use; pass -port", firstPort, lastPort)
+}
+
+func portOrder(root string, known map[string]int) []int {
+	claimed := map[int]bool{}
+	for r, p := range known {
+		if r != root {
+			claimed[p] = true
+		}
+	}
+	var own, free, taken []int
+	if p := known[root]; p >= firstPort && p <= lastPort {
+		own = append(own, p)
+	}
+	for p := firstPort; p <= lastPort; p++ {
+		switch {
+		case len(own) > 0 && p == own[0]:
+		case claimed[p]:
+			taken = append(taken, p)
+		default:
+			free = append(free, p)
+		}
+	}
+	return append(append(own, free...), taken...)
+}
+
+func runningFor(root string, list []Instance) int {
+	for _, in := range list {
+		if in.Root == root {
+			return in.Port
+		}
+	}
+	return 0
+}
+
+// instances asks every port in the range whether an echo is serving there. Closed ports refuse
+// at once, so the scan costs about one round trip.
+func instances() []Instance {
+	client := &http.Client{Timeout: 700 * time.Millisecond}
+	found := make([]*Instance, lastPort-firstPort+1)
+	var wg sync.WaitGroup
+	for p := firstPort; p <= lastPort; p++ {
+		wg.Add(1)
+		go func(p int) {
+			defer wg.Done()
+			res, err := client.Get("http://127.0.0.1:" + strconv.Itoa(p) + "/api/instance")
+			if err != nil {
+				return
+			}
+			defer res.Body.Close()
+			var in Instance
+			// Anything else listening on the port fails this check and is ignored.
+			if res.StatusCode == http.StatusOK && json.NewDecoder(io.LimitReader(res.Body, 1<<16)).Decode(&in) == nil && in.Root != "" && in.Port == p {
+				found[p-firstPort] = &in
+			}
+		}(p)
+	}
+	wg.Wait()
+	out := []Instance{}
+	for _, in := range found {
+		if in != nil {
+			out = append(out, *in)
+		}
+	}
+	return out
 }
 
 func newApp(root string, port int) *App {
 	p := strconv.Itoa(port)
 	return &App{
 		root:  root,
-		cfg:   loadConfig(),
+		port:  port,
 		sigs:  map[string]fileSig{},
 		hosts: map[string]bool{"127.0.0.1:" + p: true, "localhost:" + p: true},
 	}
@@ -237,6 +345,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/commit/contains", a.handleContains)
 	mux.HandleFunc("/api/stream", a.handleStream)
 	mux.HandleFunc("/api/config", a.handleConfig)
+	mux.HandleFunc("/api/instance", a.handleInstance)
+	mux.HandleFunc("/api/instances", a.handleInstances)
 
 	assets, err := fs.Sub(webFS, "web")
 	if err != nil {
@@ -1225,23 +1335,41 @@ func (a *App) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleConfig reads the config from disk and applies a POST as a patch onto the file, so echo
+// processes for different repositories, which share one config file, do not undo each other's settings.
 func (a *App) handleConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		a.mu.Lock()
-		writeJSON(w, a.cfg)
-		a.mu.Unlock()
-		return
-	}
-	var cfg Config
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+	// The lock serializes this process's read-modify-write of the file.
 	a.mu.Lock()
-	a.cfg = cfg
-	a.mu.Unlock()
-	_ = saveConfig(cfg)
+	defer a.mu.Unlock()
+	cfg := loadConfig()
+	if r.Method != http.MethodGet {
+		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := saveConfig(cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	writeJSON(w, cfg)
+}
+
+func (a *App) handleInstance(w http.ResponseWriter, r *http.Request) {
+	in := Instance{Root: a.root, Port: a.port}
+	if out, err := a.git("branch", "--show-current"); err == nil {
+		in.Branch = strings.TrimSpace(out)
+	}
+	if out, err := a.git("status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"); err == nil {
+		in.Changes = len(parsePorcelain(out))
+	}
+	writeJSON(w, in)
+}
+
+// handleInstances lists the running echo processes. The server asks its siblings, so the page
+// never makes a cross-origin request and the Host/Origin guard stays strict.
+func (a *App) handleInstances(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, instances())
 }
 
 func (a *App) safePath(rel string) (string, error) {
@@ -1452,14 +1580,59 @@ func loadConfig() Config {
 }
 
 func saveConfig(cfg Config) error {
-	if err := os.MkdirAll(filepath.Dir(configPath()), 0o755); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath(), data, 0o644)
+	return writeAtomic(configPath(), data)
+}
+
+// writeAtomic replaces a file in one rename, so another echo process never reads a half-written one.
+func writeAtomic(name string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(name), filepath.Base(name)+".*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), name)
+}
+
+// ports.json maps repository roots to the port each last used; it lives beside config.json.
+func portsPath() string {
+	return filepath.Join(filepath.Dir(configPath()), "ports.json")
+}
+
+func loadPorts() map[string]int {
+	ports := map[string]int{}
+	if data, err := os.ReadFile(portsPath()); err == nil {
+		_ = json.Unmarshal(data, &ports)
+	}
+	return ports
+}
+
+// rememberPort records root's port and forgets any other repository that had it, which keeps
+// the file to at most one entry per port in the range.
+func rememberPort(root string, port int) {
+	ports := loadPorts()
+	for r, p := range ports {
+		if p == port || p < firstPort || p > lastPort {
+			delete(ports, r)
+		}
+	}
+	ports[root] = port
+	if data, err := json.MarshalIndent(ports, "", "  "); err == nil {
+		_ = writeAtomic(portsPath(), data)
+	}
 }
 
 func configPath() string {

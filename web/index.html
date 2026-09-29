@@ -18,7 +18,7 @@ try {
 <header class="titlebar">
   <div class="crumbs">
     <div class="logo">e</div>
-    <span id="repo" class="repo"></span>
+    <button id="repo" class="repo" title="Switch repository (⌘⇧O)"><span id="repo-name"></span><svg class="i" viewBox="0 0 16 16"><path d="M5 6.5 8 3.5l3 3M5 9.5l3 3 3-3"/></svg></button>
     <span class="sep">/</span>
     <button id="branch" class="branch" title="Branches: checkout, merge, rebase, delete">—</button>
     <span id="track" class="track" hidden></span>
@@ -35,6 +35,12 @@ try {
     <button id="git-toggle" class="btn quiet icon" title="Toggle Git panel (⌘J)"><svg class="i" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M10 3v10"/></svg></button>
     <button id="theme-open" class="btn quiet icon" title="Theme"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11z" fill="currentColor"/></svg></button>
     <button id="help-open" class="btn quiet icon" title="Shortcuts (?)">?</button>
+  </div>
+  <div id="repo-pop" class="pop repo-pop" hidden>
+    <input id="repo-filter" class="field" placeholder="Search open repositories" autocomplete="off" spellcheck="false">
+    <h5>Open in echo</h5>
+    <div id="repo-list"></div>
+    <div class="repo-foot">Open another: run <code>echo-desk</code> in its folder<br><span class="faint"><kbd>↑</kbd><kbd>↓</kbd> choose · <kbd>↵</kbd> switch · <kbd>⌘↵</kbd> new tab</span></div>
   </div>
   <div id="branch-pop" class="pop branch-pop" hidden>
     <input id="branch-filter" class="field" placeholder="Search branches and tags" autocomplete="off" spellcheck="false">
@@ -186,6 +192,7 @@ try {
     <dl class="keys">
       <dt><kbd>⌘K</kbd> <kbd>⌘P</kbd></dt><dd>Go to file</dd>
       <dt><kbd>⌘D</kbd></dt><dd>Switch Review / Files</dd>
+      <dt><kbd>⌘⇧O</kbd></dt><dd>Switch repository</dd>
       <dt><kbd>⌘B</kbd></dt><dd>Toggle sidebar</dd>
       <dt><kbd>⌘J</kbd></dt><dd>Toggle Git panel</dd>
       <dt><kbd>⌘S</kbd></dt><dd>Save current file</dd>

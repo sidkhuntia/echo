@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -45,16 +47,16 @@ func TestGitArgsRejectsOptionRefs(t *testing.T) {
 }
 
 func TestGuard(t *testing.T) {
-	a := newApp(t.TempDir(), 7777)
+	a := newApp(t.TempDir(), 6030)
 	h := a.routes()
 	cases := []struct {
 		name, method, host, origin, ctype string
 		want                              int
 	}{
-		{"own page", "GET", "127.0.0.1:7777", "", "", 200},
-		{"rebinding host", "GET", "evil.example:7777", "", "", 403},
-		{"cross-site write", "POST", "127.0.0.1:7777", "http://evil.example", "application/json", 403},
-		{"simple form post", "POST", "127.0.0.1:7777", "", "text/plain", 415},
+		{"own page", "GET", "127.0.0.1:6030", "", "", 200},
+		{"rebinding host", "GET", "evil.example:6030", "", "", 403},
+		{"cross-site write", "POST", "127.0.0.1:6030", "http://evil.example", "application/json", 403},
+		{"simple form post", "POST", "127.0.0.1:6030", "", "text/plain", 415},
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest(c.method, "/api/config", strings.NewReader("{}"))
@@ -147,7 +149,7 @@ func testRepo(t *testing.T) *App {
 	run("commit", "-q", "-m", "init")
 	write("keep.txt", "one\n2\nthree\n")
 	write("agent.txt", "made by an agent\n")
-	return newApp(dir, 7777)
+	return newApp(dir, 6030)
 }
 
 func TestGitStatusChanges(t *testing.T) {
@@ -187,7 +189,7 @@ func TestTreeSkipsIgnoredFiles(t *testing.T) {
 
 func request(a *App, method, url, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, url, strings.NewReader(body))
-	r.Host = "127.0.0.1:7777"
+	r.Host = "127.0.0.1:6030"
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	a.routes().ServeHTTP(w, r)
@@ -614,4 +616,65 @@ func must(s string, err error) string {
 		panic(err)
 	}
 	return s
+}
+
+func TestPortOrder(t *testing.T) {
+	got := portOrder("/a", map[string]int{"/a": 6033, "/b": 6030, "/c": 6031})
+	if got[0] != 6033 || got[1] != 6032 || got[len(got)-2] != 6030 || got[len(got)-1] != 6031 || len(got) != lastPort-firstPort+1 {
+		t.Errorf("own port, then unclaimed, then claimed: %v", got)
+	}
+	if got := portOrder("/new", nil); got[0] != firstPort {
+		t.Errorf("a new repository starts at %d: %v", firstPort, got)
+	}
+	if got := portOrder("/a", map[string]int{"/a": 7777}); got[0] != firstPort {
+		t.Errorf("a remembered port outside the range is ignored: %v", got)
+	}
+}
+
+func TestRememberPort(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	rememberPort("/a", 6030)
+	rememberPort("/b", 6031)
+	rememberPort("/c", 6030)
+	got := loadPorts()
+	if len(got) != 2 || got["/b"] != 6031 || got["/c"] != 6030 {
+		t.Errorf("taking a port forgets its previous repository: %v", got)
+	}
+}
+
+func TestConfigPostIsAPatch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	a := newApp(t.TempDir(), 6030)
+	if w := request(a, "POST", "/api/config", `{"theme":"nord"}`); w.Code != 200 {
+		t.Fatalf("post theme: %d %s", w.Code, w.Body)
+	}
+	// Another process for another repository changes a different setting.
+	b := newApp(t.TempDir(), 6030)
+	if w := request(b, "POST", "/api/config", `{"vim":true}`); w.Code != 200 {
+		t.Fatalf("post vim: %d %s", w.Code, w.Body)
+	}
+	if cfg := loadConfig(); cfg.Theme != "nord" || !cfg.Vim || cfg.DiffMode != "unified" {
+		t.Errorf("patches from two processes merge: %+v", cfg)
+	}
+}
+
+func TestInstances(t *testing.T) {
+	a := testRepo(t)
+	ln, err := listen(a.root, 0)
+	if err != nil {
+		t.Skip("no free port in range:", err)
+	}
+	a.port = ln.Addr().(*net.TCPAddr).Port
+	a.hosts = map[string]bool{"127.0.0.1:" + strconv.Itoa(a.port): true}
+	go http.Serve(ln, a.routes())
+	defer ln.Close()
+	list := instances()
+	if runningFor(a.root, list) != a.port {
+		t.Fatalf("instances() = %+v, want %s on %d", list, a.root, a.port)
+	}
+	for _, in := range list {
+		if in.Root == a.root && (in.Branch == "" || in.Changes != 2) {
+			t.Errorf("instance reports branch and changes: %+v", in)
+		}
+	}
 }

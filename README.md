@@ -21,20 +21,16 @@ cd ~/code/my-project && echo-desk
 echo-desk ~/code/my-project
 ```
 
-It opens your browser at `http://127.0.0.1:7777`. Each process serves one repository, so to have several open at once, give each its own port:
-
-```sh
-echo-desk -port 7778 ~/code/other-project
-```
+It opens your browser at `http://127.0.0.1:6030`. Each process serves one repository. Start echo in another repository and it takes the next free port (up to 6049) in a new tab; start it in a repository that is already open and it just opens that tab. Click the repository name in the title bar (`⌘⇧O`) to switch between open repositories.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `-port` | `7777` | Port to listen on (always `127.0.0.1`) |
+| `-port` | auto | Port to listen on (always `127.0.0.1`). Auto means the repository's last port, else the first free one in 6030–6049 |
 | `-no-open` | off | Print the URL instead of opening the browser |
 
 - A directory that is not a Git repository still opens, as a plain file browser and editor.
 - Theme and layout settings are global and shared by every repository.
-- "Reviewed" marks are stored in the browser per repository and per port, so reopen a repository on the same port to keep them.
+- "Reviewed" marks are stored in the browser per repository and per port. Each repository remembers its port, so its marks survive restarts unless you pass a different `-port`.
 - While developing echo itself, `go run . -no-open` runs it from source in the current directory.
 
 ## v1

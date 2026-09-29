@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The default port is now 6030. Starting echo in another repository no longer fails because the port is taken: it takes the next free port (up to 6049) and opens a new tab. Each repository keeps its port across restarts, and starting echo in a repository that is already open just opens its tab.
+- Added a repository switcher: click the repository name in the title bar, or press `⌘⇧O`, to see every open echo with its branch and change count. Use `↑`/`↓` to choose (it starts on the first other repository), `Enter` to switch this tab, and `⌘Enter` or `⌘`-click to open a new one. Browser tabs are titled `repository — branch`.
+- Fixed: with several echo processes open, changing a setting in one could undo a setting changed in another, because each wrote back its whole copy of the shared config.
 - Fixed: in repositories with many ignored files (build output, local data folders), the Files tree could stop before `src` because the browser shows at most 3,000 paths. In a Git repository the tree now leaves out files ignored by `.gitignore`.
 - The title bar shows the current branch's incoming ↓ and outgoing ↑ commits against its upstream, with Fetch (and how long ago the last fetch was) and Sync buttons. Sync pulls using your Git pull settings, then pushes if you're ahead; a branch with no upstream shows Publish instead. The branch list shows the same counts.
 - Added a Log view (Review · Files · Log): a commit graph of every branch with lanes, branch and tag labels, author, and date, loaded 200 commits at a time as you scroll. Filter by message text or a pasted hash, branch, author, or path. The details pane shows the full message, the branches that contain the commit, and its changed files; `Enter` opens the diff and `Esc` comes back.
