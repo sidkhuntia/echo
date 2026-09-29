@@ -96,6 +96,17 @@ func TestParseNumstat(t *testing.T) {
 	}
 }
 
+func TestParseCommits(t *testing.T) {
+	got := parseCommits("abc123full\tabc123\tAda Lovelace\t1700000000\tfix:\ttabs in subject\nbad line\n")
+	if len(got) != 1 {
+		t.Fatalf("got %+v", got)
+	}
+	want := Commit{Hash: "abc123full", Short: "abc123", Author: "Ada Lovelace", Time: 1700000000, Subject: "fix:\ttabs in subject"}
+	if got[0] != want {
+		t.Errorf("got %+v, want %+v", got[0], want)
+	}
+}
+
 func TestReadSigCountsLines(t *testing.T) {
 	for in, want := range map[string]int{"": 0, "a": 1, "a\n": 1, "a\nb": 2} {
 		if sig, _ := readSig(strings.NewReader(in)); sig.lines != want {

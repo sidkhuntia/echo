@@ -380,6 +380,40 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 .hunk .r-del.sg { color: var(--del); box-shadow: inset 2px 0 0 var(--del-strong); }
 .hunk .r-add.no, .hunk .r-del.no { color: var(--muted); }
 .hunk .r-meta { color: var(--muted); font-style: italic; }
+.hunk-head .spacer { flex: 1; }
+.hunk-head .btn { height: 20px; }
+.hedit-open { opacity: 0; transition: opacity .12s; }
+.hunk:hover .hedit-open, .hunk.current .hedit-open { opacity: 1; }
+.hunk.editable .tx[data-n] { cursor: text; }
+
+/* split: old | new, lines wrap so both sides stay visible */
+.hunk.split { grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); min-width: 0; }
+.hunk.split > .tx { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 8px; padding-right: 12px; }
+.hunk.split .no { min-width: 44px; }
+.hunk.split .no.ns { border-left: 1px solid var(--line); }
+.hunk.split .r-add.tx { box-shadow: inset 2px 0 0 var(--add-strong); }
+.hunk.split .r-del.tx { box-shadow: inset 2px 0 0 var(--del-strong); }
+.hunk.split .r-none { background: color-mix(in srgb, var(--fg) 3%, transparent); }
+.hunk.split .meta { grid-column: 1 / -1; padding: 0 12px; color: var(--muted); font-style: italic; }
+
+/* inline edit of a hunk's new version */
+.hunk.editing { display: block; min-width: 0; }
+.hunk.editing .hunk-head { color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.hedit {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  resize: vertical;
+  border: 0;
+  outline: none;
+  padding: 6px 18px 6px 18px;
+  background: var(--sunk);
+  color: var(--fg);
+  font: 12px/20px var(--mono);
+  tab-size: 4;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
 .diff-empty { display: grid; place-items: center; height: 70%; }
 
 /* ---------- Git panel ---------- */
@@ -400,7 +434,13 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 .list-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .list-row b { font: 500 11.5px var(--mono); color: var(--accent); margin-right: 6px; }
 .list-row.muted { color: var(--faint); }
-.commit-row { padding: 6px 8px; margin: 0 -8px; border-radius: var(--r); cursor: pointer; }
+.commit-row { padding: 6px 8px; margin: 0 -8px; border-radius: var(--r); cursor: pointer; color: var(--fg-2); font-size: 12px; position: relative; }
+.commit-row .c-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.commit-row .c-meta { display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 11px; color: var(--muted); min-width: 0; }
+.commit-row .c-meta b { font: 500 11px var(--mono); color: var(--accent); flex: none; }
+.commit-row .c-author { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.commit-row .c-time { margin-left: auto; flex: none; color: var(--faint); }
+.commit-row.copied::after { content: "Copied"; position: absolute; top: 6px; right: 8px; padding: 0 6px; border-radius: 4px; background: var(--add-soft); color: var(--add); font-size: 11px; animation: rise .15s ease-out both; }
 .commit-row:hover { background: var(--hover); color: var(--fg); }
 .commit-row.current { background: var(--accent-soft); color: var(--fg); }
 .no-git-repo .insp { opacity: .4; pointer-events: none; }

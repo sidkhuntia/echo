@@ -57,10 +57,13 @@ type fileSig struct {
 	binary bool
 }
 
+// Commit carries the full hash for copying and diffing, and the short one for display.
 type Commit struct {
 	Hash    string `json:"hash"`
-	Subject string `json:"subject"`
+	Short   string `json:"short"`
 	Author  string `json:"author"`
+	Time    int64  `json:"time"`
+	Subject string `json:"subject"`
 }
 
 type Stash struct {
@@ -385,7 +388,9 @@ func (a *App) gitStatus() GitStatus {
 			c.Added, c.Binary = sig.lines, sig.binary
 		}
 	}
-	if out, err := a.git("log", "-n", "100", "--format=%h%x09%s%x09%an"); err == nil {
+	// %aN applies .mailmap, so the author shows under their canonical full name. The time is
+	// absolute (%at) so the status only changes when history does; the browser renders "2h ago".
+	if out, err := a.git("log", "-n", "100", "--format=%H%x09%h%x09%aN%x09%at%x09%s"); err == nil {
 		status.Commits = parseCommits(out)
 	}
 	if out, err := a.git("branch", "-a", "--format=%(refname:short)"); err == nil {
@@ -826,12 +831,14 @@ func parseNumstat(s string) map[string]Change {
 	return out
 }
 
+// parseCommits reads "full\tshort\tauthor\tunixtime\tsubject" lines; the subject is last because it may contain tabs.
 func parseCommits(s string) []Commit {
 	var out []Commit
 	for _, line := range strings.Split(s, "\n") {
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) == 3 {
-			out = append(out, Commit{Hash: parts[0], Subject: parts[1], Author: parts[2]})
+		parts := strings.SplitN(line, "\t", 5)
+		if len(parts) == 5 {
+			t, _ := strconv.ParseInt(parts[3], 10, 64)
+			out = append(out, Commit{Hash: parts[0], Short: parts[1], Author: parts[2], Time: t, Subject: parts[4]})
 		}
 	}
 	return out

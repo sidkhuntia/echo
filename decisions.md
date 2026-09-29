@@ -111,11 +111,17 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** the review surface renders one section per file with old/new line numbers and a sticky file header.
 - **Default:** lockfiles, generated files, and files with more than 1500 diff lines start folded.
 - **Accepted:** clicking a commit in history shows that commit's diff (`git show`, first parent for merges).
-- **Default:** the v1 UI renders a unified line-based diff.
+- **Accepted:** clicking a commit also copies its full commit id to the clipboard.
+- **Accepted:** history rows show the subject, short hash, the author's full name, and a relative time.
+- **Default:** the author name uses `%aN`, so `.mailmap` maps it to the canonical full name.
+- **Default:** the server sends the commit time as a Unix timestamp and the browser renders "2h ago", so the SSE status does not change just because time passed.
+- **Default:** copying falls back to a hidden-textarea `execCommand('copy')` when the async Clipboard API is denied.
+- **Accepted:** the diff has two layouts, "Stacked" (unified: old and new lines in one column) and "Split" (old on the left, new on the right), switched from the review toolbar.
+- **Default:** the layout is saved in the global config as `diffMode` (`unified` or `split`); stacked is the default.
+- **Default:** split view pairs a run of deletions with the additions that follow it row by row, pads the shorter side with empty cells, and wraps long lines so both sides stay visible.
 - **Default:** the v1 UI supports the ignore-whitespace option using `--ignore-all-space`.
 - **Default:** range diffs use Git ref syntax such as `from..to`.
 - **Default:** the UI includes all-changes, unstaged, staged, ref-range, and single-commit scope selectors.
-- **Deferred:** split diff rendering.
 - **Deferred:** word-level diff rendering.
 
 ## 6. Files and navigation
@@ -148,6 +154,15 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** the final v1 editor choice is a plain textarea.
 - **Accepted:** a read-only syntax-highlighted view and a plain textarea editing mode are both needed.
 - **Accepted:** saving writes the file to disk.
+- **Accepted:** while reviewing, a hunk can be edited in place, but only its new version: the lines that exist in the working tree. Deleted lines are never editable.
+- **Accepted:** inline edits are offered only where the new side is the working tree (All changes and Unstaged). Staged, commit, and ref-range diffs are read-only.
+- **Default:** inline edits are disabled while "Hide whitespace" is on, because `git diff -w` context lines may not match the file on disk.
+- **Default:** an inline edit opens from a hunk's Edit button, `e` on the current hunk, or a double-click on a new-side line (the caret lands on that line). `⌘S`/`⌘↵` save and `Esc` cancels.
+- **Default:** before editing, the browser re-reads the file and checks that the hunk's new lines still match the disk; if not, it reloads the diff instead of editing stale text.
+- **Default:** an inline save splices the hunk into the file read at edit start and sends that file's hash, so the existing stale-save `409` protects agent edits. On a conflict the draft is kept.
+- **Default:** CRLF line endings are preserved, and an empty draft removes the hunk's lines.
+- **Default:** automatic diff reloads (SSE, actions) wait while a hunk is being edited, so the draft is never re-rendered away. Changing scope asks before discarding a changed draft.
+- **Default:** if the file was marked reviewed, your own inline edit keeps it reviewed.
 - **Accepted:** saving does not automatically stage the file.
 - **Accepted:** staging remains an explicit Git action.
 - **Accepted:** unsaved edits stay in memory per tab.
@@ -272,6 +287,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** vim mode is opt-in, not enabled by default.
 - **Accepted:** use familiar editor shortcuts where they fit the smaller scope.
 - **Default:** include shortcuts for file search, tree toggle, Git panel toggle, diff toggle, save, help, and escape.
+- **Default:** `e` edits the current hunk's new version in the review surface.
 - **Default:** use `⌘K`/`⌘P` for file search, `⌘B` for the file index, `⌘J` for the action ledger, `⌘D` for diff, and `⌘S` for save on macOS.
 - **Default:** `?` opens the shortcut card.
 - **Deferred:** full vim modal navigation and command language.
@@ -342,7 +358,6 @@ These are not rejected. They are waiting until the basic review loop is proven:
 
 1. LSP syntax highlighting using installed language servers.
 2. Hunk-level stage and unstage controls.
-3. Split diffs.
 4. Word-level diff highlighting.
 5. Native file picker and richer context menus.
 6. Draggable panel sizing and reordering.

@@ -84,6 +84,10 @@ try {
           <input id="diff-to" class="field ref" placeholder="to ref" autocomplete="off" spellcheck="false">
         </span>
         <input id="diff-commit" class="field ref" placeholder="commit" autocomplete="off" spellcheck="false" hidden>
+        <div class="seg layout-switch" role="tablist" title="Diff layout">
+          <button data-layout="unified" class="on" role="tab" title="Old and new lines stacked in one column">Stacked</button>
+          <button data-layout="split" role="tab" title="Old version on the left, new version on the right">Split</button>
+        </div>
         <label class="toggle"><input id="ignore-ws" type="checkbox"><span class="sw"></span>Hide whitespace</label>
         <span id="diff-summary" class="summary"></span>
       </div>
@@ -128,7 +132,7 @@ try {
         <div id="stashes"></div>
       </section>
       <section class="sec" data-for="history">
-        <h4>Recent commits <span class="dim">click to review</span></h4>
+        <h4>Recent commits <span class="dim">click to copy id and review</span></h4>
         <div id="history"></div>
       </section>
     </div>
@@ -161,6 +165,8 @@ try {
       <dt><kbd>n</kbd> <kbd>p</kbd></dt><dd>Next / previous changed file</dd>
       <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next / previous hunk</dd>
       <dt><kbd>x</kbd></dt><dd>Mark current file reviewed</dd>
+      <dt><kbd>e</kbd></dt><dd>Edit the current hunk's new version (or double-click a line)</dd>
+      <dt><kbd>⌘S</kbd> <kbd>Esc</kbd></dt><dd>Save / cancel a hunk edit</dd>
       <dt><kbd>o</kbd></dt><dd>Open current file</dd>
       <dt><kbd>?</kbd></dt><dd>Show this card</dd>
       <dt><kbd>Esc</kbd></dt><dd>Close overlays</dd>
