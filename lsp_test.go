@@ -81,3 +81,45 @@ func TestGoplsTokens(t *testing.T) {
 		t.Errorf("first token = %v (%s)", res.Tokens[:5], res.Legend[res.Tokens[3]])
 	}
 }
+
+func TestProgressNotifications(t *testing.T) {
+	c := &lspClient{progress: map[string]lspProgress{}}
+	send := func(method, params string) {
+		c.notification(lspMessage{Method: method, Params: json.RawMessage(params)})
+	}
+	send("$/progress", `{"token":"t1","value":{"kind":"begin","title":"Importing Maven project","percentage":0}}`)
+	send("$/progress", `{"token":"t1","value":{"kind":"report","message":"core","percentage":40}}`)
+	if got := c.progress[`"t1"`].String(); got != "Importing Maven project · core 40%" {
+		t.Errorf("progress = %q", got)
+	}
+	send("$/progress", `{"token":"t1","value":{"kind":"end"}}`)
+	send("language/status", `{"type":"Starting","message":"Init..."}`)
+	if len(c.progress) != 0 || c.note != "Init..." {
+		t.Errorf("after end: %v %q", c.progress, c.note)
+	}
+	send("language/status", `{"type":"ServiceReady","message":"ok"}`)
+	if c.note != "" {
+		t.Errorf("note after ready = %q", c.note)
+	}
+}
+
+func TestLSPStatusEndpoint(t *testing.T) {
+	a := testRepo(t)
+	a.lsp.failed["zls"] = "zls did not start: boom"
+	var list []LSPStatus
+	if err := json.Unmarshal(request(a, "GET", "/api/lsp/status", "").Body.Bytes(), &list); err != nil || len(list) != len(lspServers) {
+		t.Fatalf("status = %v, %v", list, err)
+	}
+	for _, s := range list {
+		if s.ID == "zls" && (s.State != "failed" || s.Message == "") {
+			t.Errorf("zls = %+v", s)
+		}
+		if len(s.Exts) == 0 || len(s.Install) == 0 {
+			t.Errorf("%s lacks exts or install: %+v", s.ID, s)
+		}
+	}
+	request(a, "POST", "/api/lsp/restart", `{"id":"zls"}`)
+	if _, ok := a.lsp.failed["zls"]; ok {
+		t.Error("restart kept the failed start")
+	}
+}

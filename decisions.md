@@ -216,8 +216,10 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** servers are looked up on `PATH` plus the folders installers use that a Terminal `PATH` often lacks (`~/go/bin`, `~/.cargo/bin`, `~/.local/bin`, Homebrew, Homebrew's keg-only LLVM, and the Xcode command line tools).
 - **Accepted:** when a file's server is not installed, a one-line note above the editor offers Install, Copy command, and Not now. Install runs that catalog entry's command on the server (never a command sent by the page), one at a time, with a ten-minute limit. Not now is remembered per server in the config (`lspDismissed`).
 - **Default:** echo is a minimal LSP client over stdio using only the standard library: `initialize`, full-text `didOpen`/`didChange`, and `textDocument/semanticTokens/full`. It answers the server's own requests with empty results. One server process runs per catalog entry per echo process, started on first use, rooted at the repository, and it exits with echo when its stdin closes.
-- **Default:** a server that fails to start is not retried until echo restarts or the server is installed from the prompt; a slow answer (a server still indexing) is retried.
-- **Default:** servers that classify only names (TypeScript, Pyright, clangd) leave comments, strings, and numbers uncolored, so the editor finds those lexically and lays the server's tokens over them. This runs only when a server is answering; without one the editor stays plain text.
+- **Default:** a server that fails to start is not retried until echo restarts, the server is installed from the prompt, or Restart is pressed. A slow answer (a server still importing the project, like jdtls on a Maven or Gradle build) is asked again every 3 seconds, for up to 3 minutes.
+- **Accepted:** the status bar names the current file's language server and its state: starting, indexing (with the server's own progress text, such as jdtls's project import), ready, no highlighting, failed, or not installed. Clicking it lists every server in the catalog with its path or install command, the error (the tail of the server's stderr) when it failed, and Install or Restart.
+- **Default:** state comes from `/api/lsp/status`, which the page polls every 1.5 s only while a server is starting or busy, or while the list is open. Progress comes from `$/progress` (echo advertises `window.workDoneProgress`) and jdtls's `language/status`.
+- **Default:** servers that classify only names (jdtls, TypeScript, Pyright, clangd) leave comments, strings, numbers, and keywords uncolored, so the editor finds comments, strings, and numbers lexically and colors keywords from short per-language lists (Java, JavaScript/TypeScript, Python, C-family). Server tokens always win, then strings and comments, then keywords. This runs only when a server is answering; without one the editor stays plain text.
 - **Default:** token colors come from the theme's existing tokens (accent for keywords, add for strings, warn for numbers and constants, info for types), so every theme highlights without new palette entries.
 
 ## 9. Tabs and workspace model
@@ -367,6 +369,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** each theme is one block of about 16 tokens in `web/themes.css`; `style.css` only reads tokens and derives soft/strong tints with `color-mix`.
 - **Default:** the chosen theme is saved in the global config and mirrored to `localStorage` so a small inline script can apply it before first paint.
 - **Default:** no remote font service is required at runtime.
+- **Default:** the app mark is one hand-written SVG (`web/favicon.svg`) using the echo ink accent, so tabs and bookmarks are recognizable; the page head carries a description, `color-scheme`, and that icon. `app.js` still owns the title, which is `repository — branch`.
 
 ## 17. Safety and security
 

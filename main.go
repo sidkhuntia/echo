@@ -354,6 +354,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/raw", a.handleRaw)
 	mux.HandleFunc("/api/lsp/tokens", a.handleLSPTokens)
 	mux.HandleFunc("/api/lsp/install", a.handleLSPInstall)
+	mux.HandleFunc("/api/lsp/status", a.handleLSPStatus)
+	mux.HandleFunc("/api/lsp/restart", a.handleLSPRestart)
 	mux.HandleFunc("/api/git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/git", a.handleGit)
 	mux.HandleFunc("/api/diff", a.handleDiff)

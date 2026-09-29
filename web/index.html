@@ -3,7 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>echo</title>
+<title>echo — a proof desk for code written by coding agents</title>
+<meta name="description" content="echo is a local-first proof desk for macOS: review diffs, commits, blame, and branches of the git repository in your own folder, with no account and no network.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <script>
 // Apply the last theme before first paint; app.js confirms it from the saved config.
 try {
@@ -180,8 +183,14 @@ try {
 <footer class="statusbar">
   <span class="live"></span>
   <span id="status">Ready</span>
+  <button id="lsp-status" class="lsp-chip" data-state="none" title="Language servers used for highlighting"><i class="dot"></i><span id="lsp-label">Language servers</span></button>
   <span class="console-help">⌘K files · ⌘D review/files · ⌘B sidebar · ⌘J Git · ? shortcuts</span>
 </footer>
+
+<div id="lsp-pop" class="pop lsp-pop" hidden>
+  <h5>Language servers <span class="faint">— highlighting in the editor</span></h5>
+  <div id="lsp-list"></div>
+</div>
 
 <div id="ref-menu" class="menu" role="menu" hidden></div>
 

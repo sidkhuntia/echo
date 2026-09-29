@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+- The page has an icon: a small `e` on the echo accent square, as an SVG in `web/favicon.svg`, so browser tabs and bookmarks stop showing a blank page icon. The head also carries a description and `color-scheme` for a correct first paint and a sensible page summary.
+
 - The editor now highlights code using language servers installed on your Mac (gopls, TypeScript, basedpyright, rust-analyzer, clangd, SourceKit-LSP, jdtls, Ruby LSP, Lua, zls, Bash). If a file's server isn't installed, a note above the editor shows the install command with Install, Copy command, and Not now; editing never waits on it.
 - Markdown files open rendered, with headings, tables, task lists, alerts, code blocks, images from the repository, and links that open other files in echo. Switch between Preview and Edit in the file bar or with `⌘⇧V`.
+- The status bar shows the current file's language server and what it's doing (starting, indexing with the server's progress, ready, failed, not installed). Click it to see every server, why one failed, and Install or Restart.
+- Fixed: Java files were barely highlighted, because jdtls colors names but not keywords; keywords are now colored for Java, JavaScript/TypeScript, Python, and C-family files. A server still importing a large project is asked again instead of giving up after 10 seconds.
+- Fixed: the editor's line numbers and colors could stop after a few lines when the editor was drawn before it had its final size; they now repaint when the editor is resized.
 - The Changes sidebar now works like VS Code's Source Control: "Staged changes" and "Changes" are separate groups (plus "Merge changes" for conflicts), and a partly staged file appears in both with each side's own counts. Hover a row for `+` (stage), `−` (unstage), discard, and open; hover a group header for Stage all or Unstage all. Group headers fold.
 - Discard in the "Changes" group, and in the Unstaged diff view, now throws away only unstaged edits and keeps what you staged.
 - Clicking a row while the diff shows Unstaged or Staged switches to that row's side.

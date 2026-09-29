@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -141,6 +142,11 @@ type lspClient struct {
 	mods    []string
 	tokens  bool // the server offers semanticTokens/full
 	dead    chan struct{}
+	started time.Time
+	// progress holds the server's running work by token; note is jdtls's language/status text.
+	progress map[string]lspProgress
+	note     string
+	stderr   *tail
 }
 
 type lspDoc struct {
@@ -165,29 +171,46 @@ type lspManager struct {
 	mu      sync.Mutex
 	clients map[string]*lspClient
 	// failed remembers servers that would not start, so each request does not respawn them.
-	failed  map[string]string
-	install sync.Mutex
+	failed map[string]string
+	// starting holds servers between launch and their initialize answer; the lock is not held
+	// meanwhile, so the status popover never waits behind a slow start.
+	starting map[string]time.Time
+	wake     *sync.Cond
+	install  sync.Mutex
 }
 
 func newLSPManager(root string) *lspManager {
-	return &lspManager{root: root, clients: map[string]*lspClient{}, failed: map[string]string{}}
+	m := &lspManager{root: root, clients: map[string]*lspClient{}, failed: map[string]string{}, starting: map[string]time.Time{}}
+	m.wake = sync.NewCond(&m.mu)
+	return m
 }
 
 func (m *lspManager) client(s lspServer) (*lspClient, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if c := m.clients[s.ID]; c != nil {
-		select {
-		case <-c.dead:
-			delete(m.clients, s.ID)
-		default:
-			return c, nil
+	for {
+		if c := m.clients[s.ID]; c != nil {
+			select {
+			case <-c.dead:
+				delete(m.clients, s.ID)
+			default:
+				return c, nil
+			}
 		}
+		if msg, ok := m.failed[s.ID]; ok {
+			return nil, errors.New(msg)
+		}
+		if _, ok := m.starting[s.ID]; !ok {
+			break
+		}
+		m.wake.Wait()
 	}
-	if msg, ok := m.failed[s.ID]; ok {
-		return nil, errors.New(msg)
-	}
+	m.starting[s.ID] = time.Now()
+	m.mu.Unlock()
 	c, err := startLSP(m.root, s)
+	m.mu.Lock()
+	delete(m.starting, s.ID)
+	m.wake.Broadcast()
 	if err != nil {
 		m.failed[s.ID] = err.Error()
 		return nil, err
@@ -204,7 +227,8 @@ func startLSP(root string, s lspServer) (*lspClient, error) {
 	cmd := exec.Command(bin, s.Cmd[1:]...)
 	cmd.Dir = root
 	cmd.Env = lspEnv()
-	cmd.Stderr = io.Discard
+	stderr := &tail{}
+	cmd.Stderr = stderr
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -216,7 +240,8 @@ func startLSP(root string, s lspServer) (*lspClient, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	c := &lspClient{server: s, cmd: cmd, in: in, pending: map[int]chan lspMessage{}, docs: map[string]*lspDoc{}, dead: make(chan struct{})}
+	c := &lspClient{server: s, cmd: cmd, in: in, pending: map[int]chan lspMessage{}, docs: map[string]*lspDoc{}, dead: make(chan struct{}),
+		started: time.Now(), progress: map[string]lspProgress{}, stderr: stderr}
 	go c.read(bufio.NewReader(out))
 	go func() { _ = cmd.Wait(); c.close() }()
 
@@ -230,6 +255,7 @@ func startLSP(root string, s lspServer) (*lspClient, error) {
 		"capabilities": map[string]any{
 			"general":   map[string]any{"positionEncodings": []string{"utf-16"}},
 			"workspace": map[string]any{"configuration": true, "workspaceFolders": true},
+			"window":    map[string]any{"workDoneProgress": true},
 			"textDocument": map[string]any{
 				"synchronization": map[string]any{"dynamicRegistration": false},
 				"semanticTokens": map[string]any{
@@ -248,6 +274,9 @@ func startLSP(root string, s lspServer) (*lspClient, error) {
 	res, err := c.call(ctx, "initialize", init)
 	if err != nil {
 		c.kill()
+		if why := stderr.String(); why != "" {
+			return nil, fmt.Errorf("%s did not start: %v\n%s", s.Name, err, why)
+		}
 		return nil, fmt.Errorf("%s did not start: %v", s.Name, err)
 	}
 	var caps struct {
@@ -350,7 +379,11 @@ func (c *lspClient) read(r *bufio.Reader) {
 			return
 		}
 		var msg lspMessage
-		if json.Unmarshal(body, &msg) != nil || msg.ID == nil {
+		if json.Unmarshal(body, &msg) != nil {
+			continue
+		}
+		if msg.ID == nil {
+			c.notification(msg)
 			continue
 		}
 		if msg.Method != "" {
@@ -375,6 +408,185 @@ func (c *lspClient) read(r *bufio.Reader) {
 		}
 		c.mu.Unlock()
 	}
+}
+
+// progress records what the server says it is doing ($/progress, and jdtls's language/status),
+// so the status bar can show "Importing Maven project 40%" instead of silence.
+func (c *lspClient) notification(msg lspMessage) {
+	switch msg.Method {
+	case "$/progress":
+		var p struct {
+			Token json.RawMessage `json:"token"`
+			Value struct {
+				Kind       string `json:"kind"`
+				Title      string `json:"title"`
+				Message    string `json:"message"`
+				Percentage *int   `json:"percentage"`
+			} `json:"value"`
+		}
+		if json.Unmarshal(msg.Params, &p) != nil {
+			return
+		}
+		key := string(p.Token)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if p.Value.Kind == "end" {
+			delete(c.progress, key)
+			return
+		}
+		pr := c.progress[key]
+		if p.Value.Kind == "begin" {
+			pr = lspProgress{title: p.Value.Title}
+		}
+		pr.message, pr.percent = p.Value.Message, p.Value.Percentage
+		c.progress[key] = pr
+	case "language/status":
+		var p struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(msg.Params, &p) != nil {
+			return
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if p.Type == "ServiceReady" || p.Type == "Started" {
+			c.note = ""
+		} else if p.Type == "Starting" || p.Type == "ProjectStatus" {
+			c.note = p.Message
+		}
+	}
+}
+
+// lspProgress is one piece of running work: a begin's title plus the latest report.
+type lspProgress struct {
+	title, message string
+	percent        *int
+}
+
+func (p lspProgress) String() string {
+	parts := []string{}
+	for _, s := range []string{p.title, p.message} {
+		if s != "" {
+			parts = append(parts, s)
+		}
+	}
+	text := strings.Join(parts, " · ")
+	if p.percent != nil {
+		text += fmt.Sprintf(" %d%%", *p.percent)
+	}
+	return strings.TrimSpace(text)
+}
+
+// tail keeps the last few KB a server wrote to stderr, to explain why it failed.
+type tail struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (t *tail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > 4096 {
+		t.buf = t.buf[len(t.buf)-4096:]
+	}
+	return len(p), nil
+}
+
+func (t *tail) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return lastLines(string(t.buf), 6)
+}
+
+// LSPStatus is one catalog entry as the status popover shows it. State is "missing", "stopped"
+// (installed, not needed yet), "starting", "busy" (indexing), "ready", "unsupported" (no
+// highlighting), "failed" (would not start), or "exited".
+type LSPStatus struct {
+	lspServer
+	Exts     []string `json:"exts"`
+	Path     string   `json:"path,omitempty"`
+	State    string   `json:"state"`
+	Message  string   `json:"message,omitempty"`
+	Progress []string `json:"progress,omitempty"`
+	Since    int64    `json:"since,omitempty"`
+}
+
+func (a *App) handleLSPStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, a.lsp.status())
+}
+
+func (m *lspManager) status() []LSPStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]LSPStatus, 0, len(lspServers))
+	for i := range lspServers {
+		s := &lspServers[i]
+		st := LSPStatus{lspServer: *s, State: "missing"}
+		for ext := range s.Langs {
+			st.Exts = append(st.Exts, ext)
+		}
+		sort.Strings(st.Exts)
+		if p, ok := lookPath(s.Cmd[0]); ok {
+			st.Path, st.State = p, "stopped"
+		}
+		if t, ok := m.starting[s.ID]; ok {
+			st.State, st.Since = "starting", t.Unix()
+		} else if msg, ok := m.failed[s.ID]; ok {
+			st.State, st.Message = "failed", msg
+		} else if c := m.clients[s.ID]; c != nil {
+			st.Since = c.started.Unix()
+			select {
+			case <-c.dead:
+				st.State, st.Message = "exited", c.stderr.String()
+			default:
+				c.mu.Lock()
+				for _, p := range c.progress {
+					st.Progress = append(st.Progress, p.String())
+				}
+				if c.note != "" {
+					st.Progress = append(st.Progress, c.note)
+				}
+				c.mu.Unlock()
+				sort.Strings(st.Progress)
+				switch {
+				case !c.tokens:
+					st.State = "unsupported"
+				case len(st.Progress) > 0:
+					st.State = "busy"
+				default:
+					st.State = "ready"
+				}
+			}
+		}
+		out = append(out, st)
+	}
+	return out
+}
+
+// handleLSPRestart stops a server and forgets a failed start; the next file that needs it starts it again.
+func (a *App) handleLSPRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.lsp.mu.Lock()
+	c := a.lsp.clients[req.ID]
+	delete(a.lsp.clients, req.ID)
+	delete(a.lsp.failed, req.ID)
+	a.lsp.mu.Unlock()
+	if c != nil {
+		c.kill()
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 // readFrame reads one Content-Length framed message.

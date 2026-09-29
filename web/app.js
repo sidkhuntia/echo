@@ -22,7 +22,7 @@ const state = {
   // Changes rail groups (merge, staged, work) folded by the user.
   qClosed: new Set(),
   // lspExt: file extensions whose language server is missing, unsupported, or failed, so they are not asked again.
-  lspExt: new Map(), installing: '',
+  lspExt: new Map(), installing: '', lsp: [],
 }
 const mod = e => e.metaKey || e.ctrlKey
 const typing = e => e.target.closest?.('input, textarea, select')
@@ -670,6 +670,7 @@ function renderEditor() {
   renderBanner()
   refreshGutter()
   paintSyntax()
+  paintLspStatus()
   if (editing) requestTokens(tab)
   else renderLspBanner()
 }
@@ -688,12 +689,19 @@ async function requestTokens(tab, retry = 0) {
   const text = tab.content
   tab.hlAsked = text
   let res
+  // A request that starts a server can take a while; show "starting" meanwhile.
+  const cur = serverFor(tab.path)
+  if (cur?.state !== 'ready') setTimeout(refreshLsp, 400)
   try { res = await post('/api/lsp/tokens', { path: tab.path, content: text }) } catch { tab.hlAsked = null; return }
+  if (res.status !== 'ok' || cur?.state !== 'ready') refreshLsp()
   if (res.status === 'error') {
     tab.hlAsked = null
-    if (tab === activeTab()) setStatus(`No highlighting from ${res.server?.name}: ${res.message}`, 'err')
-    // A server that would not start stays down for this session; a slow answer is tried again later.
-    if (!/deadline|cancel/i.test(res.message || '')) state.lspExt.set(extOf(tab.path), res)
+    // A server that would not start stays down until Restart; a slow answer (a server still
+    // importing the project, like jdtls on a Maven build) is asked again every few seconds.
+    if (!/deadline|cancel/i.test(res.message || '')) {
+      state.lspExt.set(extOf(tab.path), res)
+      if (tab === activeTab()) setStatus(`No highlighting from ${res.server?.name}: ${res.message.split('\n')[0]}`, 'err')
+    } else if (retry < 60) setTimeout(() => { if (tab === activeTab() && tab.hlAsked !== tab.content) requestTokens(tab, retry + 1) }, 3000)
     return
   }
   if (res.status !== 'ok') { state.lspExt.set(extOf(tab.path), res); return renderLspBanner() }
@@ -752,6 +760,23 @@ const LEX = {
   lua: new RegExp(String.raw`(--\[\[[\s\S]*?\]\]|--[^\n]*)|(${LEX_STR})|(${LEX_NUM})`, 'g'),
 }
 const lexFamily = p => /\.(py|pyi|rb|sh|bash|zsh)$/i.test(p) ? 'hash' : /\.lua$/i.test(p) ? 'lua' : 'c'
+
+// Keywords for languages whose servers classify names but not keywords (jdtls, TypeScript, Pyright,
+// clangd). They only fill gaps: strings, comments, and server tokens always win.
+const KEYWORDS = Object.fromEntries(Object.entries({
+  java: 'abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public record return sealed permits short static strictfp super switch synchronized this throw throws transient try var void volatile while yield true false null',
+  js: 'as async await break case catch class const continue debugger declare default delete do else enum export extends false finally for from function get if implements import in instanceof interface keyof let namespace new null of private protected public readonly return satisfies set static super switch this throw true try type typeof undefined var void while with yield',
+  py: 'False None True and as assert async await break case class continue def del elif else except finally for from global if import in is lambda match nonlocal not or pass raise return self try while with yield',
+  c: 'auto bool break case catch char class const constexpr continue default delete do double else enum explicit extern false float for friend goto if inline int long namespace new noexcept nullptr operator override private protected public register return short signed sizeof static struct switch template this throw true try typedef typename union unsigned using virtual void volatile while',
+}).map(([k, v]) => [k, new Set(v.split(' '))]))
+const kwFamily = p => /\.java$/i.test(p) ? 'java' : /\.[mc]?[jt]sx?$/i.test(p) ? 'js' : /\.pyi?$/i.test(p) ? 'py' : /\.(c|h|cc|cpp|cxx|hpp|hh|m|mm)$/i.test(p) ? 'c' : ''
+
+function keywordSpans(text, words) {
+  if (!words) return null
+  const out = []
+  for (const m of text.matchAll(/[A-Za-z_]\w*/g)) if (words.has(m[0])) out.push([m.index, m[0].length, 'tk-keyword'])
+  return out.length ? out : null
+}
 
 function lexLines(tab) {
   if (tab.lexFor === tab.content) return tab.lex
@@ -815,13 +840,13 @@ function paintSyntax() {
   ed.classList.toggle('hl', on)
   layer.classList.toggle('active', on)
   if (!on) { layer.innerHTML = ''; return }
-  const lines = tabLines(tab), row = tokenRow(tab), lex = lexLines(tab)
+  const lines = tabLines(tab), row = tokenRow(tab), lex = lexLines(tab), words = KEYWORDS[kwFamily(tab.path)]
   const first = Math.max(0, Math.floor((ed.scrollTop - PAD) / LINE) - 2)
   const last = Math.min(lines.length, first + Math.ceil(ed.clientHeight / LINE) + 4)
   let h = ''
   for (let i = first; i < last; i++) {
     const r = row(i)
-    h += `<div class="sl" style="top:${PAD + i * LINE - ed.scrollTop}px">${colorLine(lines[i], lineSpans(r < 0 ? null : tab.hl.lines[r], lex[i]))}</div>`
+    h += `<div class="sl" style="top:${PAD + i * LINE - ed.scrollTop}px">${colorLine(lines[i], lineSpans(lineSpans(r < 0 ? null : tab.hl.lines[r], lex[i]), keywordSpans(lines[i], words)))}</div>`
   }
   layer.innerHTML = `<div style="transform:translateX(${-ed.scrollLeft}px)">${h}</div>`
 }
@@ -842,15 +867,95 @@ async function installServer(s) {
   state.installing = s.id
   renderLspBanner()
   setStatus(`Installing ${s.name}: ${s.install.join(' ')}`)
+  paintLspStatus()
   try {
     await post('/api/lsp/install', { id: s.id })
-    for (const [ext, info] of state.lspExt) if (info.server?.id === s.id) state.lspExt.delete(ext)
-    for (const t of state.tabs) t.hlAsked = null
+    forgetServer(s.id)
     setStatus(`Installed ${s.name}`, 'ok')
   } catch (e) { setStatus(e.message, 'err') }
   state.installing = ''
   renderLspBanner()
+  refreshLsp()
   if (state.mode === 'file') requestTokens(activeTab())
+}
+
+// ---------- language server status ----------
+// The status bar names the current file's server and what it is doing; the popover lists every
+// server echo knows, with Install for missing ones and Restart for running or failed ones.
+const LSP_WORD = { missing: 'not installed', stopped: 'not started', starting: 'starting…', busy: 'indexing…', ready: 'ready', unsupported: 'no highlighting', failed: 'failed to start', exited: 'stopped unexpectedly' }
+const lspLive = s => ['starting', 'busy', 'ready', 'unsupported'].includes(s.state)
+let lspPoll
+
+async function refreshLsp() {
+  clearTimeout(lspPoll)
+  try { state.lsp = await api('/api/lsp/status') } catch { return }
+  paintLspStatus()
+  // Poll only while something is changing or the popover is open.
+  if (state.lsp.some(s => s.state === 'starting' || s.state === 'busy') || !$('#lsp-pop').hidden) lspPoll = setTimeout(refreshLsp, 1500)
+}
+
+// serverFor mirrors the server's choice: the first installed server for the extension, else the first one.
+function serverFor(path) {
+  const list = (state.lsp || []).filter(s => s.exts.includes(extOf(path)))
+  return list.find(s => s.state !== 'missing') || list[0]
+}
+
+const codeTab = () => { const t = activeTab(); return state.mode === 'file' && t && !t.binary && !isMarkdown(t.path) ? t : null }
+
+function paintLspStatus() {
+  const chip = $('#lsp-status'), tab = codeTab(), cur = tab && serverFor(tab.path)
+  const live = (state.lsp || []).filter(lspLive)
+  let label, kind
+  if (cur) {
+    label = `${cur.name} · ${cur.state === 'busy' && cur.progress?.length ? cur.progress[0] : LSP_WORD[cur.state]}`
+    kind = cur.state
+  } else if (tab) {
+    label = `No language server for ${extOf(tab.path) || 'this file'}`
+    kind = 'none'
+  } else {
+    label = live.length ? `${live.length} language server${live.length > 1 ? 's' : ''}` : 'Language servers'
+    kind = live.some(s => s.state !== 'ready') ? 'busy' : live.length ? 'ready' : 'none'
+  }
+  chip.dataset.state = kind
+  $('#lsp-label').textContent = label
+  chip.title = cur?.message || cur?.progress?.join('\n') || 'Language servers used for highlighting'
+  if (!$('#lsp-pop').hidden) renderLspPop()
+}
+
+function renderLspPop() {
+  const tab = codeTab(), cur = tab && serverFor(tab.path)
+  const rank = s => s === cur ? 0 : lspLive(s) || s.state === 'failed' || s.state === 'exited' ? 1 : s.state === 'stopped' ? 2 : 3
+  $('#lsp-list').innerHTML = [...(state.lsp || [])].sort((a, b) => rank(a) - rank(b)).map(s => {
+    const act = s.state === 'missing'
+      ? `<button class="btn sm" data-lsp-install="${esc(s.id)}" ${state.installing ? 'disabled' : ''}>${state.installing === s.id ? 'Installing…' : 'Install'}</button>`
+      : s.state !== 'stopped' ? `<button class="btn sm quiet" data-lsp-restart="${esc(s.id)}">Restart</button>` : ''
+    return `<div class="lsp-row${s === cur ? ' cur' : ''}" data-state="${s.state}">
+      <div class="lsp-top"><i class="dot"></i><b>${esc(s.name)}</b><span class="lsp-state">${esc(LSP_WORD[s.state])}${lspLive(s) && s.since ? ` · ${ago(s.since).replace(' ago', '')}` : ''}</span>${act}</div>
+      <div class="lsp-sub">${esc(s.exts.join(' '))} · ${s.path ? esc(s.path) : `<code>${esc(s.install.join(' '))}</code>`}</div>
+      ${s.progress?.length ? `<div class="lsp-msg">${s.progress.map(esc).join('<br>')}</div>` : ''}
+      ${s.message ? `<pre class="lsp-err">${esc(s.message)}</pre>` : ''}
+    </div>`
+  }).join('')
+}
+
+function toggleLspPop(open = $('#lsp-pop').hidden) {
+  $('#lsp-pop').hidden = !open
+  if (open) { renderLspPop(); refreshLsp() }
+}
+
+// forgetServer drops what the page remembered about a server, so the next request starts fresh.
+function forgetServer(id) {
+  for (const [ext, info] of state.lspExt) if (info.server?.id === id) state.lspExt.delete(ext)
+  // Marking tokens stale makes the next request ask again; the old colors stay until the answer.
+  for (const t of state.tabs) { t.hlAsked = null; if (t.hl) t.hl.text = null }
+}
+
+async function restartServer(id) {
+  try { await post('/api/lsp/restart', { id }) } catch (e) { return setStatus(e.message, 'err') }
+  forgetServer(id)
+  setStatus(`Restarting ${state.lsp.find(s => s.id === id)?.name || id}`)
+  if (codeTab()) requestTokens(codeTab())
+  setTimeout(refreshLsp, 300)
 }
 
 // ---------- markdown preview ----------
@@ -2012,6 +2117,13 @@ $('#lsp-banner').addEventListener('click', async e => {
     post('/api/config', { lspDismissed: state.config.lspDismissed }).catch(err => setStatus(err.message, 'err'))
   }
 })
+$('#lsp-status').onclick = e => { e.stopPropagation(); toggleLspPop() }
+$('#lsp-pop').addEventListener('click', e => {
+  const install = e.target.closest('[data-lsp-install]')?.dataset.lspInstall
+  const restart = e.target.closest('[data-lsp-restart]')?.dataset.lspRestart
+  if (install) installServer(state.lsp.find(s => s.id === install))
+  if (restart) restartServer(restart)
+})
 document.querySelectorAll('#md-switch button').forEach(b => b.onclick = () => setPreview(b.dataset.md === 'preview'))
 $('#md').addEventListener('click', e => {
   const a = e.target.closest('a[href]')
@@ -2156,6 +2268,7 @@ document.addEventListener('click', e => {
   if (!$('#ref-menu').hidden && !e.target.closest('[data-more], .bp-row')) closeRefMenu()
   if (!$('#branch-pop').hidden && !e.target.closest('#branch-pop')) toggleBranchPop(false)
   if (!$('#repo-pop').hidden && !e.target.closest('#repo-pop')) toggleRepoPop(false)
+  if (!$('#lsp-pop').hidden && !e.target.closest('#lsp-pop')) toggleLspPop(false)
 })
 $('#stashes').addEventListener('click', e => {
   const b = e.target.closest('button[data-ref]')
@@ -2178,6 +2291,9 @@ $('#editor').addEventListener('input', () => {
   marksTimer = setTimeout(() => { if (t === activeTab()) { computeMarks(t); paintGutter() } }, 120)
 })
 let marksTimer, gutterFrame
+// Repaint the gutter and colors when the editor changes size (window resize, panels, a first paint
+// made before layout settled); both draw only the rows that fit.
+new ResizeObserver(() => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(() => { paintGutter(); paintSyntax() }) }).observe($('#editor'))
 $('#editor').addEventListener('scroll', () => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(() => { paintGutter(); paintSyntax(); paintBlameGhost() }) })
 let ghostFrame, blameTimer
 for (const ev of ['keyup', 'mouseup', 'focus']) $('#editor').addEventListener(ev, () => { cancelAnimationFrame(ghostFrame); ghostFrame = requestAnimationFrame(paintBlameGhost) })
@@ -2275,7 +2391,7 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' && e.target.closest?.('#ref-menu, #branch-pop')) return
   if (e.key === 'Escape' && (!$('#ref-menu').hidden || !$('#branch-pop').hidden)) { e.preventDefault(); if (!$('#ref-menu').hidden) closeRefMenu(); else toggleBranchPop(false); return }
   if (e.key === 'Escape' && state.mode === 'diff' && state.fromLog && !typing(e) && $('#help').hidden) { e.preventDefault(); setMode('log'); return }
-  if (e.key === 'Escape') { $('#help').hidden = true; toggleThemes(false); toggleRepoPop(false); if (typing(e)) e.target.blur(); return }
+  if (e.key === 'Escape') { $('#help').hidden = true; toggleThemes(false); toggleRepoPop(false); toggleLspPop(false); if (typing(e)) e.target.blur(); return }
   if (typing(e) || e.altKey) return
   if (state.mode === 'log') {
     const k = { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[e.key]
@@ -2312,6 +2428,7 @@ async function loadConfig() {
 syncScopeInputs()
 loadConfig()
 refreshAll()
+refreshLsp()
 const events = new EventSource('/api/stream')
 // After a lost connection the server may have restarted with new history; forget the refs key so the
 // first status after reconnecting reloads History and the Log.
