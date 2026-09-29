@@ -224,7 +224,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/git", a.handleGit)
 	mux.HandleFunc("/api/diff", a.handleDiff)
-	mux.HandleFunc("/api/log", a.handleLog)
+	// Not /api/log: ad and tracker blockers refuse requests to URLs that look like analytics logging.
+	mux.HandleFunc("/api/history", a.handleLog)
 	mux.HandleFunc("/api/commit", a.handleCommit)
 	mux.HandleFunc("/api/commit/contains", a.handleContains)
 	mux.HandleFunc("/api/stream", a.handleStream)

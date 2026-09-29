@@ -259,6 +259,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** the implementation keeps the refresh loop deliberately simple rather than using native filesystem event libraries.
 - **Default:** the UI also performs an explicit refresh after app actions.
 - **Default:** the status carries a build id (a hash of the embedded web assets). A page whose build differs from the server's reloads itself, since EventSource reconnects old pages to a restarted server; with unsaved editor edits it asks you to save and reload instead. Static files are served with `Cache-Control: no-cache`.
+- **Default:** the endpoint is `/api/history`, not `/api/log`, because browser ad and tracker blockers block `/api/log?…` requests (`net::ERR_BLOCKED_BY_CLIENT`), which left the History tab empty.
 - **Default:** History and the Log reload after the live connection drops and reconnects. A failed History load keeps the last list on screen and retries every three seconds, instead of showing an empty list until the next ref change.
 - **Default:** status updates include the working-tree status map, staged state, branch, recent commits, branches, and stashes.
 - **Deferred:** native macOS filesystem event APIs.
@@ -279,7 +280,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** commit details show the subject and full body, author and committer, a copyable hash, parents, the branches and tags that contain the commit, and a collapsible folder tree of changed files with +/− counts. Clicking a file opens Review scoped to that commit at that file; `Esc` returns to the log.
 - **Default:** in the History tab, clicking a commit expands it in place (one at a time) and shows its diff in Review; clicking it again folds it. Single-child folder chains in the file tree collapse into one row.
 - **Default:** details come from a lazy `GET /api/commit?hash=`; `--contains` lookups load after the rest because they can be slow on large repositories.
-- **Default:** commits move out of the SSE status into `GET /api/log` (paged, 200 at a time); the status carries a refs signature so the browser refetches the log only when refs change.
+- **Default:** commits move out of the SSE status into `GET /api/history` (paged, 200 at a time); the status carries a refs signature so the browser refetches the log only when refs change.
 - **Default:** graph lanes are computed in the browser from `%H %P %D` in topological order and drawn as SVG, without a library. Lanes keep their column (no compaction), colors follow the lane, merge commits are hollow dots, and the graph is capped at 16 lanes wide.
 - **Default:** "All branches" means `--branches --remotes --tags HEAD`, not `--all`, so stashes and echo's own refs never appear in the graph.
 - **Default:** the Log search matches commit messages as literal, case-insensitive text; a 4–40 character hex string that names a commit jumps to that commit instead. Author and path filters work like `git log --author` and `git log -- <path>`.
@@ -287,7 +288,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** in Log, `↑`/`↓` or `j`/`k` move the selection, `Enter` or a double-click opens the diff in Review, and `Esc` in Review returns to the Log with the selection kept.
 - **Accepted:** in Log mode the sidebar shows a Branches tree (local, remote, tags) that filters the log; the branch pill opens an IntelliJ-style branches popup with checkout, merge, rebase, compare, and delete.
 - **Accepted:** GitLens extras in scope: file history (`git log --follow` for a file), inline blame on the editor's caret line with a blame gutter toggle, and compare branches (commits only in A / only in B plus the combined diff).
-- **Default:** delivery order: A) ahead/behind, Fetch, Sync/Publish; B) commit details and files; C) `/api/log`, graph, Log mode; D) branches sidebar and popup; E) file history, blame, compare.
+- **Default:** delivery order: A) ahead/behind, Fetch, Sync/Publish; B) commit details and files; C) `/api/history`, graph, Log mode; D) branches sidebar and popup; E) file history, blame, compare.
 
 ## 13. Non-Git directories
 

@@ -1003,7 +1003,7 @@ async function loadLog(append = false) {
   const seq = ++L.seq
   L.loading = true
   try {
-    const data = await api('/api/log?' + params)
+    const data = await api('/api/history?' + params)
     if (seq !== L.seq) return
     L.commits = append ? L.commits.concat(data.commits) : data.commits
     L.more = data.more
@@ -1079,7 +1079,7 @@ async function loadHistory() {
   clearTimeout(H.retry)
   const seq = ++H.seq
   try {
-    const data = await api('/api/log?ref=HEAD&limit=100')
+    const data = await api('/api/history?ref=HEAD&limit=100')
     if (seq !== H.seq) return
     H.commits = data.commits
     H.rows = layoutGraph(data.commits)

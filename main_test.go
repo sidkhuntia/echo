@@ -426,7 +426,7 @@ func TestLogEndpoint(t *testing.T) {
 	}
 	get := func(query string) page {
 		t.Helper()
-		w := request(a, http.MethodGet, "/api/log?"+query, "")
+		w := request(a, http.MethodGet, "/api/history?"+query, "")
 		var p page
 		if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil || w.Code != http.StatusOK {
 			t.Fatalf("%s: %d %s", query, w.Code, w.Body)
@@ -466,7 +466,7 @@ func TestLogEndpoint(t *testing.T) {
 		t.Errorf("refs = %v", refs)
 	}
 	for _, bad := range []string{"ref=--all", "path=../x"} {
-		if w := request(a, http.MethodGet, "/api/log?"+bad, ""); w.Code != http.StatusBadRequest {
+		if w := request(a, http.MethodGet, "/api/history?"+bad, ""); w.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d", bad, w.Code)
 		}
 	}
