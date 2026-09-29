@@ -259,6 +259,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** the implementation keeps the refresh loop deliberately simple rather than using native filesystem event libraries.
 - **Default:** the UI also performs an explicit refresh after app actions.
 - **Default:** the status carries a build id (a hash of the embedded web assets). A page whose build differs from the server's reloads itself, since EventSource reconnects old pages to a restarted server; with unsaved editor edits it asks you to save and reload instead. Static files are served with `Cache-Control: no-cache`.
+- **Default:** History and the Log reload after the live connection drops and reconnects. A failed History load keeps the last list on screen and retries every three seconds, instead of showing an empty list until the next ref change.
 - **Default:** status updates include the working-tree status map, staged state, branch, recent commits, branches, and stashes.
 - **Deferred:** native macOS filesystem event APIs.
 - **Deferred:** fine-grained event deduplication and per-file invalidation.

@@ -11,7 +11,7 @@ const state = {
   expanded: '', details: new Map(), contains: new Map(), cdirClosed: new Set(),
   // hist: the History tab (current branch). log: the Log view. refsKey: HEAD plus a ref signature;
   // both reload only when it changes. fromLog: Review was opened from the Log, so Esc goes back.
-  hist: { commits: [], rows: [] }, log: { commits: [], rows: [], more: false, loading: false, loaded: false, seq: 0, sel: '' },
+  hist: { commits: [], rows: [], seq: 0, error: '', retry: 0 }, log: { commits: [], rows: [], more: false, loading: false, loaded: false, seq: 0, sel: '' },
   refsKey: '', fromLog: false,
 }
 const mod = e => e.metaKey || e.ctrlKey
@@ -1074,12 +1074,23 @@ function renderLogRefs() {
 }
 
 async function loadHistory() {
+  const H = state.hist
   if (state.status && !state.status.git) return
+  clearTimeout(H.retry)
+  const seq = ++H.seq
   try {
     const data = await api('/api/log?ref=HEAD&limit=100')
-    state.hist.commits = data.commits
-    state.hist.rows = layoutGraph(data.commits)
-  } catch { state.hist.commits = []; state.hist.rows = [] }
+    if (seq !== H.seq) return
+    H.commits = data.commits
+    H.rows = layoutGraph(data.commits)
+    H.error = ''
+  } catch (e) {
+    if (seq !== H.seq) return
+    // History only reloads when a ref moves, so a failed load (say, echo restarting) must retry on its own.
+    // The last good list stays on screen meanwhile.
+    H.error = e.message
+    H.retry = setTimeout(loadHistory, 3000)
+  }
   renderHistory()
 }
 
@@ -1090,7 +1101,8 @@ function renderHistory() {
       <span class="c-graph">${graphSVG(rows[i], HIST_H, w)}</span>
       <div class="c-main"><div class="c-subject">${refChips(c.refs)}${esc(c.subject)}</div>
       <div class="c-meta"><b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div></div>
-    </div>${c.hash === state.expanded ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(rows[i].after, w)}</span><div class="c-dbody">${detailHTML(c.hash)}</div></div>` : ''}`).join('') || '<div class="list-row muted"><span>No commits yet</span></div>'
+    </div>${c.hash === state.expanded ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(rows[i].after, w)}</span><div class="c-dbody">${detailHTML(c.hash)}</div></div>` : ''}`).join('')
+    || `<div class="list-row muted"><span>${state.hist.error ? `Couldn’t load history (${esc(state.hist.error)}). Retrying…` : 'No commits yet'}</span></div>`
   renderHistoryCurrent()
 }
 
@@ -1614,6 +1626,11 @@ syncScopeInputs()
 loadConfig()
 refreshAll()
 const events = new EventSource('/api/stream')
-events.onopen = () => $('.live').classList.remove('off')
+// After a lost connection the server may have restarted with new history; forget the refs key so the
+// first status after reconnecting reloads History and the Log.
+events.onopen = () => {
+  $('.live').classList.remove('off')
+  if (state.disconnected) { state.disconnected = false; state.refsKey = '' }
+}
 events.onmessage = e => applyStatus(JSON.parse(e.data))
-events.onerror = () => { $('.live').classList.add('off'); setStatus('Lost the echo server — retrying…', 'err') }
+events.onerror = () => { state.disconnected = true; $('.live').classList.add('off'); setStatus('Lost the echo server — retrying…', 'err') }
