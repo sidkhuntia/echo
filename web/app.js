@@ -1143,10 +1143,7 @@ async function drawDiagram(code) {
   box.className = 'md-diagram'
   const id = 'md-diagram-' + ++diagramSeq
   try {
-    // strict mode is what keeps a label in the diagram from becoming markup: mermaid sanitizes
-    // what it draws the way the page sanitizes a document.
-    const { svg } = await (await mermaidReady()).render(id, src)
-    box.innerHTML = svg
+    await paintDiagram(box, src, id)
     diagrams.set(box, src)
     pre.replaceWith(box)
   } catch {
@@ -1155,13 +1152,95 @@ async function drawDiagram(code) {
   }
 }
 
-// A theme change repaints what is on screen, so the diagrams on it follow.
+// paintDiagram is the one place a diagram box is filled, so a redraw cannot leave out the button.
+async function paintDiagram(box, src, id) {
+  box.innerHTML = await renderDiagram(src, id)
+  sizeDiagram(box.querySelector(':scope > svg'), false)
+  if (!box.querySelector('.md-expand')) box.append(expandButton(box))
+}
+
+// mermaid hands back an svg of width="100%" capped at the size it was drawn, which stretches a
+// narrow diagram to the column and makes labels blurry on a wide screen. The viewBox says how wide
+// it really is: full size is that width and no more, and Fit fills the window instead.
+function sizeDiagram(svg, fit) {
+  const w = svg?.viewBox.baseVal.width
+  if (!w) return
+  svg.style.width = fit ? '100%' : `${w}px`
+  svg.style.maxWidth = fit ? 'none' : '100%'
+}
+
+// renderDiagram draws a source and returns the svg; strict mode is what keeps a label in the
+// diagram from becoming markup, since mermaid sanitizes what it draws the way the page
+// sanitizes a document.
+async function renderDiagram(src, id) {
+  return (await (await mermaidReady()).render(id, src)).svg
+}
+
+function expandButton(box) {
+  const b = document.createElement('button')
+  b.className = 'btn quiet icon xs md-expand'
+  b.title = 'Expand the diagram (Esc closes it)'
+  b.setAttribute('aria-label', 'Expand the diagram')
+  b.innerHTML = '<svg class="i" viewBox="0 0 16 16"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>'
+  b.onclick = () => openDiagram(box)
+  return b
+}
+
+// ---------- the expanded diagram ----------
+// Expanding moves the drawn svg into a card over the page rather than drawing it a second time:
+// one copy means one set of ids and no flicker. Closing puts it back.
+const expanded = { box: null, svg: null, src: '', focus: null }
+
+function openDiagram(box) {
+  const svg = box.querySelector(':scope > svg')
+  if (!svg) return
+  expanded.box = box
+  expanded.svg = svg
+  expanded.src = diagrams.get(box) || ''
+  // Focus goes back to this diagram's own button, whatever the click did to the focus.
+  expanded.focus = box.querySelector('.md-expand')
+  $('#diagram-body').replaceChildren(svg)
+  $('#diagram').hidden = false
+  // Expanded means readable: the diagram opens at the size it was drawn, and the button shrinks it.
+  setDiagramFit(false)
+  $('#diagram-size').focus()
+}
+
+function closeDiagram() {
+  if ($('#diagram').hidden) return
+  $('#diagram-body').replaceChildren()
+  if (expanded.box?.isConnected) expanded.box.append(expanded.svg)
+  $('#diagram').hidden = true
+  expanded.box = expanded.svg = null
+  expanded.focus?.focus()
+  expanded.focus = null
+}
+
+function setDiagramFit(fit) {
+  $('#diagram-body').classList.toggle('actual', !fit)
+  sizeDiagram($('#diagram-body').querySelector('svg'), fit)
+  $('#diagram-size').textContent = fit ? 'Full size' : 'Fit'
+}
+
+// A theme change repaints what is on screen, so the diagrams on it follow, the open one included.
 async function repaintDiagrams() {
   for (const [box, src] of diagrams) {
     if (!box.isConnected) { diagrams.delete(box); continue }
-    try { box.innerHTML = (await (await mermaidReady()).render('md-diagram-' + ++diagramSeq, src)).svg } catch {}
+    try { await paintDiagram(box, src, 'md-diagram-' + ++diagramSeq) } catch {}
+  }
+  if (expanded.svg?.isConnected) {
+    try {
+      const body = $('#diagram-body')
+      const fit = !body.classList.contains('actual')
+      body.innerHTML = await renderDiagram(expanded.src, 'md-diagram-' + ++diagramSeq)
+      expanded.svg = body.querySelector('svg')
+      setDiagramFit(fit)
+    } catch {}
   }
 }
+
+$('#diagram').onclick = e => { if (e.target === $('#diagram') || e.target.dataset.close !== undefined) closeDiagram() }
+$('#diagram-size').onclick = () => setDiagramFit($('#diagram-body').classList.contains('actual'))
 
 function setPreview(on) {
   const tab = activeTab()
@@ -2581,6 +2660,7 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' && e.target.closest?.('#ref-menu, #branch-pop')) return
   if (e.key === 'Escape' && (!$('#ref-menu').hidden || !$('#branch-pop').hidden)) { e.preventDefault(); if (!$('#ref-menu').hidden) closeRefMenu(); else toggleBranchPop(false); return }
   if (e.key === 'Escape' && state.mode === 'diff' && state.fromLog && !typing(e) && $('#help').hidden) { e.preventDefault(); setMode('log'); return }
+  if (e.key === 'Escape' && !$('#diagram').hidden) { e.preventDefault(); closeDiagram(); return }
   if (e.key === 'Escape') { $('#help').hidden = true; toggleThemes(false); toggleRepoPop(false); toggleLspPop(false); if (typing(e)) e.target.blur(); return }
   if (typing(e) || e.altKey) return
   if (state.mode === 'log') {

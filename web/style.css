@@ -455,8 +455,11 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .md-doc summary { cursor: pointer; }
 .md-doc .md-front { font-size: 12px; }
 .md-doc pre.md-drawing { visibility: hidden; }
-.md-doc .md-diagram { margin: 0 0 1em; padding: 8px; overflow: auto; background: var(--sunk); border: 1px solid var(--line); border-radius: var(--r); text-align: center; }
-.md-doc .md-diagram svg { max-width: 100%; height: auto; }
+.md-doc .md-diagram { position: relative; margin: 0 0 1em; padding: 8px; overflow: auto; background: var(--sunk); border: 1px solid var(--line); border-radius: var(--r); text-align: center; }
+.md-doc .md-diagram > svg { max-width: 100%; height: auto; }
+/* The expand button stays faintly visible, since a hover is not always there. */
+.md-doc .md-expand { position: absolute; top: 6px; right: 6px; opacity: .4; }
+.md-doc .md-diagram:hover .md-expand, .md-doc .md-diagram:focus-within .md-expand { opacity: 1; }
 .md-doc .md-alert { padding: 8px 16px; border-left: 3px solid var(--info); background: color-mix(in srgb, var(--info) 8%, transparent); border-radius: 0 var(--r) var(--r) 0; }
 .md-doc .md-alert > :last-child { margin-bottom: 0; }
 .md-doc .md-alert-title { font-weight: 600; color: var(--info); margin-bottom: .3em; }
@@ -713,6 +716,12 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .modal-sub { margin: 4px 16px 8px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 11px; font-weight: 600; color: var(--muted); }
 .setting { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 16px 10px; font-size: 12px; color: var(--muted); }
 .palette-card { width: min(620px, calc(100vw - 32px)); }
+/* an expanded diagram takes the window, since a wide flowchart is the reason to expand it */
+.diagram-modal { place-items: center; padding: 3vh 16px; }
+.diagram-card { display: flex; flex-direction: column; width: min(1500px, 100%); max-height: min(92vh, 100%); }
+.diagram-tools { display: flex; gap: 6px; }
+.diagram-body { flex: 1; overflow: auto; padding: 14px; }
+.diagram-body > svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
 #palette-input { width: 100%; border: 0; border-bottom: 1px solid var(--line); padding: 14px 16px; font-size: 15px; background: transparent; outline: none; }
 .palette-list { max-height: 50vh; overflow: auto; padding: 6px; }
 .pitem { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: var(--r); cursor: pointer; color: var(--fg-2); }
