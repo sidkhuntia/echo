@@ -21,6 +21,9 @@ try {
     <span id="repo" class="repo"></span>
     <span class="sep">/</span>
     <span id="branch" class="branch" title="Current branch">—</span>
+    <span id="track" class="track" hidden></span>
+    <button id="fetch" class="btn quiet sm net" title="Fetch all remotes (git fetch --all --prune)" hidden><svg class="i" viewBox="0 0 16 16"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Fetch <span id="fetched" class="faint"></span></button>
+    <button id="sync" class="btn quiet sm net" hidden><svg class="i" viewBox="0 0 16 16"><path d="M13 6.5A5 5 0 0 0 4 4.5M3 9.5a5 5 0 0 0 9 2"/><path d="M4 1.8v2.9h2.9M12 14.2v-2.9H9.1"/></svg><span id="sync-label">Sync</span></button>
   </div>
   <button id="search-open" class="search" title="Go to file (⌘K)">
     <svg class="i" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
@@ -124,7 +127,7 @@ try {
         <h4>Branch</h4>
         <div class="hrow"><select id="branch-select" class="field"></select><button id="switch-branch" class="btn">Switch</button></div>
         <div class="hrow"><input id="new-branch" class="field" placeholder="New branch name" autocomplete="off" spellcheck="false"><button id="create-branch" class="btn">Create</button></div>
-        <div class="grid4"><button id="pull" class="btn">Pull</button><button id="push" class="btn">Push</button><button id="merge" class="btn" title="Merge the selected branch">Merge</button><button id="rebase" class="btn" title="Rebase onto the selected branch">Rebase</button></div>
+        <div class="grid4"><button id="pull" class="btn net">Pull</button><button id="push" class="btn net">Push</button><button id="merge" class="btn" title="Merge the selected branch">Merge</button><button id="rebase" class="btn" title="Rebase onto the selected branch">Rebase</button></div>
       </section>
       <section class="sec" data-for="commit">
         <h4>Stash</h4>

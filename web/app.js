@@ -873,8 +873,10 @@ function renderGit() {
   $('#branch').textContent = s.branch || (s.git === false ? 'no repository' : '—')
   $('#repo').textContent = s.root ? basename(s.root) : ''
   $('#repo').title = s.root || ''
+  renderTracking()
   const keep = $('#branch-select').value
-  $('#branch-select').innerHTML = (s.branches || []).map(b => `<option ${b === (keep || s.branch) ? 'selected' : ''}>${esc(b)}</option>`).join('')
+  const local = new Map((s.local || []).map(b => [b.name, b]))
+  $('#branch-select').innerHTML = (s.branches || []).map(b => `<option value="${esc(b)}" ${b === (keep || s.branch) ? 'selected' : ''}>${esc(b)}${counts(local.get(b))}</option>`).join('')
   const staged = [...state.changes.values()].filter(c => c.staged).length
   $('#staged-count').textContent = staged ? `${staged} staged` : 'Nothing staged'
   $('#stashes').innerHTML = (s.stashes || []).map(x => `<div class="list-row"><span title="${esc(x.subject)}"><b>${esc(x.ref)}</b> ${esc(x.subject)}</span><button class="btn sm" data-ref="${esc(x.ref)}">Apply</button></div>`).join('') || '<div class="list-row muted"><span>No stashes</span></div>'
@@ -883,6 +885,33 @@ function renderGit() {
       <div class="c-meta"><b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div>
     </div>`).join('') || '<div class="list-row muted"><span>No commits yet</span></div>'
   renderHistoryCurrent()
+}
+
+// Counts are against the upstream as of the last fetch, so the Fetch button carries its age.
+function renderTracking() {
+  const s = state.status || {}, t = s.tracking
+  const remote = (s.remotes || []).length > 0
+  $('#fetch').hidden = !remote
+  $('#sync').hidden = !remote || !t
+  $('#fetched').textContent = s.fetchedAt ? ago(s.fetchedAt) : 'never'
+  $('#fetch').title = `Fetch all remotes (git fetch --all --prune)\nLast fetched: ${s.fetchedAt ? new Date(s.fetchedAt * 1000).toLocaleString() : 'never'}`
+  const tracked = !!(t && t.upstream && !t.gone)
+  // Only non-zero directions are shown; an up-to-date branch shows nothing.
+  $('#track').hidden = !t?.upstream || (!t.gone && !t.ahead && !t.behind)
+  if (!$('#track').hidden) {
+    $('#track').innerHTML = t.gone ? '<span class="gone">upstream gone</span>'
+      : (t.behind ? `<span class="in">↓${t.behind}</span>` : '') + (t.ahead ? `<span class="out">↑${t.ahead}</span>` : '')
+    $('#track').title = t.gone ? `${t.upstream} was deleted on the remote` : `${t.behind} incoming, ${t.ahead} outgoing vs ${t.upstream} (as of the last fetch)`
+  }
+  $('#sync-label').textContent = tracked ? 'Sync' : 'Publish'
+  $('#sync').title = tracked ? `Pull${t.behind ? ` ${t.behind}` : ''}, then push${t.ahead ? ` ${t.ahead}` : ' if ahead'} (${t.upstream})` : `Push ${t?.name || 'this branch'} and set its upstream (git push -u)`
+  $('#sync').classList.toggle('attn', tracked && (t.ahead > 0 || t.behind > 0))
+}
+
+function counts(b) {
+  if (!b || !b.upstream) return ''
+  if (b.gone) return '  (gone)'
+  return (b.behind ? `  ↓${b.behind}` : '') + (b.ahead ? `  ↑${b.ahead}` : '')
 }
 
 // The async Clipboard API can be denied (embedded browsers, permissions); the textarea path still works on a click.
@@ -907,13 +936,20 @@ function renderHistoryCurrent() {
   document.querySelectorAll('.commit-row').forEach(r => r.classList.toggle('current', r.dataset.hash === state.commit))
 }
 
-async function gitAction(body) {
+const NET = new Set(['fetch', 'pull', 'push', 'sync', 'publish'])
+
+async function gitAction(body, button) {
+  const net = NET.has(body.action)
+  if (net) { document.body.classList.add('net-busy'); button?.classList.add('busy') }
   try {
     setStatus(`git ${body.action}…`)
     const out = await post('/api/git', body)
-    setStatus(out.output || `git ${body.action} done`, 'ok')
+    // Remote output leads with "To <url>" or progress lines; say what happened and keep Git's text in the tooltip.
+    const done = { fetch: 'Fetched all remotes', pull: 'Pulled', push: 'Pushed', sync: 'Synced', publish: 'Published' }[body.action]
+    setStatus(done ? `${done}\n${out.output || ''}` : out.output || `git ${body.action} done`, 'ok')
     if (body.action === 'commit' || body.action === 'amend') $('#commit-message').value = ''
   } catch (e) { setStatus(e.message, 'err') }
+  finally { if (net) { document.body.classList.remove('net-busy'); button?.classList.remove('busy') } }
   await refreshAll()
 }
 
@@ -1161,8 +1197,12 @@ $('#amend').onclick = () => gitAction({ action: 'amend', message: $('#commit-mes
 $('#stage-all').onclick = () => { const paths = [...state.changes.keys()]; if (paths.length) gitAction({ action: 'add', paths }) }
 $('#switch-branch').onclick = () => gitAction({ action: 'branch:switch', from: $('#branch-select').value })
 $('#create-branch').onclick = () => gitAction({ action: 'branch:create', from: $('#new-branch').value.trim() }).then(() => { $('#new-branch').value = '' })
-$('#pull').onclick = () => gitAction({ action: 'pull' })
-$('#push').onclick = () => gitAction({ action: 'push' })
+const upstream = () => { const t = state.status?.tracking; return !!(t && t.upstream && !t.gone) }
+$('#fetch').onclick = () => gitAction({ action: 'fetch' }, $('#fetch'))
+$('#sync').onclick = () => gitAction({ action: upstream() ? 'sync' : 'publish' }, $('#sync'))
+$('#pull').onclick = () => gitAction({ action: 'pull' }, $('#pull'))
+$('#push').onclick = () => gitAction({ action: upstream() ? 'push' : 'publish' }, $('#push'))
+setInterval(renderTracking, 30000)
 $('#merge').onclick = () => gitAction({ action: 'merge', from: $('#branch-select').value })
 $('#rebase').onclick = () => gitAction({ action: 'rebase', from: $('#branch-select').value })
 $('#stash-create').onclick = () => gitAction({ action: 'stash:create', message: $('#stash-message').value }).then(() => { $('#stash-message').value = '' })

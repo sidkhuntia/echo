@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -30,6 +31,9 @@ var webFS embed.FS
 // emptyTree is Git's well-known empty tree, used as the diff base before the first commit.
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
+// netTimeout bounds fetch, pull, and push so an unreachable remote cannot hang a request forever.
+const netTimeout = 2 * time.Minute
+
 // maxUntrackedDiff caps the size of an untracked file rendered as a new-file diff.
 const maxUntrackedDiff = 1 << 20
 
@@ -48,6 +52,8 @@ type App struct {
 	cfg   Config
 	mu    sync.Mutex
 	sigs  map[string]fileSig
+	// net serializes network actions; a second fetch/pull/push while one runs is refused, not queued.
+	net sync.Mutex
 }
 
 type fileSig struct {
@@ -82,15 +88,29 @@ type Change struct {
 	Hash    string `json:"hash"`
 }
 
+// Branch is a local branch with its upstream and how far the two have moved apart since the last fetch.
+type Branch struct {
+	Name     string `json:"name"`
+	Upstream string `json:"upstream,omitempty"`
+	Ahead    int    `json:"ahead"`
+	Behind   int    `json:"behind"`
+	Gone     bool   `json:"gone,omitempty"`
+}
+
 type GitStatus struct {
 	Git      bool     `json:"git"`
 	Root     string   `json:"root"`
 	Branch   string   `json:"branch"`
-	Changes  []Change `json:"changes"`
-	Commits  []Commit `json:"commits"`
-	Branches []string `json:"branches"`
-	Stashes  []Stash  `json:"stashes"`
-	Error    string   `json:"error,omitempty"`
+	Tracking *Branch  `json:"tracking,omitempty"`
+	Local    []Branch `json:"local"`
+	Remotes  []string `json:"remotes"`
+	// FetchedAt is the Unix time of the last fetch (FETCH_HEAD's mtime), 0 if never.
+	FetchedAt int64    `json:"fetchedAt"`
+	Changes   []Change `json:"changes"`
+	Commits   []Commit `json:"commits"`
+	Branches  []string `json:"branches"`
+	Stashes   []Stash  `json:"stashes"`
+	Error     string   `json:"error,omitempty"`
 }
 
 type TreeNode struct {
@@ -429,6 +449,26 @@ func (a *App) gitStatus() GitStatus {
 	if out, err := a.git("stash", "list", "--format=%gd%x09%s"); err == nil {
 		status.Stashes = parseStashes(out)
 	}
+	if out, err := a.git("for-each-ref", "--format=%(refname:short)%09%(upstream:short)%09%(upstream:track,nobracket)", "refs/heads"); err == nil {
+		status.Local = parseBranches(out)
+	}
+	for i := range status.Local {
+		if status.Local[i].Name == status.Branch {
+			status.Tracking = &status.Local[i]
+		}
+	}
+	if out, err := a.git("remote"); err == nil {
+		status.Remotes = parseLines(out)
+	}
+	if out, err := a.git("rev-parse", "--git-path", "FETCH_HEAD"); err == nil {
+		p := strings.TrimSpace(out)
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(a.root, p)
+		}
+		if info, err := os.Stat(p); err == nil {
+			status.FetchedAt = info.ModTime().Unix()
+		}
+	}
 	return status
 }
 
@@ -523,6 +563,13 @@ func (a *App) handleGit(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if req.Action == "discard" {
 		out, err = a.discard(req.Paths)
+	} else if netActions[req.Action] {
+		if !a.net.TryLock() {
+			http.Error(w, "another fetch, pull, or push is still running", http.StatusConflict)
+			return
+		}
+		defer a.net.Unlock()
+		out, err = a.network(req.Action)
 	} else {
 		args, argErr := a.gitArgs(req)
 		if argErr != nil {
@@ -571,10 +618,6 @@ func (a *App) gitArgs(req gitRequest) ([]string, error) {
 			return []string{"switch", req.From}, nil
 		}
 		return []string{req.Action, req.From}, nil
-	case "pull":
-		return []string{"pull"}, nil
-	case "push":
-		return []string{"push"}, nil
 	case "stash:create":
 		if strings.TrimSpace(req.Message) == "" {
 			req.Message = "echo stash"
@@ -588,6 +631,63 @@ func (a *App) gitArgs(req gitRequest) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unknown git action: %s", req.Action)
 	}
+}
+
+var netActions = map[string]bool{"fetch": true, "pull": true, "push": true, "sync": true, "publish": true}
+
+// network runs the actions that talk to a remote. Pull respects the user's pull.rebase/pull.ff
+// config, so a diverged branch with no config stops with Git's own explanation.
+func (a *App) network(action string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), netTimeout)
+	defer cancel()
+	switch action {
+	case "fetch":
+		return a.gitNet(ctx, "fetch", "--all", "--prune")
+	case "pull":
+		return a.gitNet(ctx, "pull")
+	case "push":
+		return a.gitNet(ctx, "push")
+	case "sync":
+		out, err := a.gitNet(ctx, "pull")
+		if err != nil {
+			return out, err
+		}
+		ahead, err := a.git("rev-list", "--count", "@{upstream}..HEAD")
+		if err != nil || strings.TrimSpace(ahead) == "0" {
+			return out, err
+		}
+		pushed, err := a.gitNet(ctx, "push")
+		return out + pushed, err
+	case "publish":
+		branch, err := a.git("branch", "--show-current")
+		branch = strings.TrimSpace(branch)
+		if err != nil || branch == "" {
+			return "", errors.New("publish needs a checked-out branch")
+		}
+		remotes, _ := a.git("remote")
+		remote, err := pickRemote(parseLines(remotes))
+		if err != nil {
+			return "", err
+		}
+		return a.gitNet(ctx, "push", "-u", remote, branch)
+	}
+	return "", fmt.Errorf("unknown git action: %s", action)
+}
+
+// pickRemote chooses where a new branch is published: origin, else the only remote.
+func pickRemote(remotes []string) (string, error) {
+	for _, r := range remotes {
+		if r == "origin" {
+			return r, nil
+		}
+	}
+	if len(remotes) == 1 {
+		return remotes[0], nil
+	}
+	if len(remotes) == 0 {
+		return "", errors.New("this repository has no remote to publish to")
+	}
+	return "", errors.New("several remotes and none is origin; publish from Terminal with git push -u <remote>")
 }
 
 // validRef keeps user-typed refs from being read as git options or split into extra words.
@@ -790,7 +890,11 @@ func (a *App) safePath(rel string) (string, error) {
 
 // gitCmd never takes optional locks, so echo's polling cannot collide with an agent's git commands.
 func (a *App) gitCmd(args ...string) *exec.Cmd {
-	cmd := exec.Command("git", append([]string{"--no-optional-locks", "-c", "core.quotePath=false"}, args...)...)
+	return a.gitCmdContext(context.Background(), args...)
+}
+
+func (a *App) gitCmdContext(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-optional-locks", "-c", "core.quotePath=false"}, args...)...)
 	cmd.Dir = a.root
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	return cmd
@@ -813,6 +917,15 @@ func (a *App) git(args ...string) (string, error) {
 // gitCombined returns stdout and stderr together, for actions like push whose progress goes to stderr.
 func (a *App) gitCombined(args ...string) (string, error) {
 	out, err := a.gitCmd(args...).CombinedOutput()
+	return string(out), err
+}
+
+// gitNet is gitCombined with a deadline, for commands that wait on a remote.
+func (a *App) gitNet(ctx context.Context, args ...string) (string, error) {
+	out, err := a.gitCmdContext(ctx, args...).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		err = fmt.Errorf("git %s timed out after %s", args[0], netTimeout)
+	}
 	return string(out), err
 }
 
@@ -870,6 +983,27 @@ func parseCommits(s string) []Commit {
 			t, _ := strconv.ParseInt(parts[3], 10, 64)
 			out = append(out, Commit{Hash: parts[0], Short: parts[1], Author: parts[2], Time: t, Subject: parts[4]})
 		}
+	}
+	return out
+}
+
+// parseBranches reads "name\tupstream\ttrack" lines, where track is "ahead 1, behind 2", "gone", or empty.
+func parseBranches(s string) []Branch {
+	out := []Branch{}
+	for _, line := range strings.Split(s, "\n") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 || parts[0] == "" {
+			continue
+		}
+		b := Branch{Name: parts[0], Upstream: parts[1], Gone: parts[2] == "gone"}
+		for _, f := range strings.Split(parts[2], ", ") {
+			if n, ok := strings.CutPrefix(f, "ahead "); ok {
+				b.Ahead, _ = strconv.Atoi(n)
+			} else if n, ok := strings.CutPrefix(f, "behind "); ok {
+				b.Behind, _ = strconv.Atoi(n)
+			}
+		}
+		out = append(out, b)
 	}
 	return out
 }

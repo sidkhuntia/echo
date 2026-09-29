@@ -262,6 +262,26 @@ The following Git capabilities were accepted as part of the product direction:
 - **Deferred:** native macOS filesystem event APIs.
 - **Deferred:** fine-grained event deduplication and per-file invalidation.
 
+## 12a. Git window (IntelliJ / GitLens direction)
+
+- **Accepted:** the Git experience follows IntelliJ IDEA's Git tool window, with GitLens-style extras.
+- **Accepted:** the title bar shows the current branch with incoming (↓) and outgoing (↑) commit counts against its upstream, next to Fetch and Sync buttons.
+- **Accepted:** ahead/behind counts are only as fresh as the last fetch, so the Fetch button shows how long ago the repository was fetched (the mtime of `FETCH_HEAD`).
+- **Accepted:** fetching is manual only; echo never touches the network unprompted. Fetch runs `git fetch --all --prune`.
+- **Accepted:** Sync pulls, then pushes if the branch is still ahead. It stops if the pull fails. The pull respects the user's `pull.rebase` / `pull.ff` config, so a diverged branch with no config stops with Git's own message.
+- **Accepted:** a branch with no upstream shows Publish instead of Sync (`git push -u <remote> <branch>`, preferring `origin`).
+- **Default:** ahead/behind for every local branch comes from one `git for-each-ref` call with `%(upstream:track)`; the branch list shows the counts too.
+- **Default:** network actions (fetch, pull, push, sync, publish) run one at a time with a timeout; a second request while one is running gets `409`.
+- **Accepted:** the full commit log is a third main-surface mode, "Log" (Review · Files · Log): a filter bar (text/hash, branch, author, path), a graph table (lanes, ref chips, subject, author, date), and a details pane.
+- **Accepted:** the right panel's History tab stays as a compact log with the same graph lanes; a commit row expands in place to show its details and changed files.
+- **Accepted:** commit details show the subject and full body, author and committer, a copyable hash, parents, the branches and tags that contain the commit, and a collapsible folder tree of changed files with +/− counts. Clicking a file opens Review scoped to that commit at that file; `Esc` returns to the log.
+- **Default:** details come from a lazy `GET /api/commit?hash=`; `--contains` lookups load after the rest because they can be slow on large repositories.
+- **Default:** commits move out of the SSE status into `GET /api/log` (paged, 200 at a time); the status carries a refs signature so the browser refetches the log only when refs change.
+- **Default:** graph lanes are computed in the browser from `%H %P %D` in topological order and drawn as SVG, without a library.
+- **Accepted:** in Log mode the sidebar shows a Branches tree (local, remote, tags) that filters the log; the branch pill opens an IntelliJ-style branches popup with checkout, merge, rebase, compare, and delete.
+- **Accepted:** GitLens extras in scope: file history (`git log --follow` for a file), inline blame on the editor's caret line with a blame gutter toggle, and compare branches (commits only in A / only in B plus the combined diff).
+- **Default:** delivery order: A) ahead/behind, Fetch, Sync/Publish; B) commit details and files; C) `/api/log`, graph, Log mode; D) branches sidebar and popup; E) file history, blame, compare.
+
 ## 13. Non-Git directories
 
 - **Accepted:** the app should still open directories that are not Git repositories.

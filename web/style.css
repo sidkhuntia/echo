@@ -150,6 +150,17 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 .sep { color: var(--faint); }
 .branch { display: inline-flex; align-items: center; gap: 5px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
 .branch::before { content: "⎇"; color: var(--muted); }
+.track { display: inline-flex; gap: 6px; font: 600 11.5px/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.track .in { color: var(--info); }
+.track .out { color: var(--add); }
+.track .gone { color: var(--warn); font: 500 11.5px/1 var(--sans); }
+.crumbs .net { flex: none; gap: 5px; }
+.crumbs .net .i { width: 13px; height: 13px; }
+#sync.attn { color: var(--fg); }
+.net-busy .net { pointer-events: none; opacity: .5; }
+.net-busy .net.busy { opacity: 1; }
+.net.busy .i { display: none; }
+.net.busy::before { content: ""; flex: none; width: 10px; height: 10px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
 .search {
   height: 28px;
   display: flex;
@@ -481,6 +492,7 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 .pitem .st { margin-left: auto; }
 
 /* ---------- motion ---------- */
+@keyframes spin { to { transform: rotate(360deg); } }
 @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes drop { from { opacity: 0; transform: translateY(-6px) scale(.99); } to { opacity: 1; transform: none; } }
 @keyframes pop { 0% { transform: scale(.4); } 100% { transform: scale(1); } }

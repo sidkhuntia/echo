@@ -251,3 +251,68 @@ func TestDiscardRemovesUntracked(t *testing.T) {
 		t.Errorf("changes after discard: %+v", s.Changes)
 	}
 }
+
+func TestParseBranches(t *testing.T) {
+	got := parseBranches("main\torigin/main\tahead 2, behind 3\nfeat\torigin/feat\tgone\nlocal\t\t\n")
+	want := []Branch{
+		{Name: "main", Upstream: "origin/main", Ahead: 2, Behind: 3},
+		{Name: "feat", Upstream: "origin/feat", Gone: true},
+		{Name: "local"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("branch %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestPickRemote(t *testing.T) {
+	for _, c := range []struct {
+		in   []string
+		want string
+	}{{[]string{"upstream", "origin"}, "origin"}, {[]string{"fork"}, "fork"}, {nil, ""}, {[]string{"a", "b"}, ""}} {
+		got, err := pickRemote(c.in)
+		if got != c.want || (c.want == "") != (err != nil) {
+			t.Errorf("pickRemote(%v) = %q, %v", c.in, got, err)
+		}
+	}
+}
+
+// TestPublishSyncFetch walks a branch through publish, one local commit (ahead 1), sync, and fetch.
+func TestPublishSyncFetch(t *testing.T) {
+	a := testRepo(t)
+	bare := t.TempDir()
+	run := func(dir string, args ...string) {
+		cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run(bare, "init", "-q", "--bare")
+	run(a.root, "remote", "add", "origin", bare)
+	act := func(action string) {
+		if w := request(a, http.MethodPost, "/api/git", `{"action":"`+action+`"}`); w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", action, w.Code, w.Body)
+		}
+	}
+	if s := a.gitStatus(); s.Tracking == nil || s.Tracking.Upstream != "" || s.FetchedAt != 0 {
+		t.Fatalf("before publish: %+v", s.Tracking)
+	}
+	act("publish")
+	run(a.root, "commit", "-qam", "local work")
+	if tr := a.gitStatus().Tracking; tr == nil || tr.Upstream == "" || tr.Ahead != 1 || tr.Behind != 0 {
+		t.Fatalf("after commit: %+v", tr)
+	}
+	act("sync")
+	if tr := a.gitStatus().Tracking; tr.Ahead != 0 || tr.Behind != 0 {
+		t.Fatalf("after sync: %+v", tr)
+	}
+	act("fetch")
+	if s := a.gitStatus(); s.FetchedAt == 0 || len(s.Remotes) != 1 {
+		t.Errorf("after fetch: fetchedAt=%d remotes=%v", s.FetchedAt, s.Remotes)
+	}
+}
