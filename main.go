@@ -28,6 +28,20 @@ import (
 //go:embed web
 var webFS embed.FS
 
+// build identifies the embedded web assets, so a page loaded from an older binary can tell it is stale.
+var build = func() string {
+	h := sha256.New()
+	fs.WalkDir(webFS, "web", func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			b, _ := webFS.ReadFile(p)
+			h.Write([]byte(p))
+			h.Write(b)
+		}
+		return nil
+	})
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}()
+
 // emptyTree is Git's well-known empty tree, used as the diff base before the first commit.
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
@@ -125,6 +139,7 @@ type Branch struct {
 }
 
 type GitStatus struct {
+	Build    string   `json:"build"`
 	Git      bool     `json:"git"`
 	Root     string   `json:"root"`
 	Branch   string   `json:"branch"`
@@ -219,7 +234,12 @@ func (a *App) routes() http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	mux.Handle("/", http.FileServer(http.FS(assets)))
+	files := http.FileServer(http.FS(assets))
+	// Embedded files carry no modification time, so tell the browser to revalidate instead of guessing.
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		files.ServeHTTP(w, r)
+	}))
 	return a.guard(mux)
 }
 
@@ -429,7 +449,7 @@ func (a *App) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) gitStatus() GitStatus {
-	status := GitStatus{Git: true, Root: a.root, Changes: []Change{}}
+	status := GitStatus{Build: build, Git: true, Root: a.root, Changes: []Change{}}
 	if _, err := exec.LookPath("git"); err != nil {
 		status.Git = false
 		status.Error = "git not found"

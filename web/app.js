@@ -106,6 +106,8 @@ function renderTally() {
 
 // ---------- status ----------
 function applyStatus(s) {
+  // The server restarted with different web assets; this page's code no longer matches its API.
+  if (state.status?.build && s.build && s.build !== state.status.build) return staleBuild()
   const first = !state.status
   state.status = s
   state.statusSeq++
@@ -125,6 +127,14 @@ function applyStatus(s) {
   syncTabs()
   refreshGutter()
   if (REVIEWABLE.includes(scope())) state.mode === 'diff' ? scheduleDiff() : (state.diffStale = true)
+}
+
+function staleBuild() {
+  if (state.tabs.some(t => t.content !== t.saved)) {
+    setStatus('echo was updated. Save your edits, then reload the page.', 'err')
+    return
+  }
+  location.reload()
 }
 
 async function refreshAll() {
