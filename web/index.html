@@ -59,6 +59,7 @@ try {
 
 <main class="desk">
   <aside id="tree-panel" class="pane sidebar">
+    <div id="grip-tree" class="grip" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"></div>
     <div class="pane-head">
       <div class="seg rail-switch" role="tablist">
         <button data-rail="changes" class="on" role="tab">Changes <span id="change-count" class="count"></span></button>
@@ -69,6 +70,7 @@ try {
     </div>
     <div class="filter-row">
       <input id="file-filter" class="field" placeholder="Filter paths" autocomplete="off" spellcheck="false">
+      <button id="tree-collapse" class="btn icon" title="Collapse all folders" hidden></button>
       <button id="refresh" class="btn icon" title="Refresh">↻</button>
     </div>
     <div id="queue" class="list"></div>
@@ -164,6 +166,7 @@ try {
   </section>
 
   <aside id="git-panel" class="pane inspector">
+    <div id="grip-git" class="grip" role="separator" aria-orientation="vertical" aria-label="Resize Git panel" tabindex="0"></div>
     <div class="pane-head">
       <div class="seg insp-switch" role="tablist">
         <button data-insp="commit" class="on" role="tab">Commit</button>

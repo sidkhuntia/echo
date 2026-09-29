@@ -22,6 +22,8 @@ const state = {
   blameGutter: false, rangeDots: '..',
   // Changes rail groups (merge, staged, work) folded by the user.
   qClosed: new Set(),
+  // widths: the side panels' dragged widths, written to the desk grid as --tree-w and --git-w.
+  widths: { tree: 272, git: 300 },
   // lspExt: file extensions whose language server is missing, unsupported, or failed, so they are not asked again.
   lspExt: new Map(), installing: '', lsp: [],
   // search: the Search rail. ran is the query and options the shown results came from; ctl aborts the one in flight.
@@ -207,6 +209,8 @@ const ICON = {
   minus: '<svg class="i" viewBox="0 0 16 16"><path d="M3.5 8h9"/></svg>',
   discard: '<svg class="i" viewBox="0 0 16 16"><path d="M5.5 3.5 3 6l2.5 2.5"/><path d="M3 6h6.5a3.5 3.5 0 0 1 0 7H7"/></svg>',
   open: '<svg class="i" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg>',
+  fold: '<svg class="i" viewBox="0 0 16 16"><path d="M4 6 8 2.5 12 6M4 9.5 8 13l4-3.5"/></svg>',
+  unfold: '<svg class="i" viewBox="0 0 16 16"><path d="M4 2.5 8 6l4-3.5M4 6.5 8 10l4-3.5"/></svg>',
 }
 const GROUPS = [
   { sec: 'merge', label: 'Merge changes', has: c => conflicted(c) },
@@ -304,12 +308,24 @@ function buildTree(paths) {
   return root
 }
 
+// The paths the tree shows: the filter, then the cap on what a browser will lay out.
+const treePaths = () => {
+  const filter = $('#file-filter').value.toLowerCase()
+  return state.tree.map(f => f.path).filter(p => !filter || p.toLowerCase().includes(filter)).slice(0, 3000)
+}
+// A folder opens by default when it holds a change or the open file; a choice the user made wins.
+const dirIsOpen = (d, filter, open) => filter ? true : state.dirOpen.has(d.path) ? state.dirOpen.get(d.path) : d.changed > 0 || (open || '').startsWith(d.path + '/')
+const allDirs = (node, out = []) => {
+  for (const [, d] of node.dirs) { out.push(d); allDirs(d, out) }
+  return out
+}
+
 function renderTree() {
   if (state.rail !== 'files') return
   const filter = $('#file-filter').value.toLowerCase()
-  const files = state.tree.map(f => f.path).filter(p => !filter || p.toLowerCase().includes(filter)).slice(0, 3000)
   const open = activeTab()?.path
-  const isOpen = d => filter ? true : state.dirOpen.has(d.path) ? state.dirOpen.get(d.path) : d.changed > 0 || (open || '').startsWith(d.path + '/')
+  const root = buildTree(treePaths())
+  const isOpen = d => dirIsOpen(d, filter, open)
   const pad = depth => `style="padding-left:${6 + depth * 14}px"`
   const name = n => {
     if (!filter) return esc(n)
@@ -329,12 +345,31 @@ function renderTree() {
     }
     return h
   }
-  $('#tree').innerHTML = render(buildTree(files), 0) || `<div class="empty">No path matches.</div>`
+  $('#tree').innerHTML = render(root, 0) || `<div class="empty">No path matches.</div>`
+  syncTreeCollapse(root)
 }
 
 function toggleDir(path) {
   const row = $(`#tree .tnode.dir[data-dir="${CSS.escape(path)}"]`)
   state.dirOpen.set(path, row?.querySelector('.tw').textContent !== '▾')
+  renderTree()
+}
+
+// One button folds every folder in the tree and unfolds them again. A filter already shows the tree
+// flattened, so there is nothing to fold while one is typed and the button steps out of the way.
+function syncTreeCollapse(root = buildTree(treePaths())) {
+  if (state.rail !== 'files') return
+  const b = $('#tree-collapse')
+  b.hidden = !!$('#file-filter').value.trim()
+  const open = allDirs(root).some(d => dirIsOpen(d, false, activeTab()?.path))
+  b.innerHTML = ICON[open ? 'fold' : 'unfold']
+  b.title = open ? 'Collapse all folders' : 'Expand all folders'
+}
+
+$('#tree-collapse').onclick = () => {
+  const dirs = allDirs(buildTree(treePaths()))
+  const open = !dirs.some(d => dirIsOpen(d, false, activeTab()?.path))
+  dirs.forEach(d => state.dirOpen.set(d.path, open))
   renderTree()
 }
 
@@ -2628,6 +2663,74 @@ const toggleTree = () => $('.desk').classList.toggle('no-tree')
 const toggleLedger = () => $('.desk').classList.toggle(narrow.matches ? 'show-git' : 'no-git')
 $('#tree-toggle').onclick = toggleTree
 $('#git-toggle').onclick = toggleLedger
+
+// ---------- panel widths ----------
+// The desk grid reads --tree-w and --git-w, so a drag is one property write per frame. The widths are
+// global, like the theme, and the config keeps them. Below 1100px the tracks are fixed by the breakpoint
+// and the grips are hidden, because there is nothing there to drag.
+const PANEL_RANGE = { tree: [180, 560], git: [220, 640] }
+// Whatever a panel is dragged to, the editor keeps this much room.
+const CENTER_MIN = 360
+
+const applyWidths = () => {
+  const desk = $('.desk')
+  for (const side of ['tree', 'git']) {
+    const w = state.widths[side]
+    desk.style.setProperty(`--${side}-w`, w + 'px')
+    const grip = $(`#grip-${side}`)
+    grip.setAttribute('aria-valuemin', PANEL_RANGE[side][0])
+    grip.setAttribute('aria-valuemax', PANEL_RANGE[side][1])
+    grip.setAttribute('aria-valuenow', w)
+  }
+}
+const gitShown = () => narrow.matches ? $('.desk').classList.contains('show-git') : !$('.desk').classList.contains('no-git')
+// A panel stops at its own range, and early rather than at that range if the editor needs the room.
+const clampWidth = (side, want) => {
+  const [min, max] = PANEL_RANGE[side]
+  const other = side === 'tree' ? (gitShown() ? state.widths.git : 0) : ($('.desk').classList.contains('no-tree') ? 0 : state.widths.tree)
+  const room = Math.max(min, $('.desk').clientWidth - other - CENTER_MIN)
+  return Math.round(Math.max(min, Math.min(want, max, room)))
+}
+let widthSave
+const scheduleWidthSave = () => {
+  clearTimeout(widthSave)
+  // Both keys go in every patch, since the server replaces the whole panelSizes map.
+  widthSave = setTimeout(() => post('/api/config', { panelSizes: { ...state.widths } }).catch(e => setStatus(e.message, 'err')), 250)
+}
+// The left grip grows with the pointer, the right one against it.
+const dragGrip = (side, e) => {
+  const grip = $(`#grip-${side}`), sign = side === 'tree' ? 1 : -1
+  const from = e.clientX, start = state.widths[side]
+  const move = ev => { state.widths[side] = clampWidth(side, start + sign * (ev.clientX - from)); applyWidths() }
+  const done = () => {
+    grip.classList.remove('on')
+    document.body.classList.remove('resizing')
+    grip.removeEventListener('pointermove', move)
+    grip.removeEventListener('pointerup', done)
+    grip.removeEventListener('pointercancel', done)
+    scheduleWidthSave()
+  }
+  grip.setPointerCapture(e.pointerId)
+  grip.classList.add('on')
+  document.body.classList.add('resizing')
+  grip.addEventListener('pointermove', move)
+  grip.addEventListener('pointerup', done)
+  grip.addEventListener('pointercancel', done)
+  e.preventDefault()
+}
+for (const side of ['tree', 'git']) {
+  const grip = $(`#grip-${side}`)
+  grip.onpointerdown = e => dragGrip(side, e)
+  // A focused grip resizes with the arrow keys, so the panels are not mouse-only.
+  grip.onkeydown = e => {
+    const dir = { ArrowRight: 1, ArrowLeft: -1 }[e.key]
+    if (!dir) return
+    e.preventDefault()
+    state.widths[side] = clampWidth(side, state.widths[side] + dir * (side === 'tree' ? 1 : -1) * (e.shiftKey ? 40 : 12))
+    applyWidths()
+    scheduleWidthSave()
+  }
+}
 $('#commit').onclick = () => gitAction({ action: 'commit', message: $('#commit-message').value })
 $('#amend').onclick = () => gitAction({ action: 'amend', message: $('#commit-message').value })
 $('#stage-all').onclick = () => { const paths = [...state.changes.keys()]; if (paths.length) gitAction({ action: 'add', paths }) }
@@ -2725,6 +2828,12 @@ window.addEventListener('beforeunload', e => { if (state.tabs.some(t => t.conten
 async function loadConfig() {
   try { state.config = await api('/api/config'); $('#vim-mode').checked = !!state.config.vim } catch {}
   if (state.config.diffMode !== 'split') state.config.diffMode = 'unified'
+  // A hand-edited or older config can hold a width that no longer fits the range; keep the default.
+  for (const side of ['tree', 'git']) {
+    const w = Math.round(Number((state.config.panelSizes || {})[side]))
+    if (w >= PANEL_RANGE[side][0] && w <= PANEL_RANGE[side][1]) state.widths[side] = w
+  }
+  applyWidths()
   $('#gutter-base').value = gutterBase()
   $('#inline-blame').checked = blameInline()
   document.querySelectorAll('.layout-switch button').forEach(b => b.classList.toggle('on', b.dataset.layout === state.config.diffMode))

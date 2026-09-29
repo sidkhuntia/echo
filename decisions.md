@@ -145,6 +145,8 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** the Files view in the sidebar is a folder tree built in the browser from the flat `/api/tree` path list, with change counts on folders and status badges on files.
 - **Default:** folders start open when they contain a change or the open file; toggles are kept in memory for the session; filtering shows matches with every folder open.
 - **Default:** the v1 file index filters paths as the user types.
+- **Accepted:** the Files rail can fold and unfold the whole tree. One button beside the filter sets every folder at once, in the same map a folder opened on its own uses, so a fold survives the tree reloading; the button's icon and tooltip say which of the two it will do, which is the only state it needs since the tree is open by default wherever it holds a change.
+- **Default:** the fold button steps aside while a path filter is typed. A filter already opens every folder to show the matches, so folding would look broken rather than do nothing quietly.
 - **Accepted:** the file index has two views: the changed files (the default) and all files.
 - **Corrected decision:** the Changes view is grouped like VS Code's Source Control instead of a review queue: "Merge changes" (conflicts), "Staged changes" (HEAD to index), and "Changes" (index to working tree, untracked included). A partly staged file is listed in both groups, each with that side's own +/− counts and status letter.
 - **Accepted:** each row stages with a `+` icon or unstages with a `−` icon, shown on hover; the group headers carry Stage all (`+`) and Unstage all (`−`), limited to the paths the filter shows. A conflicted row's `+` stages it, which marks it resolved.
@@ -357,7 +359,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** the config file is stored under the OS user config directory as `echo/config.json`.
 - **Default:** the config contains vim mode, theme, diff mode, gutter base, inline blame, panel list, and panel sizes.
 - **Default:** panel visibility toggles are available in the v1 header.
-- **Deferred:** draggable panel resizing.
+- **Corrected decision:** draggable panel resizing was deferred, then added; the sidebar and the Git panel are dragged to a width and the width is saved (see section 16). Panel order is still fixed.
 - **Deferred:** drag-to-reorder panel layout.
 - **Deferred:** per-project layout profiles.
 - **Default:** recent repositories are not listed because the app always starts in the current Terminal directory; `ports.json` records roots only to keep each one's port.
@@ -384,6 +386,11 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** the look is professional and minimal: system UI font, monospace only for code and paths, sentence-case labels, no grain or grid texture.
 - **Corrected decision:** review marks ("Reviewed", "Mark reviewed", the check circle, the reviewed tally, and the `x` key) are removed; staging is the record of what has been looked at.
 - **Accepted:** three panes: sidebar (Changes / Files / Branches), main surface (Review / Files), and a Git panel. The Git panel has tabs (Commit, History) so later views can be added as tabs without changing the layout.
+- **Corrected decision:** draggable panel resizing was deferred, then added. Each side panel is sized by a CSS custom property on the desk (`--tree-w`, `--git-w`) rather than a track size in the stylesheet, so a drag is one property write and the collapse classes stay the only place that decides whether a panel is shown. The grab strip is a 9px band on the panel's inner edge, where the border already invites a drag, so it collapses away with the panel and needs no separate state.
+- **Default:** the sidebar runs 180–560px and the Git panel 220–640px, and a drag stops at whichever comes first: the range, the editor's 360px floor, or 42% of the desk, which is what keeps a narrow window from pushing the editor out. The floor wins over the range, because a panel at its minimum is still usable.
+- **Accepted:** a focused grab strip resizes with the arrow keys (12px, 40px with `Shift`), because a layout you can only reach with a mouse is not a layout.
+- **Default:** widths are saved in the global config's `panelSizes`, sent as one patch with both keys since the server replaces the map, and a width in the file that no longer fits the range is ignored rather than clamped, so an old or hand-edited config degrades to the default instead of to a surprise.
+- **Default:** below 1100px the tracks are fixed by the breakpoint and the grab strips are hidden, since a handle that cannot move anything is worse than no handle.
 - **Default:** the title bar carries the repository, branch, a "Go to file" search, panel toggles, the theme picker, and help; a status bar shows the live-connection dot, status, and key hints.
 - **Accepted:** support multiple open-source themes, chosen one at a time. The default "System" follows macOS appearance: echo paper when light, echo ink when dark.
 - **Accepted:** the theme set is hand-curated rather than generated: echo ink/paper, GitHub light/dark, Solarized light/dark, Catppuccin Latte/Mocha, Rosé Pine/Dawn, Nord, Gruvbox Dark, Tokyo Night, and Dracula (all MIT-licensed palettes).
@@ -441,7 +448,7 @@ These are not rejected. They are waiting until the basic review loop is proven:
 2. Hunk-level stage and unstage controls.
 4. Word-level diff highlighting.
 5. Native file picker and richer context menus.
-6. Draggable panel sizing and reordering.
+6. Drag-to-reorder panel layout. (Panel sizing is done, see section 16.)
 7. Full vim mode.
 8. Conflict continue/abort controls.
 9. Stash pop UI and stash diffs.

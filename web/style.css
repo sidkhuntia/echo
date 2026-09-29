@@ -247,14 +247,39 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .bsec .count { margin-left: auto; }
 
 /* ---------- desk ---------- */
-.desk { flex: 1; min-height: 0; display: grid; grid-template-columns: 272px minmax(0, 1fr) 300px; }
-.desk.no-tree { grid-template-columns: 0 minmax(0, 1fr) 300px; }
-.desk.no-git { grid-template-columns: 272px minmax(0, 1fr) 0; }
+/* The two side panels are the grid's variable tracks; app.js writes --tree-w and --git-w on a drag.
+   Each track is also capped at 42% so a narrow window can never squeeze the editor out. */
+.desk {
+  --tree-w: 272px; --git-w: 300px;
+  --tree-t: min(var(--tree-w), 42%); --git-t: min(var(--git-w), 42%);
+  flex: 1; min-height: 0;
+  display: grid;
+  grid-template-columns: var(--tree-t) minmax(0, 1fr) var(--git-t);
+}
+.desk.no-tree { grid-template-columns: 0 minmax(0, 1fr) var(--git-t); }
+.desk.no-git { grid-template-columns: var(--tree-t) minmax(0, 1fr) 0; }
 .desk.no-tree.no-git { grid-template-columns: 0 minmax(0, 1fr) 0; }
 .desk.no-tree #tree-panel, .desk.no-git #git-panel { visibility: hidden; }
-.pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
+.pane { min-width: 0; min-height: 0; position: relative; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
 .sidebar { border-right: 1px solid var(--line); }
 .inspector { border-left: 1px solid var(--line); }
+
+/* Panel resizing: a 9px grab strip on the inner edge of each side panel, so the handle is exactly
+   where the border already invites a drag and collapses away with the panel. */
+.grip {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 9px;
+  z-index: 4;
+  cursor: col-resize;
+  touch-action: none;
+}
+.sidebar .grip { right: 0; }
+.inspector .grip { left: 0; }
+.grip::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 3px; background: var(--accent); opacity: 0; transition: opacity .12s; }
+.grip:hover::after, .grip.on::after, .grip:focus-visible::after { opacity: .75; }
+.grip:focus-visible { outline: none; }
+body.resizing { cursor: col-resize; user-select: none; }
 .pane-head { height: 44px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px; }
 .sidebar .seg { flex: 1; }
 .sidebar .seg button { flex: 1; padding: 0 8px; }
@@ -264,6 +289,9 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 /* ---------- sidebar ---------- */
 .filter-row { padding: 0 10px 8px; display: flex; gap: 6px; flex: none; }
 .filter-row .field { flex: 1; }
+/* Folding the tree is a Files-rail job; app.js keeps it hidden while a filter flattens the tree. */
+#tree-collapse { display: none; }
+.rail-files #tree-collapse { display: inline-flex; }
 .list { flex: 1; overflow: auto; padding: 0 6px 10px; min-height: 0; }
 .files-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .group-label { display: flex; justify-content: space-between; align-items: center; padding: 10px 8px 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
@@ -757,6 +785,8 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
   .desk.show-git #git-panel { visibility: visible; }
   .desk.no-tree { grid-template-columns: 0 minmax(0, 1fr) 0; }
   .desk.no-tree.show-git { grid-template-columns: 0 minmax(0, 1fr) 300px; }
+  /* The tracks are fixed at this width, so a grip would promise a drag that does nothing. */
+  .grip { display: none; }
   .titlebar { grid-template-columns: 1fr minmax(160px, 280px) auto; }
   .console-help, .dstat .blocks { display: none; }
 }
