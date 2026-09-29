@@ -19,12 +19,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -61,6 +63,11 @@ const (
 // maxUntrackedDiff caps the size of an untracked file rendered as a new-file diff.
 const maxUntrackedDiff = 1 << 20
 
+// shutdownGrace is how long a stop waits for in-flight requests before closing the connections
+// anyway. It is short because the work echo does is a git call or a read, and a browser tab holds
+// an open status stream, so waiting for a perfect drain would mean waiting for the deadline.
+const shutdownGrace = 3 * time.Second
+
 type Config struct {
 	Vim        bool   `json:"vim"`
 	Theme      string `json:"theme"`
@@ -83,6 +90,17 @@ type App struct {
 	// net serializes network actions; a second fetch/pull/push while one runs is refused, not queued.
 	net sync.Mutex
 	lsp *lspManager
+	// srv is the running server, so the page can ask for a graceful stop. It is nil in tests,
+	// which drive routes() over their own listener; stopping then just closes the app.
+	srv *http.Server
+	// done closes when a shutdown starts, so handlers that wait on their own (the status stream)
+	// can return instead of holding the drain open until the deadline.
+	done chan struct{}
+	// stop keeps a second stop request from starting a second shutdown.
+	stop sync.Once
+	// running lists the other echo processes. It is a field so a test can name its own servers
+	// instead of the real ones on this machine, which a "quit all" would otherwise stop.
+	running func() []Instance
 }
 
 // Instance is what one echo process reports about itself, so its siblings can list it in the repo switcher.
@@ -255,7 +273,18 @@ func main() {
 	fmt.Printf("echo %s\n", root)
 	fmt.Printf("open %s\n", url)
 	open(url)
-	if err := http.Serve(ln, app.routes()); err != nil {
+
+	// A terminal interrupt asks for the same graceful stop the page's Stop button does: finish what
+	// is in flight, let the language servers exit, and only then close the port.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	srv := &http.Server{Handler: app.routes()}
+	app.srv = srv
+	go func() {
+		<-ctx.Done()
+		app.shutdown("signal")
+	}()
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fatal(err)
 	}
 }
@@ -341,13 +370,16 @@ func instances() []Instance {
 
 func newApp(root string, port int) *App {
 	p := strconv.Itoa(port)
-	return &App{
+	app := &App{
 		root:  root,
 		port:  port,
 		sigs:  map[string]fileSig{},
 		lsp:   newLSPManager(root),
 		hosts: map[string]bool{"127.0.0.1:" + p: true, "localhost:" + p: true},
+		done:  make(chan struct{}),
 	}
+	app.running = func() []Instance { return instances() }
+	return app
 }
 
 func (a *App) routes() http.Handler {
@@ -372,6 +404,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/config", a.handleConfig)
 	mux.HandleFunc("/api/instance", a.handleInstance)
 	mux.HandleFunc("/api/instances", a.handleInstances)
+	mux.HandleFunc("/api/shutdown", a.handleShutdown)
 
 	assets, err := fs.Sub(webFS, "web")
 	if err != nil {
@@ -1568,6 +1601,8 @@ func (a *App) handleStream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-a.done:
+			return
 		case <-ticker.C:
 			send()
 		}
@@ -1609,6 +1644,93 @@ func (a *App) handleInstance(w http.ResponseWriter, r *http.Request) {
 // never makes a cross-origin request and the Host/Origin guard stays strict.
 func (a *App) handleInstances(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, instances())
+}
+
+// handleShutdown stops this process, or one other process when the page names its port. Stopping a
+// sibling is the same request this process makes of itself, so the page never needs a
+// cross-origin call and the Host/Origin guard still admits only echo's own pages.
+func (a *App) handleShutdown(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		// Port is the echo process to stop; 0 means this one.
+		Port int `json:"port"`
+		// All asks for every running process to stop, this one included.
+		All bool `json:"all"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.All {
+		// Ask the siblings first and this one last, so the list the page is looking at is still there.
+		for _, in := range a.running() {
+			if in.Port != a.port {
+				stopInstance(in.Port)
+			}
+		}
+		go a.shutdown("page")
+		writeJSON(w, map[string]bool{"ok": true})
+		return
+	}
+	if req.Port == 0 || req.Port == a.port {
+		go a.shutdown("page")
+		writeJSON(w, map[string]bool{"ok": true})
+		return
+	}
+	if req.Port < firstPort || req.Port > lastPort {
+		http.Error(w, "port is outside the range echo uses", http.StatusBadRequest)
+		return
+	}
+	if !stopInstance(req.Port) {
+		http.Error(w, "no echo is running on that port", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// stopInstance asks the echo on a port to stop, and reports whether one was there to answer.
+func stopInstance(port int) bool {
+	// Its own transport, without pooled connections. A pooled one would be a keep-alive connection
+	// to a process that has since exited, and Go does not retry a POST, so the stop would be sent
+	// into a closed socket and the sibling would keep running.
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 2 * time.Second}
+	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:"+strconv.Itoa(port)+"/api/shutdown", strings.NewReader("{}"))
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer res.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 1<<16))
+	return res.StatusCode == http.StatusOK
+}
+
+// shutdown asks the server to stop, once. It ends the status stream first, because that handler
+// waits for a tick and would otherwise hold the drain open; then it gives in-flight requests the
+// grace period, and closes what is left. The language servers are stopped either way, so a
+// Ctrl-C does not leave gopls and friends behind.
+func (a *App) shutdown(why string) {
+	a.stop.Do(func() {
+		if a.done != nil {
+			close(a.done)
+		}
+		a.lsp.stopAll()
+		if a.srv == nil {
+			return
+		}
+		fmt.Printf("echo %s is stopping (%s)\n", a.root, why)
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+		defer cancel()
+		if err := a.srv.Shutdown(ctx); err != nil {
+			_ = a.srv.Close()
+		}
+	})
 }
 
 func (a *App) safePath(rel string) (string, error) {

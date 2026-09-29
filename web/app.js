@@ -1703,7 +1703,7 @@ function renderRepoPop() {
   $('#repo-list').innerHTML = list.map((r, i) => `<div class="th rp-row ${r.port === here ? 'on' : ''} ${i === repoSel ? 'sel' : ''}" data-port="${r.port}" data-i="${i}" title="${esc(r.root)}">
     <span class="ok">${r.port === here ? '✓' : ''}</span>
     <span><div class="nm">${esc(basename(r.root))}${r.branch ? ` <span class="meta">· ${esc(r.branch)}</span>` : ''}${r.changes ? ` <span class="meta">· ${r.changes} changed</span>` : ''}</div><div class="path">${esc(r.root)}</div></span>
-    <span class="port">:${r.port}</span></div>`).join('')
+    <span class="rp-end"><span class="port">:${r.port}</span><button class="rp-stop" data-repo-stop="${r.port}" title="Stop this echo process">Stop</button></span></div>`).join('')
     || `<div class="bp-more faint">${repos.length ? 'No open repository matches.' : 'Looking for open repositories…'}</div>`
   $('#repo-list .sel')?.scrollIntoView({ block: 'nearest' })
 }
@@ -1713,6 +1713,19 @@ function switchRepo(port, newTab) {
   toggleRepoPop(false)
   if (newTab) window.open(url, '_blank')
   else if (port !== +location.port) location.href = url
+}
+
+// stopRepo shuts one echo process down, or every one of them. The request is answered before the
+// server stops, so the tab that asked can say so; a tab on the stopped repository keeps its page and
+// says the server is gone, like any other lost connection.
+async function stopRepo(port, all) {
+  const what = all ? 'every echo process' : basename(repos.find(r => r.port === port)?.root || '')
+  if (!confirm(`Stop ${all ? what : what + '’s echo process'}? Running work in it is finished first.`)) return
+  try { await post('/api/shutdown', { port: all ? 0 : port, all }) } catch (e) { return setStatus(e.message, 'err') }
+  if (all || port === +location.port) return setStatus('echo is stopping.', 'ok')
+  setStatus(`stopped ${what}`, 'ok')
+  repos = repos.filter(r => r.port !== port)
+  renderRepoPop()
 }
 
 // ---------- graph ----------
@@ -2503,8 +2516,13 @@ $('#repo-list').addEventListener('mousemove', e => {
   if (row && +row.dataset.i !== repoSel) { repoSel = +row.dataset.i; renderRepoPop() }
 })
 $('#repo-list').addEventListener('click', e => {
+  const stop = e.target.closest('[data-repo-stop]')
+  if (stop) { e.stopPropagation(); e.preventDefault(); return stopRepo(+stop.dataset.repoStop, false) }
   const row = e.target.closest('.rp-row')
   if (row) switchRepo(+row.dataset.port, mod(e))
+})
+$('#repo-pop').addEventListener('click', e => {
+  if (e.target.closest('[data-repo-quit]')) { e.stopPropagation(); stopRepo(0, true) }
 })
 $('#branch-filter').oninput = renderBranchPop
 $('#branch-filter').addEventListener('keydown', e => {

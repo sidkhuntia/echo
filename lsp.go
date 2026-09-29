@@ -223,8 +223,11 @@ type lspManager struct {
 	// starting holds servers between launch and their initialize answer; the lock is not held
 	// meanwhile, so the status popover never waits behind a slow start.
 	starting map[string]time.Time
-	wake     *sync.Cond
-	install  sync.Mutex
+	// closed is set when echo is stopping, so a file opened during the drain does not launch a
+	// server that would outlive the process.
+	closed  bool
+	wake    *sync.Cond
+	install sync.Mutex
 }
 
 func newLSPManager(root string) *lspManager {
@@ -237,6 +240,9 @@ func (m *lspManager) client(s lspServer) (*lspClient, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for {
+		if m.closed {
+			return nil, errors.New("echo is stopping")
+		}
 		if c := m.clients[s.ID]; c != nil {
 			select {
 			case <-c.dead:
@@ -358,6 +364,42 @@ func startLSP(root string, s lspServer) (*lspClient, error) {
 
 func (c *lspClient) kill() {
 	_ = c.cmd.Process.Kill()
+}
+
+// shutdown asks the server to stop the way the protocol says to, then makes sure it is gone. The
+// request and the exit notification give a server that is indexing or writing a cache the chance to
+// finish; a server that ignores them is killed, so echo never leaves one behind either way.
+func (c *lspClient) shutdown() {
+	select {
+	case <-c.dead:
+		return
+	default:
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_, _ = c.call(ctx, "shutdown", nil)
+	cancel()
+	_ = c.notify("exit", nil)
+	_ = c.in.Close()
+	select {
+	case <-c.dead:
+	case <-time.After(2 * time.Second):
+		c.kill()
+	}
+}
+
+// stopAll ends every language server echo started. The wake broadcast matters: a request waiting
+// for a server that is starting is released by it, and then sees the manager is closed and gives up
+// rather than launching a replacement while echo is on its way out.
+func (m *lspManager) stopAll() {
+	m.mu.Lock()
+	clients := m.clients
+	m.clients = map[string]*lspClient{}
+	m.closed = true
+	m.wake.Broadcast()
+	m.mu.Unlock()
+	for _, c := range clients {
+		c.shutdown()
+	}
 }
 
 // close fails every waiting call once the server exits.

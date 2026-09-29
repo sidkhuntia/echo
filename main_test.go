@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -239,6 +240,17 @@ func TestTreeSkipsIgnoredFiles(t *testing.T) {
 func request(a *App, method, url, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, url, strings.NewReader(body))
 	r.Host = "127.0.0.1:6030"
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	a.routes().ServeHTTP(w, r)
+	return w
+}
+
+// requestOn is request for an app that is listening on a port of its own, so the Host matches
+// what the guard admits.
+func requestOn(a *App, method, url, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, url, strings.NewReader(body))
+	r.Host = "127.0.0.1:" + strconv.Itoa(a.port)
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	a.routes().ServeHTTP(w, r)
@@ -727,6 +739,162 @@ func TestInstances(t *testing.T) {
 		}
 	}
 }
+
+// fresh is a client that does not pool connections. A pooled one would keep talking to a server
+// that a previous test left listening on the same port, which looks like a stop that did not work.
+var fresh = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 2 * time.Second}
+
+// serveTest starts a real listener for the app, the way main does, and returns its port.
+func serveTest(t *testing.T, a *App) int {
+	t.Helper()
+	ln, err := listen(a.root, 0)
+	if err != nil {
+		t.Skip("no free port in range:", err)
+	}
+	a.port = ln.Addr().(*net.TCPAddr).Port
+	a.hosts = map[string]bool{"127.0.0.1:" + strconv.Itoa(a.port): true}
+	a.srv = &http.Server{Handler: a.routes()}
+	go a.srv.Serve(ln)
+	t.Cleanup(func() { _ = a.srv.Close() })
+	return a.port
+}
+
+func stopVia(t *testing.T, port int) (int, string) {
+	t.Helper()
+	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/api/shutdown"
+	res, err := fresh.Post(url, "application/json", strings.NewReader("{}"))
+	if err != nil {
+		return 0, err.Error()
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	return res.StatusCode, string(body)
+}
+
+// gone waits for a port to stop answering.
+func gone(port int) bool {
+	res, err := fresh.Get("http://127.0.0.1:" + strconv.Itoa(port) + "/api/instance")
+	if err != nil {
+		return true
+	}
+	res.Body.Close()
+	return false
+}
+
+func TestShutdownStopsThisServer(t *testing.T) {
+	a := testRepo(t)
+	port := serveTest(t, a)
+	code, body := stopVia(t, port)
+	if code != 200 || !strings.Contains(body, `"ok":true`) {
+		t.Fatalf("stop = %d %s", code, body)
+	}
+	// The reply has to arrive before the server goes, or the page could never confirm the stop.
+	for range 100 {
+		if gone(port) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Error("the server is still answering after a stop")
+}
+
+func TestShutdownNeedsPostAndJSON(t *testing.T) {
+	a := testRepo(t)
+	serveTest(t, a)
+	if w := requestOn(a, "GET", "/api/shutdown", ""); w.Code != 405 {
+		t.Errorf("GET /api/shutdown = %d, want 405", w.Code)
+	}
+	if w := requestOn(a, "POST", "/api/shutdown", "nonsense"); w.Code != 400 {
+		t.Errorf("bad body = %d, want 400", w.Code)
+	}
+	if w := requestOn(a, "POST", "/api/shutdown", `{"port":1}`); w.Code != 400 {
+		t.Errorf("port outside the range = %d, want 400", w.Code)
+	}
+}
+
+func TestShutdownHappensOnce(t *testing.T) {
+	a := testRepo(t)
+	port := serveTest(t, a)
+	stopVia(t, port)
+	// A second stop must be harmless, not a second shutdown; by now the port is closed, so a
+	// handler that stopped twice would show up as a panic or a second drain.
+	if code, _ := stopVia(t, port); code == 200 {
+		t.Error("a stopped server answered a second stop")
+	}
+}
+
+func TestShutdownStopsAnotherServer(t *testing.T) {
+	other := testRepo(t)
+	otherPort := serveTest(t, other)
+	// The page asks its own process, which asks the sibling, so no cross-origin request is needed.
+	if code, body := stopVia(t, otherPort); code != 200 {
+		t.Fatalf("stop the sibling = %d %s", code, body)
+	}
+	for range 100 {
+		if gone(otherPort) {
+			// A port with nothing on it is a 404, so the page can say so instead of hanging.
+			if code, _ := stopVia(t, otherPort); code != 0 {
+				t.Errorf("stopping a dead port = %d, want no server", code)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Error("the sibling is still answering after a stop")
+}
+
+func TestShutdownQuitsOnlyNamedServers(t *testing.T) {
+	a := testRepo(t)
+	other := testRepo(t)
+	otherPort := serveTest(t, other)
+	port := serveTest(t, a)
+	// Name the two servers this test started. The real ones on this machine are left alone, which
+	// is the point: a "quit all" in the page means every echo, and a test must not mean that.
+	a.running = func() []Instance { return []Instance{{Root: a.root, Port: port}, {Root: other.root, Port: otherPort}} }
+	if w := requestOn(a, "POST", "/api/shutdown", `{"all":true}`); w.Code != 200 {
+		t.Fatalf("quit all: %d %s", w.Code, w.Body)
+	}
+	for range 100 {
+		if gone(port) && gone(otherPort) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Error("quitting all left a server answering")
+}
+
+func TestShutdownEndsTheStatusStream(t *testing.T) {
+	a := testRepo(t)
+	port := serveTest(t, a)
+	// A browser tab holds the stream open forever, so it is what would stall a drain.
+	streamed := make(chan struct{})
+	go func() {
+		defer close(streamed)
+		res, err := fresh.Get("http://127.0.0.1:" + strconv.Itoa(port) + "/api/stream")
+		if err == nil {
+			_, _ = io.Copy(io.Discard, res.Body)
+			res.Body.Close()
+		}
+	}()
+	// Wait for the first heartbeat, so the stream is really open before the stop.
+	deadline := time.Now().Add(5 * time.Second)
+	for !gone0(port) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	start := time.Now()
+	a.shutdown("test")
+	if d := time.Since(start); d > shutdownGrace {
+		t.Errorf("shutdown took %v, longer than the %v grace", d, shutdownGrace)
+	}
+	select {
+	case <-streamed:
+	case <-time.After(2 * time.Second):
+		t.Error("the status stream was still open after the stop")
+	}
+}
+
+// gone0 reports whether a port has an echo on it yet; the stream test waits for one to appear.
+func gone0(port int) bool { return !gone(port) }
 
 func TestSearch(t *testing.T) {
 	a := testRepo(t)

@@ -215,6 +215,13 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .rp-row .path { font: 11px var(--mono); color: var(--faint); }
 .rp-row .meta { color: var(--muted); font-weight: 400; }
 .rp-row .port { font: 11px var(--mono); color: var(--faint); }
+.rp-end { display: flex; align-items: center; gap: 6px; }
+.rp-stop { font-size: 11px; padding: 2px 7px; color: var(--muted); background: none; border: 1px solid var(--line-2); border-radius: 5px; cursor: pointer; }
+.rp-row .rp-stop { visibility: hidden; }
+.rp-row.sel .rp-stop, .rp-row:hover .rp-stop { visibility: visible; }
+.rp-stop:hover { color: var(--del); border-color: var(--del); }
+.repo-stop { margin-top: 6px; }
+.repo-stop .btn { width: 100%; }
 .repo-foot { margin-top: 6px; padding: 8px 8px 2px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); line-height: 1.7; }
 .repo-foot code { font: 11.5px var(--mono); color: var(--fg-2); }
 
