@@ -1,4 +1,5 @@
 import { renderMarkdown, sanitize } from './markdown.js'
+import { highlight } from './highlight.js'
 
 const $ = s => document.querySelector(s)
 const state = {
@@ -1067,9 +1068,99 @@ function renderPreview(tab) {
   doc.className = 'md-doc'
   doc.append(...sanitize(renderMarkdown(tab.content), mdURL(tab)).childNodes)
   view.replaceChildren(doc)
+  paintPreview(doc)
   if (!same) view.scrollTop = tab.mdScroll || 0
   view.shownTab = tab
   view.shownText = tab.content
+}
+
+// A fenced block names its language on the <code>, so the preview can color it the way the
+// editor would, and a mermaid fence can become a diagram. This runs after sanitize(), which has
+// already vetted the document, so what it adds is echo's own markup and never the document's.
+const LANG = 'md-lang-'
+
+function paintPreview(doc) {
+  const blocks = [...doc.querySelectorAll('pre > code')].map(code => [code, langOf(code)])
+  for (const [code, lang] of blocks) {
+    if (!lang || lang === 'mermaid') continue
+    const html = highlight(code.textContent, lang)
+    if (html != null) code.innerHTML = html
+  }
+  // The previous document's diagrams are gone with the previous document.
+  diagrams.clear()
+  for (const [code, lang] of blocks) if (lang === 'mermaid') drawDiagram(code)
+}
+
+const langOf = code => [...code.classList].find(c => c.startsWith(LANG))?.slice(LANG.length).toLowerCase()
+
+// ---------- diagrams ----------
+// A ```mermaid fence renders as a diagram. mermaid's own build travels in the binary as a zip
+// (vendor/mermaid.zip, served from memory) and is imported the first time a document has one, so
+// a repository without diagrams never pays for it. A fence mermaid cannot parse keeps its source.
+const MERMAID = '/vendor/mermaid/mermaid.esm.min.mjs'
+const diagrams = new Map()
+let mermaidLib = 0, diagramSeq = 0
+
+function mermaid() {
+  mermaidLib ||= import(MERMAID).then(m => m.default)
+  return mermaidLib
+}
+
+// mermaidColors reads echo's theme tokens, so a diagram sits in the theme instead of on top of it.
+function mermaidColors() {
+  const s = getComputedStyle(document.documentElement)
+  const v = n => s.getPropertyValue(n).trim()
+  return {
+    background: v('--sunk'), primaryColor: v('--surface-2'), primaryTextColor: v('--fg'),
+    primaryBorderColor: v('--line-2'), secondaryColor: v('--surface'), tertiaryColor: v('--surface'),
+    lineColor: v('--muted'), textColor: v('--fg'), mainBkg: v('--surface-2'), nodeBorder: v('--line-2'),
+    clusterBkg: v('--surface'), clusterBorder: v('--line'), edgeLabelBackground: v('--sunk'),
+    labelBoxBkgColor: v('--surface-2'), labelBoxBorderColor: v('--line-2'), labelTextColor: v('--fg'),
+    actorBkg: v('--surface-2'), actorBorder: v('--line-2'), actorTextColor: v('--fg'),
+    actorLineColor: v('--muted'), signalColor: v('--muted'), signalTextColor: v('--fg'),
+    loopTextColor: v('--fg'), activationBkgColor: v('--surface-2'), activationBorderColor: v('--line-2'),
+    noteBkgColor: v('--surface-2'), noteTextColor: v('--fg'), noteBorderColor: v('--line'),
+    sectionBkgColor: v('--surface-2'), altSectionBkgColor: v('--surface'), gridColor: v('--line'),
+    todayLineColor: v('--accent'), taskBkgColor: v('--surface-2'), taskBorderColor: v('--line-2'),
+    pie1: v('--accent'), pie2: v('--info'), pie3: v('--add'), pie4: v('--warn'), pie5: v('--del'),
+  }
+}
+
+async function mermaidReady() {
+  const api = await mermaid()
+  api.initialize({
+    startOnLoad: false, securityLevel: 'strict', theme: 'base', themeVariables: mermaidColors(),
+    fontFamily: getComputedStyle(document.body).fontFamily, fontSize: '14px',
+  })
+  return api
+}
+
+async function drawDiagram(code) {
+  const src = code.textContent
+  const pre = code.parentElement
+  pre.classList.add('md-drawing')
+  const box = document.createElement('div')
+  box.className = 'md-diagram'
+  const id = 'md-diagram-' + ++diagramSeq
+  try {
+    // strict mode is what keeps a label in the diagram from becoming markup: mermaid sanitizes
+    // what it draws the way the page sanitizes a document.
+    const { svg } = await (await mermaidReady()).render(id, src)
+    box.innerHTML = svg
+    diagrams.set(box, src)
+    pre.replaceWith(box)
+  } catch {
+    pre.classList.remove('md-drawing')
+    document.getElementById('d' + id)?.remove()
+  }
+}
+
+// A theme change repaints what is on screen, so the diagrams on it follow.
+async function repaintDiagrams() {
+  for (const [box, src] of diagrams) {
+    if (!box.isConnected) { diagrams.delete(box); continue }
+    try { box.innerHTML = (await (await mermaidReady()).render('md-diagram-' + ++diagramSeq, src)).svg } catch {}
+  }
 }
 
 function setPreview(on) {
@@ -2072,6 +2163,8 @@ function applyTheme() {
   const id = themeId()
   document.documentElement.dataset.theme = id === 'system' ? (osLight.matches ? 'echo-paper' : 'echo-ink') : id
   try { localStorage.setItem('echo:theme', id) } catch {}
+  // Diagrams bake their colors in, so they are drawn again in the new theme.
+  if (diagrams.size) repaintDiagrams()
 }
 
 const swatches = new Map()

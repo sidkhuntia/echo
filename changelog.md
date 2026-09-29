@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The Markdown preview colors code blocks by the language named in the fence, the same way the editor colors them: Go, JavaScript and TypeScript, Rust, Python, Java, Kotlin, Swift, C, C++, Objective-C, C#, Ruby, PHP, Lua, shell, SQL, JSON, YAML, TOML, INI, HTML, XML, CSS, diff, Markdown, Makefiles and Dockerfiles. Escape sequences, comments, strings, numbers, functions, types and properties each get the theme's color, so a block now reads like the same code in the editor. A language echo doesn't know stays plain text, and a block over 200,000 characters is left alone.
+- The Markdown preview picks up more of the theme: headings, quotes, strikethrough, highlighted text, table zebra rows, list markers, task checkboxes, and inline code now carry their own colors instead of reading as one flat tone.
+- A ` ```mermaid ` fence in Markdown renders as a diagram, in the current theme's colors. mermaid ships inside the binary as a single 1.6 MB zip (`vendor/mermaid.zip`) and is imported the first time a document has a diagram, so a repository without diagrams never pays for it and echo still works with no network. A fence mermaid cannot parse keeps its source, and diagrams are drawn again when the theme changes.
+
 - Added content search, like VS Code's: press `⌘⇧F` or click the magnifier in the sidebar, and type. Results appear as you type, grouped by file with the matches marked; click one to open the file at that line. Toggle match case (`Aa`), whole word (`ab`), and regular expressions (`.*`). New untracked files are searched; ignored and binary files are not. Results stop at 2,000.
 
 - The page has an icon: a small `e` on the echo accent square, as an SVG in `web/favicon.svg`, so browser tabs and bookmarks stop showing a blank page icon. The head also carries a description and `color-scheme` for a correct first paint and a sensible page summary.

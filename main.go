@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bufio"
 	"bytes"
 	"context"
@@ -379,10 +380,70 @@ func (a *App) routes() http.Handler {
 	files := http.FileServer(http.FS(assets))
 	// Embedded files carry no modification time, so tell the browser to revalidate instead of guessing.
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if f, ok := mermaidAsset(r.URL.Path); ok {
+			serveMermaid(w, r, f)
+			return
+		}
 		w.Header().Set("Cache-Control", "no-cache")
 		files.ServeHTTP(w, r)
 	}))
 	return a.guard(mux)
+}
+
+// The diagram renderer (vendor/mermaid.zip) ships zipped: mermaid's ESM build is 5.4 MB as
+// loose files and 1.6 MB as a zip, and it is served out of the archive rather than unpacked into
+// the binary. Only the pages with a mermaid fence ever ask for it.
+const mermaidPrefix = "/vendor/mermaid/"
+
+//go:embed vendor/mermaid.zip
+var mermaidZip []byte
+
+var mermaidFiles = func() map[string]*zip.File {
+	r, err := zip.NewReader(bytes.NewReader(mermaidZip), int64(len(mermaidZip)))
+	if err != nil {
+		panic(err)
+	}
+	m := make(map[string]*zip.File, len(r.File))
+	for _, f := range r.File {
+		m[f.Name] = f
+	}
+	return m
+}()
+
+// mermaidAsset maps a request path to a file in the archive.
+func mermaidAsset(urlPath string) (*zip.File, bool) {
+	if !strings.HasPrefix(urlPath, mermaidPrefix) {
+		return nil, false
+	}
+	name := strings.TrimPrefix(urlPath, mermaidPrefix)
+	if strings.Contains(name, "..") {
+		return nil, false
+	}
+	f, ok := mermaidFiles[name]
+	if !ok || f.FileInfo().IsDir() {
+		return nil, false
+	}
+	return f, true
+}
+
+func serveMermaid(w http.ResponseWriter, r *http.Request, f *zip.File) {
+	rc, err := f.Open()
+	if err != nil {
+		http.Error(w, "cannot read asset", http.StatusInternalServerError)
+		return
+	}
+	defer rc.Close()
+	// A zip entry reads forwards only, so it is unpacked for the one response that asks for it.
+	b, err := io.ReadAll(rc)
+	if err != nil {
+		http.Error(w, "cannot read asset", http.StatusInternalServerError)
+		return
+	}
+	// .mjs is unknown to the mime package, and a module served as octet-stream is refused.
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	// The zip carries a modification time, so a reloading browser gets a 304 instead of the file.
+	http.ServeContent(w, r, f.Name, f.Modified, bytes.NewReader(b))
 }
 
 // guard only admits requests from echo's own page: a foreign Host means DNS rebinding,

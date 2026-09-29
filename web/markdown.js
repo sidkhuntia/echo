@@ -24,7 +24,7 @@ export function renderMarkdown(src) {
   let front = ''
   if (body[0] === '---') {
     const end = body.indexOf('---', 1)
-    if (end > 0) { front = `<pre class="md-front"><code>${esc(body.slice(1, end).join('\n'))}</code></pre>`; start = end + 1 }
+    if (end > 0) { front = `<pre class="md-front"><code class="md-lang-yaml">${esc(body.slice(1, end).join('\n'))}</code></pre>`; start = end + 1 }
   }
   return front + blocks(body.slice(start), ctx)
 }

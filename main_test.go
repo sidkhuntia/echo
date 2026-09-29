@@ -2,12 +2,15 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -756,5 +759,52 @@ func TestSearch(t *testing.T) {
 	long := strings.Repeat("é", 300) + "needle" + strings.Repeat("x", 300)
 	if s := snippet(long, strings.Index(long, "needle")); !utf8.ValidString(s) || !strings.Contains(s, "needle") || len(s) > 210 {
 		t.Errorf("snippet: %q", s)
+	}
+}
+
+func TestMermaidServedFromZip(t *testing.T) {
+	a := &App{hosts: map[string]bool{"127.0.0.1:6030": true}}
+	// The entry module and a chunk it draws on, both out of the archive rather than the binary.
+	for _, name := range []string{"mermaid.esm.min.mjs", "chunks/mermaid.esm.min/abnfDiagram-DGLNOSUI.mjs"} {
+		w := request(a, "GET", mermaidPrefix+name, "")
+		if w.Code != 200 {
+			t.Fatalf("%s: %d", name, w.Code)
+		}
+		// A module the browser refuses to run is the failure mode worth a test.
+		if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/javascript") {
+			t.Errorf("%s: content type %q", name, ct)
+		}
+		if w.Body.Len() == 0 {
+			t.Errorf("%s: empty", name)
+		}
+	}
+	// Everything the entry imports has to be in the archive, or the first diagram never draws.
+	entry := mermaidFiles["mermaid.esm.min.mjs"]
+	if entry == nil {
+		t.Fatal("mermaid entry missing from the archive")
+	}
+	rc, err := entry.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	body, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := 0
+	for _, m := range regexp.MustCompile(`(?:from|import)\s*"(\./[^"]+)"`).FindAllStringSubmatch(string(body), -1) {
+		if _, ok := mermaidFiles[path.Clean(path.Join(".", m[1]))]; !ok {
+			missing++
+		}
+	}
+	if missing > 0 {
+		t.Errorf("%d of the entry's imports are not in the archive", missing)
+	}
+	if w := request(a, "GET", mermaidPrefix+"../main.go", ""); w.Code == 200 {
+		t.Error("path out of the archive was served")
+	}
+	if w := request(a, "GET", mermaidPrefix+"LICENSE", ""); w.Code != 200 {
+		t.Errorf("license missing: %d", w.Code)
 	}
 }

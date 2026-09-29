@@ -423,31 +423,40 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .md-doc { max-width: 860px; margin: 0 auto; padding: 28px 40px 30vh; color: var(--fg); font: 14.5px/1.65 var(--sans); overflow-wrap: break-word; }
 .md-doc > :first-child { margin-top: 0; }
 .md-doc h1, .md-doc h2, .md-doc h3, .md-doc h4, .md-doc h5, .md-doc h6 { margin: 1.5em 0 .6em; line-height: 1.25; font-weight: 600; scroll-margin-top: 16px; }
-.md-doc h1 { font-size: 1.9em; padding-bottom: .3em; border-bottom: 1px solid var(--line); }
-.md-doc h2 { font-size: 1.45em; padding-bottom: .3em; border-bottom: 1px solid var(--line); }
-.md-doc h3 { font-size: 1.2em; }
-.md-doc h4 { font-size: 1em; }
+.md-doc h1 { font-size: 1.9em; padding-bottom: .3em; border-bottom: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line)); }
+.md-doc h2 { font-size: 1.45em; padding-bottom: .3em; border-bottom: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line)); }
+.md-doc h3 { font-size: 1.2em; color: var(--fg-2); }
+.md-doc h4 { font-size: 1em; color: var(--fg-2); }
 .md-doc h5, .md-doc h6 { font-size: .9em; color: var(--muted); }
 .md-doc p, .md-doc ul, .md-doc ol, .md-doc blockquote, .md-doc pre, .md-doc table, .md-doc details, .md-doc .md-alert { margin: 0 0 1em; }
 .md-doc a { color: var(--accent); text-decoration: none; }
 .md-doc a:hover { text-decoration: underline; }
 .md-doc ul, .md-doc ol { padding-left: 2em; }
+.md-doc li::marker { color: var(--line-2); }
 .md-doc li + li { margin-top: .25em; }
 .md-doc li > ul, .md-doc li > ol { margin: .25em 0 0; }
 .md-doc li.md-task { list-style: none; margin-left: -1.4em; }
-.md-doc li.md-task input { margin: 0 .4em 0 0; vertical-align: -1px; }
-.md-doc code { font: .88em var(--mono); background: var(--surface-2); padding: .15em .4em; border-radius: 4px; }
+.md-doc li.md-task input { margin: 0 .4em 0 0; vertical-align: -1px; accent-color: var(--accent); }
+.md-doc strong { color: var(--fg); }
+.md-doc del { color: var(--del); }
+.md-doc ins { color: var(--add); text-decoration: none; }
+.md-doc mark { background: var(--warn-soft); color: var(--fg); border-radius: 3px; padding: 0 .2em; }
+.md-doc code { font: .88em var(--mono); color: var(--fg-2); background: color-mix(in srgb, var(--accent) 9%, var(--surface-2)); padding: .15em .4em; border-radius: 4px; }
 .md-doc pre { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 16px; overflow: auto; line-height: 1.5; }
-.md-doc pre code { background: none; padding: 0; font-size: 12.5px; }
-.md-doc blockquote { margin-left: 0; padding: 0 1em; color: var(--muted); border-left: 3px solid var(--line-2); }
-.md-doc hr { border: 0; border-top: 1px solid var(--line); margin: 1.8em 0; }
+.md-doc pre code { background: none; padding: 0; font-size: 12.5px; color: var(--fg); }
+.md-doc blockquote { margin-left: 0; padding: 0 1em; color: var(--fg-2); border-left: 3px solid var(--line-2); }
+.md-doc hr { border: 0; height: 1px; background: linear-gradient(90deg, var(--line), transparent); margin: 1.8em 0; }
 .md-doc table { border-collapse: collapse; display: block; max-width: 100%; overflow: auto; }
 .md-doc th, .md-doc td { border: 1px solid var(--line); padding: 6px 12px; }
-.md-doc th { background: var(--surface-2); font-weight: 600; }
+.md-doc th { background: var(--surface-2); color: var(--fg-2); font-weight: 600; }
+.md-doc tbody tr:nth-child(2n) { background: color-mix(in srgb, var(--fg) 3%, transparent); }
 .md-doc img { max-width: 100%; }
-.md-doc kbd { font: 11px var(--mono); border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; }
+.md-doc kbd { font: 11px var(--mono); color: var(--fg-2); border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; }
 .md-doc summary { cursor: pointer; }
-.md-doc .md-front { font-size: 12px; color: var(--muted); }
+.md-doc .md-front { font-size: 12px; }
+.md-doc pre.md-drawing { visibility: hidden; }
+.md-doc .md-diagram { margin: 0 0 1em; padding: 8px; overflow: auto; background: var(--sunk); border: 1px solid var(--line); border-radius: var(--r); text-align: center; }
+.md-doc .md-diagram svg { max-width: 100%; height: auto; }
 .md-doc .md-alert { padding: 8px 16px; border-left: 3px solid var(--info); background: color-mix(in srgb, var(--info) 8%, transparent); border-radius: 0 var(--r) var(--r) 0; }
 .md-doc .md-alert > :last-child { margin-bottom: 0; }
 .md-doc .md-alert-title { font-weight: 600; color: var(--info); margin-bottom: .3em; }
