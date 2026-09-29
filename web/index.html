@@ -30,7 +30,6 @@ try {
     <span>Go to file…</span><kbd>⌘K</kbd>
   </button>
   <div class="tb-right">
-    <div class="tally" title="Files reviewed in the current change set"><b><span id="tally-done">0</span>/<span id="tally-total">0</span></b> reviewed <div class="tally-bar"><i id="tally-fill"></i></div></div>
     <button id="tree-toggle" class="btn quiet icon" title="Toggle sidebar (⌘B)"><svg class="i" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6 3v10"/></svg></button>
     <button id="git-toggle" class="btn quiet icon" title="Toggle Git panel (⌘J)"><svg class="i" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M10 3v10"/></svg></button>
     <button id="theme-open" class="btn quiet icon" title="Theme"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11z" fill="currentColor"/></svg></button>
@@ -76,7 +75,7 @@ try {
       </div>
     </div>
     <div id="branches" class="list" hidden></div>
-    <div class="side-foot"><span><kbd>n</kbd><kbd>p</kbd> file</span><span><kbd>j</kbd><kbd>k</kbd> hunk</span><span><kbd>x</kbd> reviewed</span></div>
+    <div class="side-foot"><span><kbd>n</kbd><kbd>p</kbd> file</span><span><kbd>j</kbd><kbd>k</kbd> hunk</span><span><kbd>e</kbd> edit</span></div>
   </aside>
 
   <section class="pane review">
@@ -199,7 +198,6 @@ try {
       <dt><kbd>⌘↵</kbd></dt><dd>Commit (in the message box)</dd>
       <dt><kbd>n</kbd> <kbd>p</kbd></dt><dd>Next / previous changed file</dd>
       <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next / previous hunk</dd>
-      <dt><kbd>x</kbd></dt><dd>Mark current file reviewed</dd>
       <dt><kbd>e</kbd></dt><dd>Edit the current hunk in the file (or double-click a line)</dd>
       <dt><kbd>o</kbd></dt><dd>Open current file</dd>
       <dt><kbd>Esc</kbd></dt><dd>In the editor: back to the review line you came from</dd>

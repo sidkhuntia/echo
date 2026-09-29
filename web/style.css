@@ -125,10 +125,6 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 .st.R { color: var(--info); background: color-mix(in srgb, var(--info) 14%, transparent); }
 
 /* review check circle, shared by the queue and the diff header */
-.tick { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--line-2); display: grid; place-items: center; flex: none; }
-.rv-done .tick { background: var(--add); border-color: var(--add); }
-.rv-done .tick::after { content: ""; width: 6px; height: 3px; border: 1.6px solid var(--surface); border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px, -1px); }
-.rv-stale .tick { border-color: var(--warn); border-style: dashed; }
 
 /* ---------- title bar ---------- */
 .titlebar {
@@ -184,11 +180,6 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .search:hover { border-color: var(--line-2); }
 .search span { flex: 1; }
 .tb-right { display: flex; justify-content: flex-end; align-items: center; gap: 2px; }
-.tally { display: flex; align-items: center; gap: 8px; margin-right: 10px; font-size: 12px; color: var(--muted); white-space: nowrap; }
-.tally b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
-.tally-bar { width: 72px; height: 4px; border-radius: 4px; background: var(--line); overflow: hidden; }
-.tally-bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 4px; transition: width .4s cubic-bezier(.2, .8, .2, 1); }
-.tally.complete .tally-bar i { background: var(--add); }
 
 /* theme picker */
 .pop {
@@ -269,27 +260,31 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .group-label { display: flex; justify-content: space-between; align-items: center; padding: 10px 8px 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
 .qrow {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 8px;
-  height: 30px;
-  padding: 0 6px 0 8px;
+  gap: 6px;
+  height: 28px;
+  padding: 0 6px 0 22px;
   border-radius: var(--r);
   cursor: pointer;
 }
 .qrow:hover { background: var(--hover); }
 .qrow.current { background: var(--accent-soft); }
-.qrow .tick { cursor: pointer; }
-.qrow .tick:hover { border-color: var(--accent); }
 .qpath { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-2); }
 .qpath b { font-weight: 400; color: var(--fg); }
 .qpath i { font-style: normal; color: var(--faint); margin-left: 6px; font-size: 11.5px; }
-.qrow.rv-done .qpath b { color: var(--muted); }
 .qmeta, .qacts { display: flex; align-items: center; gap: 6px; font: 11px var(--mono); }
-.qacts { display: none; gap: 2px; font-family: var(--sans); }
-.qrow:hover .qacts { display: flex; }
-.qrow:hover .qmeta { display: none; }
-.staged-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--add); }
+/* Row and group actions appear on hover, like VS Code; the letter badge stays so the row never jumps. */
+.qacts, .gacts { display: none; gap: 0; }
+.qrow:hover .qacts, .qgroup:hover .gacts { display: flex; }
+.qrow:hover .qmeta > :not(.st) { display: none; }
+.btn.icon.xs { width: 20px; height: 20px; }
+.btn.icon.xs .i { width: 13px; height: 13px; }
+.qgroup { justify-content: flex-start; gap: 4px; height: 26px; padding: 8px 6px 2px 4px; cursor: pointer; user-select: none; text-transform: none; }
+.qgroup .tw { width: 12px; color: var(--faint); font-size: 10px; text-align: center; }
+.qgroup .gname { flex: 1; }
+.qgroup:hover .gname { color: var(--fg); }
+.dacts .btn .i { width: 12px; height: 12px; margin-right: 3px; }
 
 .tnode { display: flex; align-items: center; gap: 6px; height: 26px; padding-right: 8px; border-radius: var(--r); cursor: pointer; color: var(--fg-2); white-space: nowrap; }
 .tnode:hover { background: var(--hover); }
@@ -419,12 +414,6 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .dfile.folded .dbody { display: none; }
 .dnote { padding: 14px 18px; color: var(--muted); font-size: 12.5px; }
 
-.proof { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: var(--r); border: 1px solid var(--line); background: var(--surface); color: var(--fg-2); font-size: 12px; cursor: pointer; white-space: nowrap; flex: none; }
-.proof:hover { border-color: var(--line-2); color: var(--fg); }
-.proof .tick { width: 13px; height: 13px; }
-.proof.rv-done { background: var(--add-soft); border-color: color-mix(in srgb, var(--add) 40%, transparent); color: var(--add); }
-.proof.rv-stale { border-color: color-mix(in srgb, var(--warn) 45%, transparent); color: var(--warn); }
-.proof.just .tick { animation: pop .3s cubic-bezier(.3, 1.6, .5, 1) both; }
 
 .hunk { display: grid; grid-template-columns: max-content max-content 20px 1fr; min-width: max-content; width: 100%; font: 12px/20px var(--mono); }
 .hunk-head {
@@ -621,7 +610,6 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes drop { from { opacity: 0; transform: translateY(-6px) scale(.99); } to { opacity: 1; transform: none; } }
-@keyframes pop { 0% { transform: scale(.4); } 100% { transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -634,5 +622,5 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
   .desk.no-tree { grid-template-columns: 0 minmax(0, 1fr) 0; }
   .desk.no-tree.show-git { grid-template-columns: 0 minmax(0, 1fr) 300px; }
   .titlebar { grid-template-columns: 1fr minmax(160px, 280px) auto; }
-  .tally-bar, .console-help, .dstat .blocks { display: none; }
+  .console-help, .dstat .blocks { display: none; }
 }

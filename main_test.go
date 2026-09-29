@@ -170,6 +170,51 @@ func TestGitStatusChanges(t *testing.T) {
 	}
 }
 
+// A partly staged file reports both sides with their own line counts, and an untracked file only the unstaged side.
+func TestGitStatusSplitsStagedAndUnstaged(t *testing.T) {
+	a := testRepo(t)
+	if _, err := a.gitCombined("add", "--", "keep.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a.root, "keep.txt"), []byte("one\n2\nthree\nfour\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]Change{}
+	for _, c := range a.gitStatus().Changes {
+		byPath[c.Path] = c
+	}
+	keep := byPath["keep.txt"]
+	if keep.Index == nil || keep.Index.Added != 2 || keep.Index.Deleted != 1 {
+		t.Errorf("keep.txt index = %+v", keep.Index)
+	}
+	if keep.Work == nil || keep.Work.Added != 1 || keep.Work.Deleted != 0 {
+		t.Errorf("keep.txt work = %+v", keep.Work)
+	}
+	if agent := byPath["agent.txt"]; agent.Index != nil || agent.Work == nil || agent.Work.Added != 1 {
+		t.Errorf("agent.txt = %+v", agent)
+	}
+}
+
+// Discarding from the unstaged list keeps what was staged.
+func TestDiscardWorktreeKeepsStaged(t *testing.T) {
+	a := testRepo(t)
+	if _, err := a.gitCombined("add", "--", "keep.txt"); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(a.root, "keep.txt"), []byte("scratch\n"), 0o644)
+	if _, err := a.discard([]string{"keep.txt"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(a.root, "keep.txt")); string(b) != "one\n2\nthree\n" {
+		t.Errorf("keep.txt = %q, want the staged content", b)
+	}
+	for _, c := range a.gitStatus().Changes {
+		if c.Path == "keep.txt" && (c.Index == nil || c.Work != nil) {
+			t.Errorf("keep.txt = %+v, want staged only", c)
+		}
+	}
+}
+
 func TestTreeSkipsIgnoredFiles(t *testing.T) {
 	a := testRepo(t)
 	for name, content := range map[string]string{".gitignore": "data/\n", "data/blob.bin": "x", "src/Main.java": "class Main {}\n"} {
@@ -264,7 +309,7 @@ func TestSaveRejectsStaleBase(t *testing.T) {
 
 func TestDiscardRemovesUntracked(t *testing.T) {
 	a := testRepo(t)
-	if _, err := a.discard([]string{"agent.txt", "keep.txt"}); err != nil {
+	if _, err := a.discard([]string{"agent.txt", "keep.txt"}, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(a.root, "agent.txt")); !os.IsNotExist(err) {

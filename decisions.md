@@ -31,7 +31,7 @@ Status meanings:
 - **Accepted:** one repository is opened per process/session.
 - **Accepted:** the app starts in the current Terminal directory every time.
 - **Default:** the default port is `6030`. Without `-port`, echo takes the repository's last port, else the first free port in `6030`–`6049`, so several repositories can be open at once, each in its own process and browser tab. `-port N` binds exactly `N` or fails.
-- **Accepted:** a repository keeps its port across restarts (`echo/ports.json` beside the config), because browser storage such as review marks is scoped to the origin, and so to the port.
+- **Accepted:** a repository keeps its port across restarts (`echo/ports.json` beside the config), because browser storage such as the saved theme is scoped to the origin, and so to the port.
 - **Accepted:** running echo in a repository that is already open (auto port mode) opens the existing tab and exits instead of starting a second server.
 - **Accepted:** the repository name in the title bar opens a switcher (`⌘⇧O`) listing running echo processes; `↑`/`↓` choose (starting on the first other repository, so `⌘⇧O` `Enter` hops away), `Enter` or click switches the current tab, `⌘Enter` or `⌘`-click opens a new tab. The server discovers siblings by asking each port in the range for `/api/instance`, so the page makes no cross-origin requests and the Host/Origin guard is unchanged.
 - **Accepted:** the browser never starts echo processes; opening another repository is done from Terminal.
@@ -142,7 +142,13 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** the Files view in the sidebar is a folder tree built in the browser from the flat `/api/tree` path list, with change counts on folders and status badges on files.
 - **Default:** folders start open when they contain a change or the open file; toggles are kept in memory for the session; filtering shows matches with every folder open.
 - **Default:** the v1 file index filters paths as the user types.
-- **Accepted:** the file index has two views: a review queue of changed files (the default) and all files.
+- **Accepted:** the file index has two views: the changed files (the default) and all files.
+- **Corrected decision:** the Changes view is grouped like VS Code's Source Control instead of a review queue: "Merge changes" (conflicts), "Staged changes" (HEAD to index), and "Changes" (index to working tree, untracked included). A partly staged file is listed in both groups, each with that side's own +/− counts and status letter.
+- **Accepted:** each row stages with a `+` icon or unstages with a `−` icon, shown on hover; the group headers carry Stage all (`+`) and Unstage all (`−`), limited to the paths the filter shows. A conflicted row's `+` stages it, which marks it resolved.
+- **Accepted:** discarding a row in "Changes" restores only the working tree from the index, so staged work survives; the untracked-file case still deletes the file. The diff header's Discard does the same in the Unstaged view and returns the file to HEAD in the others.
+- **Default:** there is no "Discard all" in the group header; a one-click, unconfirmed discard of every file is too easy to hit.
+- **Default:** clicking a row while the diff shows Unstaged or Staged switches to that row's side; All changes stays as it is. Groups fold from their header for the session.
+- **Default:** the status API carries each change's staged side as `index` and unstaged side as `work` (`added`, `deleted`, `binary`), from `git diff --cached --numstat` and `git diff --numstat`.
 - **Accepted:** `⌘K`/`⌘P` open a fuzzy path finder instead of a browser prompt.
 - **Default:** the initial implementation skips `.git`, hidden directories, `node_modules`, `dist`, `build`, `.cache`, and `.next` from the tree.
 - **Accepted:** in a Git repository the tree comes from `git ls-files --cached --others --exclude-standard`, so ignored files stay out; the same skip rules still apply. Outside Git it walks the directory.
@@ -170,7 +176,6 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** files that are in neither HEAD nor the index and are not in the change set (ignored files) get no bars.
 - **Default:** only visible gutter rows are drawn, so large files cost the same as small ones.
 - **Default:** the textarea turns CRLF into LF, so tabs hold LF text and a file whose line endings are all CRLF is saved back with CRLF. A file with mixed endings is saved with LF.
-- **Default:** saving a file you had marked reviewed keeps it reviewed, since the edit is your own.
 - **Default:** status updates that arrive while the editor is showing mark the diff stale instead of re-rendering it hidden; returning to Review reloads it first and keeps the Review scroll position.
 - **Default:** the diff shows the file on disk, so a file with unsaved editor changes is labelled "unsaved edits" in its diff header.
 - **Accepted:** saving does not automatically stage the file.
@@ -220,12 +225,7 @@ The following Git capabilities were accepted as part of the product direction:
 
 ## 9a. Review marks
 
-- **Accepted:** each changed file can be marked "proofed", like GitHub's "Viewed".
-- **Accepted:** a mark stores the file's content hash; if the file changes afterwards, the mark turns into "changed since proofed" and the file returns to the queue.
-- **Accepted:** the masthead shows how many changed files are proofed.
-- **Default:** marks are stored in browser `localStorage`, keyed by workspace root, and pruned when a file leaves the change set.
-- **Default:** marking a file with `x` folds it and moves to the next unproofed file.
-- **Default:** marks apply to the all-changes, unstaged, and staged scopes; commit and range diffs are read-only.
+- **Corrected decision:** per-file review marks were removed. Staged versus unstaged, shown as separate groups in the Changes view (§6), replaces them: stage what you have checked, and what is left is still to look at. Marks left in browser storage from earlier versions are ignored.
 
 ## 10. Conflicts
 
@@ -349,9 +349,9 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** echo should have its own visual identity.
 - **Accepted:** the interface should feel focused, fast, personal, and review-oriented.
 - **Accepted:** the look is professional and minimal: system UI font, monospace only for code and paths, sentence-case labels, no grain or grid texture.
-- **Accepted:** plain review wording ("Reviewed", "Mark reviewed", a check circle) replaces the earlier proof-desk stamps and serif type.
-- **Accepted:** three panes: sidebar (Changes queue / Files tree), main surface (Review / Files), and a Git panel. The Git panel has tabs (Commit, History) so later views can be added as tabs without changing the layout.
-- **Default:** the title bar carries the repository, branch, a "Go to file" search, review progress, panel toggles, the theme picker, and help; a status bar shows the live-connection dot, status, and key hints.
+- **Corrected decision:** review marks ("Reviewed", "Mark reviewed", the check circle, the reviewed tally, and the `x` key) are removed; staging is the record of what has been looked at.
+- **Accepted:** three panes: sidebar (Changes / Files / Branches), main surface (Review / Files), and a Git panel. The Git panel has tabs (Commit, History) so later views can be added as tabs without changing the layout.
+- **Default:** the title bar carries the repository, branch, a "Go to file" search, panel toggles, the theme picker, and help; a status bar shows the live-connection dot, status, and key hints.
 - **Accepted:** support multiple open-source themes, chosen one at a time. The default "System" follows macOS appearance: echo paper when light, echo ink when dark.
 - **Accepted:** the theme set is hand-curated rather than generated: echo ink/paper, GitHub light/dark, Solarized light/dark, Catppuccin Latte/Mocha, Rosé Pine/Dawn, Nord, Gruvbox Dark, Tokyo Night, and Dracula (all MIT-licensed palettes).
 - **Default:** each theme is one block of about 16 tokens in `web/themes.css`; `style.css` only reads tokens and derives soft/strong tints with `color-mix`.
@@ -396,7 +396,6 @@ These are YAGNI decisions for v1:
 - No conflict-resolution workflow UI.
 - No virtualized editor.
 - No content search.
-- No database for review marks; they live in browser storage.
 - No full LSP feature set.
 - No per-repository configuration.
 - No closed-tab restore.

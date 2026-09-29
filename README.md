@@ -30,7 +30,7 @@ It opens your browser at `http://127.0.0.1:6030`. Each process serves one reposi
 
 - A directory that is not a Git repository still opens, as a plain file browser and editor.
 - Theme and layout settings are global and shared by every repository.
-- "Reviewed" marks are stored in the browser per repository and per port. Each repository remembers its port, so its marks survive restarts unless you pass a different `-port`.
+- Each repository remembers its port, so its tab and browser-side settings survive restarts unless you pass a different `-port`.
 - While developing echo itself, `go run . -no-open` runs it from source in the current directory.
 
 ## v1
@@ -38,7 +38,7 @@ It opens your browser at `http://127.0.0.1:6030`. Each process serves one reposi
 - collapsible folder tree with path filter
 - multi-file tabs with in-memory unsaved edits
 - plain textarea editor, always editable
-- review queue of changed files with reviewed marks that reset when a file changes again
+- Changes sidebar grouped like VS Code: staged and unstaged changes (and conflicts) listed separately, with `+`/`−` to stage or unstage a file and Stage all / Unstage all on each group
 - per-file diffs including untracked files; all-changes, unstaged, staged, ref-range, and single-commit scopes
 - stacked or split diff layout
 - double-click a diff line to edit the file there; the editor gutter shows changes vs HEAD (staged hollow) or the index
@@ -49,9 +49,9 @@ It opens your browser at `http://127.0.0.1:6030`. Each process serves one reposi
 - compare two branches: commits only on each side, and the merge-base diff
 - Branches: a sidebar tree (local, remote, tags) that filters the Log, and a branches popup on the branch name with checkout, new branch, merge, rebase, compare, and delete
 - saves never overwrite a file an agent changed after you opened it
-- keys: `n`/`p` file, `j`/`k` hunk, `x` mark reviewed, `e` edit at hunk, `o` open, `⌘K` find a file
+- keys: `n`/`p` file, `j`/`k` hunk, `e` edit at hunk, `o` open, `⌘K` find a file
 - file create, rename, delete
-- stage, unstage, discard
+- stage, unstage, discard (discarding from the unstaged list keeps staged work)
 - test 2
 - commit, amend, rebase, pull, push, branch create/switch, merge
 - stash create/apply

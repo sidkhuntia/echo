@@ -1,7 +1,7 @@
 const $ = s => document.querySelector(s)
 const state = {
   tree: [], treeStale: true, tabs: [], active: -1, selected: '',
-  status: null, changes: new Map(), reviewed: {}, folded: new Map(), justStamped: '',
+  status: null, changes: new Map(), folded: new Map(),
   config: { vim: false, theme: 'system', diffMode: 'unified' }, mode: 'diff', rail: 'changes', dirOpen: new Map(),
   diffFiles: [], diffSeq: 0, current: -1, commit: '', returnTo: '', statusSeq: 0,
   // diffStale: the diff missed an update while Files mode was showing; it reloads on the way back to Review.
@@ -17,10 +17,13 @@ const state = {
   bClosed: new Set(), railBeforeLog: '',
   // blameGutter: the per-line blame column (session only). rangeDots: '..' tip to tip, '...' from the merge base.
   blameGutter: false, rangeDots: '..',
+  // Changes rail groups (merge, staged, work) folded by the user.
+  qClosed: new Set(),
 }
 const mod = e => e.metaKey || e.ctrlKey
 const typing = e => e.target.closest?.('input, textarea, select')
-const REVIEWABLE = ['head', 'worktree', 'staged']
+// Scopes that follow the working tree and index, so they reload on every status change.
+const LIVE = ['head', 'worktree', 'staged']
 // Scopes whose new side is the working tree, so diff line numbers match the file in the editor.
 const EDITABLE = ['head', 'worktree']
 const GENERATED = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|go\.sum|Cargo\.lock|poetry\.lock|Gemfile\.lock|composer\.lock|bun\.lockb?)$/
@@ -60,53 +63,8 @@ const codeWord = { M: 'modified', A: 'new', D: 'deleted', R: 'renamed', C: 'copi
 const badge = (letter, word = codeWord[letter]) => `<span class="st ${letter}" title="${word || letter}">${letter}</span>`
 const codeTag = c => badge(codeLetter(c), codeWord[codeLetter(c)] || c.code.trim())
 const statHTML = c => c.binary ? '<span class="faint">bin</span>' : `${c.added ? `<span class="add">+${c.added}</span>` : ''}${c.deleted ? `<span class="del">−${c.deleted}</span>` : ''}`
-// A file is "fully staged" when something is in the index and nothing is left in the worktree.
-const fullyStaged = c => c.staged && c.code[1] === ' '
-
-// ---------- review marks ----------
-// Marks live in localStorage as path -> content hash; a mark only counts while the hash still matches.
-const reviewKey = () => 'echo:reviewed:' + (state.status?.root || '')
-function loadReviewed() {
-  try { state.reviewed = JSON.parse(localStorage.getItem(reviewKey())) || {} } catch { state.reviewed = {} }
-}
-function saveReviewed() {
-  try { localStorage.setItem(reviewKey(), JSON.stringify(state.reviewed)) } catch {}
-}
-function reviewState(path) {
-  const c = state.changes.get(path), mark = state.reviewed[path]
-  if (!c || !mark) return 'todo'
-  return mark === c.hash ? 'done' : 'stale'
-}
-
-function toggleReviewed(path, advance = false) {
-  const c = state.changes.get(path)
-  if (!c) return setStatus('Only working-tree changes can be marked reviewed')
-  const done = reviewState(path) !== 'done'
-  if (done) state.reviewed[path] = c.hash
-  else delete state.reviewed[path]
-  saveReviewed()
-  state.folded.delete(path)
-  state.justStamped = done ? path : ''
-  renderQueue(); renderTally()
-  const i = state.diffFiles.findIndex(f => f.path === path)
-  if (i >= 0) {
-    rerenderFile(i)
-    if (done && advance) {
-      const next = state.diffFiles.findIndex((f, j) => j > i && reviewState(f.path) !== 'done')
-      if (next >= 0) goFile(next)
-    }
-  }
-  setStatus(done ? `Reviewed ${path}` : `Unmarked ${path}`, done ? 'ok' : '')
-}
-
-function renderTally() {
-  const all = [...state.changes.keys()]
-  const done = all.filter(p => reviewState(p) === 'done').length
-  $('#tally-done').textContent = done
-  $('#tally-total').textContent = all.length
-  $('#tally-fill').style.width = all.length ? `${(done / all.length) * 100}%` : '0'
-  $('.tally').classList.toggle('complete', all.length > 0 && done === all.length)
-}
+// Conflicted files sit in their own group until `git add` marks them resolved.
+const conflicted = c => /U/.test(c.code) || c.code === 'AA' || c.code === 'DD'
 
 // ---------- status ----------
 function applyStatus(s) {
@@ -116,21 +74,14 @@ function applyStatus(s) {
   state.status = s
   state.statusSeq++
   state.changes = new Map((s.changes || []).map(c => [c.path, c]))
-  if (first) {
-    loadReviewed()
-    if (!s.git) setRail('files')
-  }
-  let pruned = false
-  for (const p of Object.keys(state.reviewed)) if (!state.changes.has(p)) { delete state.reviewed[p]; pruned = true }
-  if (pruned) saveReviewed()
-  for (const p of state.folded.keys()) if (reviewState(p) === 'stale') state.folded.delete(p)
+  if (first && !s.git) setRail('files')
   state.treeStale = true
   document.body.classList.toggle('no-git-repo', !s.git)
-  renderGit(); renderQueue(); renderTally()
+  renderGit(); renderQueue()
   if (state.rail === 'files') ensureTree().then(renderTree)
   syncTabs()
   refreshGutter()
-  if (REVIEWABLE.includes(scope())) state.mode === 'diff' ? scheduleDiff() : (state.diffStale = true)
+  if (LIVE.includes(scope())) state.mode === 'diff' ? scheduleDiff() : (state.diffStale = true)
 }
 
 function staleBuild() {
@@ -171,6 +122,29 @@ function setRail(rail) {
   else renderQueue()
 }
 
+// The Changes rail follows VS Code: conflicts, then what is staged (HEAD → index), then what is not
+// (index → working tree). A partly staged file shows in both groups with each side's own counts.
+const ICON = {
+  plus: '<svg class="i" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>',
+  minus: '<svg class="i" viewBox="0 0 16 16"><path d="M3.5 8h9"/></svg>',
+  discard: '<svg class="i" viewBox="0 0 16 16"><path d="M5.5 3.5 3 6l2.5 2.5"/><path d="M3 6h6.5a3.5 3.5 0 0 1 0 7H7"/></svg>',
+  open: '<svg class="i" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg>',
+}
+const GROUPS = [
+  { sec: 'merge', label: 'Merge changes', has: c => conflicted(c) },
+  { sec: 'staged', label: 'Staged changes', has: c => !conflicted(c) && !!c.index },
+  { sec: 'work', label: 'Changes', has: c => !conflicted(c) && !!c.work },
+]
+// Each group's letter describes its own side: code[0] for the index, code[1] for the working tree.
+function sideTag(c, sec) {
+  const y = sec === 'staged' ? c.code[0] : sec === 'work' ? (c.code === '??' ? 'A' : c.code[1]) : 'U'
+  return badge(y, c.code === '??' ? 'untracked' : codeWord[y] || y)
+}
+const sideStat = st => !st ? '' : st.binary ? '<span class="faint">bin</span>' : `${st.added ? `<span class="add">+${st.added}</span>` : ''}${st.deleted ? `<span class="del">−${st.deleted}</span>` : ''}`
+const iconBtn = (act, icon, title) => `<button class="btn quiet icon xs" data-act="${act}" title="${title}">${icon}</button>`
+// The group a row belongs to decides which scope shows its diff: staged rows the index, the rest the working tree.
+const secScope = sec => sec === 'staged' ? 'staged' : 'worktree'
+
 function renderQueue() {
   const q = $('#queue')
   const all = [...state.changes.values()]
@@ -185,24 +159,37 @@ function renderQueue() {
   }
   const filter = $('#file-filter').value.toLowerCase()
   const list = all.filter(c => !filter || c.path.toLowerCase().includes(filter))
-  const todo = list.filter(c => reviewState(c.path) !== 'done')
-  const done = list.filter(c => reviewState(c.path) === 'done')
-  const cur = currentPath()
-  const row = c => {
-    const rv = reviewState(c.path)
-    const title = rv === 'stale' ? `${c.path} — changed since you reviewed it` : c.path
-    return `<div class="qrow rv-${rv} ${c.path === cur ? 'current' : ''}" data-path="${esc(c.path)}" title="${esc(title)}">
-      <span class="tick" data-act="review" title="Mark reviewed (x)"></span>
+  const row = (c, sec) => {
+    const acts = [
+      c.code[1] !== 'D' && c.code !== 'D ' ? iconBtn('open', ICON.open, 'Open file') : '',
+      sec === 'work' ? iconBtn('discard', ICON.discard, c.code === '??' ? 'Delete this untracked file' : 'Discard unstaged changes') : '',
+      sec === 'staged' ? iconBtn('unstage', ICON.minus, 'Unstage') : iconBtn('stage', ICON.plus, sec === 'merge' ? 'Mark resolved (stage)' : 'Stage'),
+    ].join('')
+    const st = sec === 'staged' ? c.index : sec === 'work' ? c.work : null
+    return `<div class="qrow" data-path="${esc(c.path)}" data-sec="${sec}" title="${esc(c.path)}">
       <span class="qpath">${nameFirst(c.path)}</span>
-      <span class="qmeta">${c.staged ? '<span class="staged-dot" title="staged"></span>' : ''}${statHTML(c)}${codeTag(c)}</span>
-      <span class="qacts"><button class="btn quiet sm" data-act="stage">${fullyStaged(c) ? 'Unstage' : 'Stage'}</button><button class="btn quiet sm" data-act="discard">Discard</button></span>
+      <span class="qacts">${acts}</span>
+      <span class="qmeta">${sideStat(st)}${sideTag(c, sec)}</span>
     </div>`
   }
-  const group = (label, n) => `<div class="group-label"><span>${label}</span><span class="count">${n}</span></div>`
-  q.innerHTML =
-    (todo.length ? group('To review', todo.length) + todo.map(row).join('') : '') +
-    (done.length ? group('Reviewed', done.length) + done.map(row).join('') : '') +
-    (!list.length ? `<div class="empty">No changed path matches “${esc(filter)}”.</div>` : '')
+  const bulk = { staged: iconBtn('unstage-all', ICON.minus, 'Unstage all'), work: iconBtn('stage-all', ICON.plus, 'Stage all changes'), merge: iconBtn('stage-all', ICON.plus, 'Mark all resolved (stage)') }
+  let h = ''
+  for (const g of GROUPS) {
+    const rows = list.filter(g.has)
+    if (!rows.length) continue
+    const closed = state.qClosed.has(g.sec)
+    h += `<div class="group-label qgroup" data-sec="${g.sec}"><span class="tw">${closed ? '▸' : '▾'}</span><span class="gname">${g.label}</span><span class="gacts">${bulk[g.sec]}</span><span class="count">${rows.length}</span></div>`
+    if (!closed) h += rows.map(c => row(c, g.sec)).join('')
+  }
+  q.innerHTML = h || `<div class="empty">No changed path matches “${esc(filter)}”.</div>`
+  markQueueCurrent()
+}
+
+// Bulk actions take the paths of one group as it is shown, so a filter narrows them too.
+function groupPaths(sec) {
+  const g = GROUPS.find(g => g.sec === sec)
+  const filter = $('#file-filter').value.toLowerCase()
+  return [...state.changes.values()].filter(c => g.has(c) && (!filter || c.path.toLowerCase().includes(filter))).map(c => c.path)
 }
 
 // Build a folder tree from the flat, sorted path list. Folders open by default when they hold a change or the open file.
@@ -258,10 +245,10 @@ function toggleDir(path) {
   renderTree()
 }
 
-function stageToggle(path) {
-  const c = state.changes.get(path)
-  if (c) gitAction({ action: fullyStaged(c) ? 'unstage' : 'add', paths: [path] })
-}
+const stage = paths => paths.length && gitAction({ action: 'add', paths })
+const unstage = paths => paths.length && gitAction({ action: 'unstage', paths })
+// From the unstaged list or view only the working tree goes back to the index; elsewhere the file returns to HEAD.
+const discard = (paths, worktree) => paths.length && gitAction({ action: 'discard', paths, worktree })
 
 // ---------- diff ----------
 function unquote(p) {
@@ -354,7 +341,7 @@ function diffMessage(title, body) {
 
 function isFolded(f) {
   if (state.folded.has(f.path)) return state.folded.get(f.path)
-  return (REVIEWABLE.includes(scope()) && reviewState(f.path) === 'done') || GENERATED.test(f.path) || f.lines > 1500
+  return GENERATED.test(f.path) || f.lines > 1500
 }
 
 function renderDiff() {
@@ -368,7 +355,6 @@ function renderDiff() {
   const view = $('#diff'), top = view.scrollTop
   view.innerHTML = files.map(fileHTML).join('')
   view.scrollTop = top
-  state.justStamped = ''
   state.current = -1
   updateCurrent()
 }
@@ -377,7 +363,6 @@ function rerenderFile(i) {
   const sec = $(`#diff .dfile[data-i="${i}"]`)
   if (!sec) return
   sec.outerHTML = fileHTML(state.diffFiles[i], i)
-  state.justStamped = ''
   state.current = -1
   updateCurrent()
 }
@@ -397,18 +382,19 @@ function blocksHTML(f) {
 }
 
 function fileHTML(f, i) {
-  const reviewable = REVIEWABLE.includes(scope())
-  const c = reviewable ? state.changes.get(f.path) : null
-  const rv = c ? reviewState(f.path) : ''
+  const sc = scope()
+  const c = LIVE.includes(sc) ? state.changes.get(f.path) : null
   const folded = isFolded(f)
   const kind = f.isNew ? 'new' : f.isDeleted ? 'deleted' : 'modified'
   const letter = f.isNew ? 'A' : f.isDeleted ? 'D' : 'M'
-  const label = rv === 'done' ? 'Reviewed' : rv === 'stale' ? 'Review again' : 'Mark reviewed'
-  const proof = c ? `<button class="proof rv-${rv} ${state.justStamped === f.path ? 'just' : ''}" data-act="review" title="${rv === 'stale' ? 'Changed since you reviewed it · ' : ''}x"><span class="tick"></span>${label}</button>` : ''
+  const canStage = c && (c.work || conflicted(c)) && sc !== 'staged'
+  const canUnstage = c && c.index && !conflicted(c) && sc !== 'worktree'
   const acts = [
     !f.isDeleted ? '<button class="btn quiet sm" data-act="open" title="o">Open</button>' : '',
     state.status?.git ? '<button class="btn quiet sm" data-act="history" title="Commits that changed this file">History</button>' : '',
-    c ? `<button class="btn quiet sm" data-act="stage">${fullyStaged(c) ? 'Unstage' : 'Stage'}</button><button class="btn quiet sm" data-act="discard">Discard</button>` : '',
+    c ? `<button class="btn quiet sm" data-act="discard" title="${sc === 'worktree' ? 'Discard unstaged changes' : 'Discard every change since HEAD, staged or not'}">Discard</button>` : '',
+    canUnstage ? `<button class="btn quiet sm" data-act="unstage" title="Unstage">${ICON.minus}Unstage</button>` : '',
+    canStage ? `<button class="btn quiet sm" data-act="stage" title="Stage">${ICON.plus}Stage</button>` : '',
   ].join('')
   let body = ''
   if (!folded) {
@@ -418,10 +404,10 @@ function fileHTML(f, i) {
     else body = f.hunks.map(hunkHTML).join('')
   }
   const unsaved = state.tabs.some(t => t.path === f.path && t.content !== t.saved)
-  const why = folded && !state.folded.has(f.path) ? (rv === 'done' ? 'reviewed' : GENERATED.test(f.path) ? 'generated' : f.lines > 1500 ? 'large' : '') : ''
+  const why = folded && !state.folded.has(f.path) ? (GENERATED.test(f.path) ? 'generated' : f.lines > 1500 ? 'large' : '') : ''
   const stat = f.binary ? '' : `${f.added ? `<span class="add">+${f.added}</span>` : ''}${f.deleted ? `<span class="del">−${f.deleted}</span>` : ''}${blocksHTML(f)}`
   return `<section class="dfile ${folded ? 'folded' : ''}" data-i="${i}">
-    <header class="dfile-head"><span class="fold">▶</span>${badge(letter, kind)}<span class="dpath" title="${esc(f.path)}">${fullPath(f.path)}</span><span class="dstat">${stat}${why ? `<span class="note">· ${why}</span>` : ''}${unsaved ? '<span class="note unsaved" title="The diff shows the file on disk; save with ⌘S in the editor">· unsaved edits</span>' : ''}</span><span class="spacer"></span><span class="dacts">${acts}</span>${proof}</header>
+    <header class="dfile-head"><span class="fold">▶</span>${badge(letter, kind)}<span class="dpath" title="${esc(f.path)}">${fullPath(f.path)}</span><span class="dstat">${stat}${why ? `<span class="note">· ${why}</span>` : ''}${unsaved ? '<span class="note unsaved" title="The diff shows the file on disk; save with ⌘S in the editor">· unsaved edits</span>' : ''}</span><span class="spacer"></span><span class="dacts">${acts}</span></header>
     <div class="dbody">${body}</div>
   </section>`
 }
@@ -521,9 +507,10 @@ function updateCurrent() {
   markQueueCurrent()
 }
 
+// In the Unstaged or Staged view only the row of the matching group is current; All changes marks both.
 function markQueueCurrent() {
-  const cur = currentPath()
-  document.querySelectorAll('.qrow').forEach(r => r.classList.toggle('current', r.dataset.path === cur))
+  const cur = currentPath(), sc = scope()
+  document.querySelectorAll('.qrow').forEach(r => r.classList.toggle('current', r.dataset.path === cur && (sc === 'head' || secScope(r.dataset.sec) === sc)))
 }
 
 function currentPath() {
@@ -557,8 +544,14 @@ function stepHunk(dir) {
   updateCurrent()
 }
 
-async function goTo(path) {
+async function goTo(path, sec = '') {
   await setMode('diff')
+  // In a one-sided view, a row from the other group flips the view to that group's side.
+  if (sec && (scope() === 'worktree' || scope() === 'staged') && scope() !== secScope(sec)) {
+    $('#diff-scope').value = secScope(sec)
+    syncScopeInputs()
+    await loadDiff()
+  }
   let i = state.diffFiles.findIndex(f => f.path === path)
   if (i < 0 && state.changes.has(path) && scope() !== 'head') {
     $('#diff-scope').value = 'head'
@@ -861,14 +854,11 @@ async function saveFile(force = false) {
   const tab = activeTab()
   if (!tab || tab.binary || state.mode !== 'file') return
   tab.content = $('#editor').value
-  const wasDone = reviewState(tab.path) === 'done'
   try {
     const content = tab.eol === '\r\n' ? tab.content.replace(/\n/g, '\r\n') : tab.content
     const res = await post('/api/file', { action: 'save', path: tab.path, content, baseHash: force ? '' : tab.hash })
     Object.assign(tab, { saved: tab.content, hash: res.hash, conflict: '' })
     state.diffStale = true
-    // Your own edit to a file you already reviewed should not undo the review.
-    if (wasDone) { state.reviewed[tab.path] = res.hash; saveReviewed() }
     renderTabs(); renderEditor()
     setStatus('Saved ' + tab.path, 'ok')
   } catch (e) {
@@ -1705,14 +1695,23 @@ function setInspector(tab) {
 
 // ---------- wiring ----------
 $('#queue').addEventListener('click', e => {
+  const act = e.target.closest('[data-act]')?.dataset.act
+  const group = e.target.closest('.qgroup')
+  if (group) {
+    const sec = group.dataset.sec
+    if (act === 'stage-all') stage(groupPaths(sec))
+    else if (act === 'unstage-all') unstage(groupPaths(sec))
+    else { state.qClosed.has(sec) ? state.qClosed.delete(sec) : state.qClosed.add(sec); renderQueue() }
+    return
+  }
   const row = e.target.closest('.qrow')
   if (!row) return
-  const act = e.target.closest('[data-act]')?.dataset.act
-  const path = row.dataset.path
-  if (act === 'review') toggleReviewed(path)
-  else if (act === 'stage') stageToggle(path)
-  else if (act === 'discard') gitAction({ action: 'discard', paths: [path] })
-  else goTo(path)
+  const { path, sec } = row.dataset
+  if (act === 'stage') stage([path])
+  else if (act === 'unstage') unstage([path])
+  else if (act === 'discard') discard([path], true)
+  else if (act === 'open') openFile(path)
+  else goTo(path, sec)
 })
 $('#queue').addEventListener('dblclick', e => {
   const row = e.target.closest('.qrow')
@@ -1729,10 +1728,10 @@ $('#diff').addEventListener('click', e => {
   if (!sec) return
   const i = +sec.dataset.i, f = state.diffFiles[i]
   const act = e.target.closest('[data-act]')?.dataset.act
-  if (act === 'review') toggleReviewed(f.path)
-  else if (act === 'open') openFile(f.path, { fromReview: true })
-  else if (act === 'stage') stageToggle(f.path)
-  else if (act === 'discard') gitAction({ action: 'discard', paths: [f.path] })
+  if (act === 'open') openFile(f.path, { fromReview: true })
+  else if (act === 'stage') stage([f.path])
+  else if (act === 'unstage') unstage([f.path])
+  else if (act === 'discard') discard([f.path], scope() === 'worktree')
   else if (act === 'history') openFileHistory(f.path)
   else if (e.target.closest('.dfile-head')) toggleFold(i)
 })
@@ -2011,7 +2010,6 @@ document.addEventListener('keydown', e => {
     case 'p': stepFile(-1); break
     case 'j': state.mode === 'diff' ? stepHunk(1) : vimStep(1); break
     case 'k': state.mode === 'diff' ? stepHunk(-1) : vimStep(-1); break
-    case 'x': { const p = currentPath(); if (p && state.mode === 'diff') toggleReviewed(p, true); break }
     case 'e': if (state.mode === 'diff') openCurrentHunk(); break
     case 'o': { const p = currentPath(); if (p && state.mode === 'diff' && !state.diffFiles[state.current]?.isDeleted) openFile(p, { fromReview: true }); break }
     default: return

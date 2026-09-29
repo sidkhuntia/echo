@@ -144,6 +144,16 @@ type Change struct {
 	Deleted int    `json:"deleted"`
 	Binary  bool   `json:"binary,omitempty"`
 	Hash    string `json:"hash"`
+	// Index is the staged side (HEAD to index) and Work the unstaged side (index to working tree);
+	// each is nil when that side has nothing, so a partly staged file carries both.
+	Index *LineStat `json:"index,omitempty"`
+	Work  *LineStat `json:"work,omitempty"`
+}
+
+type LineStat struct {
+	Added   int  `json:"added"`
+	Deleted int  `json:"deleted"`
+	Binary  bool `json:"binary,omitempty"`
 }
 
 // Branch is a local branch with its upstream and how far the two have moved apart since the last fetch.
@@ -191,6 +201,8 @@ type gitRequest struct {
 	From     string   `json:"from"`
 	To       string   `json:"to"`
 	StashRef string   `json:"stashRef"`
+	// Worktree limits discard to unstaged changes, so staged work survives.
+	Worktree bool `json:"worktree"`
 }
 
 func main() {
@@ -629,9 +641,15 @@ func (a *App) gitStatus() GitStatus {
 		return status
 	}
 	status.Changes = parsePorcelain(out)
-	stats := map[string]Change{}
+	stats, index, work := map[string]Change{}, map[string]Change{}, map[string]Change{}
 	if out, err := a.git("diff", "--numstat", "-z", "--no-renames", a.base(), "--"); err == nil {
 		stats = parseNumstat(out)
+	}
+	if out, err := a.git("diff", "--cached", "--numstat", "-z", "--no-renames", "--"); err == nil {
+		index = parseNumstat(out)
+	}
+	if out, err := a.git("diff", "--numstat", "-z", "--no-renames", "--"); err == nil {
+		work = parseNumstat(out)
 	}
 	for i := range status.Changes {
 		c := &status.Changes[i]
@@ -644,6 +662,16 @@ func (a *App) gitStatus() GitStatus {
 			c.Added, c.Deleted, c.Binary = s.Added, s.Deleted, s.Binary
 		} else if c.Code == "??" && ok {
 			c.Added, c.Binary = sig.lines, sig.binary
+		}
+		if c.Staged {
+			s := index[c.Path]
+			c.Index = &LineStat{s.Added, s.Deleted, s.Binary}
+		}
+		if c.Code == "??" {
+			c.Work = &LineStat{c.Added, 0, c.Binary}
+		} else if c.Code[1] != ' ' {
+			s := work[c.Path]
+			c.Work = &LineStat{s.Added, s.Deleted, s.Binary}
 		}
 	}
 	if out, err := a.git("rev-parse", "-q", "--verify", "HEAD"); err == nil {
@@ -775,7 +803,7 @@ func (a *App) handleGit(w http.ResponseWriter, r *http.Request) {
 	var out string
 	var err error
 	if req.Action == "discard" {
-		out, err = a.discard(req.Paths)
+		out, err = a.discard(req.Paths, req.Worktree)
 	} else if netActions[req.Action] {
 		if !a.net.TryLock() {
 			http.Error(w, "another fetch, pull, or push is still running", http.StatusConflict)
@@ -935,7 +963,9 @@ func validRef(ref string) error {
 }
 
 // discard restores tracked paths and deletes untracked ones, so files an agent created can be rejected too.
-func (a *App) discard(paths []string) (string, error) {
+// discard deletes untracked paths and restores tracked ones. With worktree set it restores the working tree
+// from the index only, like a "discard" in an editor's unstaged list; otherwise both index and working tree go back to HEAD.
+func (a *App) discard(paths []string, worktree bool) (string, error) {
 	if len(paths) == 0 {
 		return "", errors.New("paths required")
 	}
@@ -968,6 +998,9 @@ func (a *App) discard(paths []string) (string, error) {
 		}
 	}
 	if len(tracked) > 0 {
+		if worktree {
+			return a.gitCombined(append([]string{"restore", "--worktree", "--"}, tracked...)...)
+		}
 		return a.gitCombined(append([]string{"restore", "--staged", "--worktree", "--"}, tracked...)...)
 	}
 	return "", nil

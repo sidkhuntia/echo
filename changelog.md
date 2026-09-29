@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The Changes sidebar now works like VS Code's Source Control: "Staged changes" and "Changes" are separate groups (plus "Merge changes" for conflicts), and a partly staged file appears in both with each side's own counts. Hover a row for `+` (stage), `−` (unstage), discard, and open; hover a group header for Stage all or Unstage all. Group headers fold.
+- Discard in the "Changes" group, and in the Unstaged diff view, now throws away only unstaged edits and keeps what you staged.
+- Clicking a row while the diff shows Unstaged or Staged switches to that row's side.
+- Removed review marks: the "Mark reviewed" button, the check circles, the reviewed tally in the title bar, and the `x` key.
 - The default port is now 6030. Starting echo in another repository no longer fails because the port is taken: it takes the next free port (up to 6049) and opens a new tab. Each repository keeps its port across restarts, and starting echo in a repository that is already open just opens its tab.
 - Added a repository switcher: click the repository name in the title bar, or press `⌘⇧O`, to see every open echo with its branch and change count. Use `↑`/`↓` to choose (it starts on the first other repository), `Enter` to switch this tab, and `⌘Enter` or `⌘`-click to open a new one. Browser tabs are titled `repository — branch`.
 - Fixed: with several echo processes open, changing a setting in one could undo a setting changed in another, because each wrote back its whole copy of the shared config.
