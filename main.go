@@ -145,7 +145,10 @@ type GitStatus struct {
 	Branch   string   `json:"branch"`
 	Tracking *Branch  `json:"tracking,omitempty"`
 	Local    []Branch `json:"local"`
-	Remotes  []string `json:"remotes"`
+	// Remote holds remote-tracking branches ("origin/main", without origin/HEAD); Tags holds tag names.
+	Remote  []string `json:"remote"`
+	Tags    []string `json:"tags"`
+	Remotes []string `json:"remotes"`
 	// FetchedAt is the Unix time of the last fetch (FETCH_HEAD's mtime), 0 if never.
 	FetchedAt int64    `json:"fetchedAt"`
 	Changes   []Change `json:"changes"`
@@ -514,6 +517,10 @@ func (a *App) gitStatus() GitStatus {
 	if out, err := a.git("remote"); err == nil {
 		status.Remotes = parseLines(out)
 	}
+	if out, err := a.git("for-each-ref", "--format=%(refname)", "refs/remotes", "refs/tags"); err == nil {
+		c := parseContains(out)
+		status.Remote, status.Tags = c.Remotes, c.Tags
+	}
 	if out, err := a.git("rev-parse", "--git-path", "FETCH_HEAD"); err == nil {
 		p := strings.TrimSpace(out)
 		if !filepath.IsAbs(p) {
@@ -661,15 +668,30 @@ func (a *App) gitArgs(req gitRequest) ([]string, error) {
 			return nil, errors.New("commit message required")
 		}
 		return []string{"commit", "--amend", "-m", req.Message}, nil
-	case "rebase", "merge", "branch:create", "branch:switch":
+	case "rebase", "merge", "branch:create", "branch:switch", "branch:track", "branch:detach", "branch:delete":
 		if err := validRef(req.From); err != nil {
 			return nil, err
 		}
 		switch req.Action {
 		case "branch:create":
-			return []string{"switch", "-c", req.From}, nil
+			// To is an optional start point: "New branch from <ref>".
+			if req.To == "" {
+				return []string{"switch", "-c", req.From}, nil
+			}
+			if err := validRef(req.To); err != nil {
+				return nil, err
+			}
+			return []string{"switch", "-c", req.From, req.To}, nil
 		case "branch:switch":
 			return []string{"switch", req.From}, nil
+		case "branch:track":
+			// Checking out a remote branch creates the local branch that tracks it.
+			return []string{"switch", "--track", req.From}, nil
+		case "branch:detach":
+			return []string{"switch", "--detach", req.From}, nil
+		case "branch:delete":
+			// -d, not -D: Git refuses to delete a branch whose commits are not merged anywhere.
+			return []string{"branch", "-d", req.From}, nil
 		}
 		return []string{req.Action, req.From}, nil
 	case "stash:create":

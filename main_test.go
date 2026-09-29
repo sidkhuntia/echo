@@ -471,3 +471,40 @@ func TestLogEndpoint(t *testing.T) {
 		}
 	}
 }
+
+func TestBranchActions(t *testing.T) {
+	a := testRepo(t)
+	run := func(args ...string) string {
+		cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		cmd.Dir = a.root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	act := func(body string, want int) {
+		t.Helper()
+		if w := request(a, http.MethodPost, "/api/git", body); w.Code != want {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	run("stash", "-u")
+	run("tag", "v1")
+	first := run("rev-parse", "HEAD")
+	run("commit", "-q", "--allow-empty", "-m", "second")
+	act(`{"action":"branch:create","from":"old","to":"v1"}`, http.StatusOK)
+	if got := run("rev-parse", "HEAD"); got != first || run("branch", "--show-current") != "old" {
+		t.Errorf("branch from v1: HEAD=%s branch=%s", got, run("branch", "--show-current"))
+	}
+	act(`{"action":"branch:detach","from":"v1"}`, http.StatusOK)
+	if run("branch", "--show-current") != "" {
+		t.Error("detach left a branch checked out")
+	}
+	act(`{"action":"branch:delete","from":"old"}`, http.StatusOK)
+	if s := a.gitStatus(); len(s.Tags) != 1 || s.Tags[0] != "v1" || len(s.Local) != 1 {
+		t.Errorf("after delete: tags=%v local=%+v", s.Tags, s.Local)
+	}
+	act(`{"action":"branch:create","from":"x","to":"--orphan"}`, http.StatusBadRequest)
+	act(`{"action":"branch:delete","from":"-D"}`, http.StatusBadRequest)
+}

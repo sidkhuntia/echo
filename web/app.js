@@ -13,6 +13,8 @@ const state = {
   // both reload only when it changes. fromLog: Review was opened from the Log, so Esc goes back.
   hist: { commits: [], rows: [], seq: 0, error: '', retry: 0 }, log: { commits: [], rows: [], more: false, loading: false, loaded: false, seq: 0, sel: '' },
   refsKey: '', fromLog: false,
+  // Branches rail: folders closed by the user, and the rail to restore when leaving the Log.
+  bClosed: new Set(), railBeforeLog: '',
 }
 const mod = e => e.metaKey || e.ctrlKey
 const typing = e => e.target.closest?.('input, textarea, select')
@@ -160,7 +162,10 @@ function setRail(rail) {
   $('#tree-panel').classList.toggle('rail-files', rail === 'files')
   $('#queue').hidden = rail !== 'changes'
   $('#files-pane').hidden = rail !== 'files'
+  $('#branches').hidden = rail !== 'branches'
+  $('#file-filter').placeholder = rail === 'branches' ? 'Filter branches' : 'Filter paths'
   if (rail === 'files') ensureTree().then(renderTree)
+  else if (rail === 'branches') renderBranches()
   else renderQueue()
 }
 
@@ -889,6 +894,9 @@ function setMode(m) {
   $('#log-bar').hidden = m !== 'log'
   $('#log').classList.toggle('active', m === 'log')
   if (m !== 'diff') state.fromLog = false
+  // The Log gets IntelliJ's branch list beside it; leaving puts the sidebar back as it was.
+  if (m === 'log' && was !== 'log' && state.rail !== 'branches' && state.status?.git) { state.railBeforeLog = state.rail; setRail('branches') }
+  if (was === 'log' && m !== 'log' && state.railBeforeLog) { if (state.rail === 'branches') setRail(state.railBeforeLog); state.railBeforeLog = '' }
   if (m === 'log') { if (!state.log.loaded) loadLog(); $('#log-rows').focus({ preventScroll: true }) }
   $('#file-crumb').hidden = m !== 'file' || !activeTab()
   $('#diff').classList.toggle('active', m === 'diff')
@@ -924,6 +932,148 @@ function renderGit() {
     if (state.log.loaded) loadLog()
   }
   renderLogRefs()
+  renderBranches()
+  if (!$('#branch-pop').hidden) renderBranchPop()
+}
+
+// ---------- branches ----------
+const ICONS = {
+  branch: '<svg class="i ic" viewBox="0 0 16 16"><circle cx="5" cy="3.5" r="1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="5.5" r="1.5"/><path d="M5 5v6M11 7c0 2.5-6 2-6 4"/></svg>',
+  tag: '<svg class="i ic" viewBox="0 0 16 16"><path d="M2.5 2.5h5l6 6-5 5-6-6z"/><circle cx="5.5" cy="5.5" r="1"/></svg>',
+  dir: '<svg class="i ic" viewBox="0 0 16 16"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg>',
+}
+
+const trackHTML = b => b && !b.gone && (b.ahead || b.behind) ? `<span class="track">${b.behind ? `<span class="in">↓${b.behind}</span>` : ''}${b.ahead ? `<span class="out">↑${b.ahead}</span>` : ''}</span>` : b?.gone ? '<span class="track"><span class="gone">gone</span></span>' : ''
+
+function renderBranches() {
+  if (state.rail !== 'branches') return
+  const s = state.status || {}, f = $('#file-filter').value.toLowerCase()
+  const inLog = state.mode === 'log' ? $('#log-ref').value : ''
+  const local = new Map((s.local || []).map(b => [b.name, b]))
+  const match = n => !f || n.toLowerCase().includes(f)
+  const row = (ref, kind, label, depth, extra = '') => `<div class="tnode bref ${ref === inLog ? 'active' : ''} ${kind === 'local' && ref === s.branch ? 'current' : ''}" data-ref="${esc(ref)}" data-kind="${kind}" style="padding-left:${6 + depth * 14}px" title="${esc(ref)}\nClick to show in the Log"><span class="tw"></span>${kind === 'tag' ? ICONS.tag : ICONS.branch}<span class="nm">${esc(label)}</span>${extra}<button class="bmore" data-more title="Actions" aria-label="Actions for ${esc(ref)}">⋯</button></div>`
+  // Names group into folders by their "/" prefixes, as IntelliJ does ("feat/x" sits under "feat").
+  const tree = (key, names, kind, depth) => {
+    const render = (node, d) => {
+      let h = ''
+      for (const [n, dir] of [...node.dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
+        const open = f || !state.bClosed.has(key + ':' + dir.path)
+        h += `<div class="tnode dir" data-bdir="${esc(key + ':' + dir.path)}" style="padding-left:${6 + d * 14}px"><span class="tw">${open ? '▾' : '▸'}</span>${ICONS.dir}<span class="nm">${esc(n)}</span></div>`
+        if (open) h += render(dir, d + 1)
+      }
+      for (const p of node.files) h += row(p, kind, basename(p), d, kind === 'local' ? trackHTML(local.get(p)) : '')
+      return h
+    }
+    return render(buildTree(names.filter(match)), depth)
+  }
+  const section = (key, title, names, kind) => {
+    if (!names.length) return ''
+    const open = f || !state.bClosed.has(key)
+    const body = tree(key, names, kind, 1)
+    if (f && !body) return ''
+    return `<div class="tnode dir bsec" data-bdir="${key}"><span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${title}</span><span class="count">${names.length}</span></div>${open ? body : ''}`
+  }
+  const top = (ref, label) => `<div class="tnode bref ${inLog === ref ? 'active' : ''}" data-ref="${ref}" data-kind="view" style="padding-left:6px"><span class="tw"></span><span class="nm">${label}</span></div>`
+  $('#branches').innerHTML = s.git === false ? '<div class="empty">Not a Git repository.</div>'
+    : top('all', 'All branches') + top('HEAD', `Current branch${s.branch ? ` <span class="faint">${esc(s.branch)}</span>` : ''}`)
+      + section('local', 'Local', (s.local || []).map(b => b.name), 'local')
+      + section('remote', 'Remote', s.remote || [], 'remote')
+      + section('tags', 'Tags', s.tags || [], 'tag')
+}
+
+// refActions lists what a ref's menu offers, IntelliJ-style, relative to the current branch.
+function refActions(ref, kind) {
+  const s = state.status || {}, cur = s.branch && !s.branch.startsWith('detached@') ? s.branch : ''
+  const isCur = kind === 'local' && ref === cur
+  const localNames = new Set((s.local || []).map(b => b.name))
+  const short = kind === 'remote' ? ref.slice(ref.indexOf('/') + 1) : ref
+  const a = []
+  if (!isCur) {
+    const checkout = kind === 'local' ? { action: 'branch:switch', from: ref }
+      : kind === 'remote' ? (localNames.has(short) ? { action: 'branch:switch', from: short } : { action: 'branch:track', from: ref })
+      : { action: 'branch:detach', from: ref }
+    a.push([kind === 'tag' ? 'Checkout (detached)' : kind === 'remote' && !localNames.has(short) ? `Checkout as ${short}` : 'Checkout', checkout])
+  }
+  a.push(['New branch from here…', 'new'])
+  if (!isCur && cur) {
+    a.push([`Merge into ${cur}`, { action: 'merge', from: ref }])
+    a.push([`Rebase ${cur} onto this`, { action: 'rebase', from: ref }])
+    a.push([`Diff ${cur} → this`, 'diff'])
+  }
+  a.push(['Show in Log', 'log'])
+  if (kind === 'local' && !isCur) a.push(['Delete', { action: 'branch:delete', from: ref }, 'danger'])
+  return a
+}
+
+let menuFor = null
+function openRefMenu(ref, kind, anchor) {
+  const acts = refActions(ref, kind)
+  menuFor = { ref, kind, acts }
+  const m = $('#ref-menu')
+  m.innerHTML = `<div class="menu-head" title="${esc(ref)}">${kind === 'tag' ? ICONS.tag : ICONS.branch}<span>${esc(ref)}</span></div>`
+    + acts.map(([label, , cls], i) => `<button class="menu-item ${cls || ''}" data-i="${i}" role="menuitem">${esc(label)}</button>`).join('')
+  m.hidden = false
+  const r = anchor.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight
+  const left = r.right + 4 + w < innerWidth ? r.right + 4 : Math.max(8, r.left - w - 4)
+  m.style.left = left + 'px'
+  m.style.top = Math.max(8, Math.min(r.top, innerHeight - h - 8)) + 'px'
+  m.querySelector('.menu-item')?.focus()
+}
+const closeRefMenu = () => { $('#ref-menu').hidden = true; menuFor = null }
+
+async function runRefAction(i) {
+  const { ref, acts } = menuFor
+  const [, what] = acts[i]
+  closeRefMenu()
+  toggleBranchPop(false)
+  if (what === 'new') {
+    const name = prompt(`New branch from ${ref}`, '')?.trim()
+    if (name) await gitAction({ action: 'branch:create', from: name, to: ref })
+  } else if (what === 'diff') {
+    $('#diff-scope').value = 'range'
+    $('#diff-from').value = state.status?.branch || 'HEAD'
+    $('#diff-to').value = ref
+    syncScopeInputs()
+    await setMode('diff')
+    $('#diff').scrollTop = 0
+    loadDiff()
+  } else if (what === 'log') {
+    await setMode('log')
+    setLogRef(ref)
+  } else await gitAction(what)
+}
+
+// setLogRef filters the Log to one ref; tags are not in the branch list, so they get an option on demand.
+function setLogRef(ref) {
+  const sel = $('#log-ref')
+  if (![...sel.options].some(o => o.value === ref)) sel.add(new Option(ref, ref))
+  sel.value = ref
+  loadLog()
+  renderBranches()
+}
+
+function toggleBranchPop(open = $('#branch-pop').hidden) {
+  if (open && state.status?.git === false) return
+  $('#branch-pop').hidden = !open
+  if (!open) return closeRefMenu()
+  toggleThemes(false)
+  $('#branch-filter').value = ''
+  renderBranchPop()
+  $('#branch-filter').focus()
+}
+
+function renderBranchPop() {
+  const s = state.status || {}, f = $('#branch-filter').value.toLowerCase()
+  const match = n => !f || n.toLowerCase().includes(f)
+  const item = (ref, kind, extra = '') => `<div class="th bp-row ${kind === 'local' && ref === s.branch ? 'on' : ''}" data-ref="${esc(ref)}" data-kind="${kind}" title="${esc(ref)}"><span class="ok">${kind === 'local' && ref === s.branch ? '✓' : ''}</span><span class="nm">${esc(ref)}</span>${extra}<span class="go">›</span></div>`
+  const sec = (title, rows, more = 0) => rows.length ? `<h5>${title}</h5>${rows.join('')}${more ? `<div class="bp-more faint">${more} more — keep typing</div>` : ''}` : ''
+  const local = (s.local || []).filter(b => match(b.name))
+  const remote = (s.remote || []).filter(match)
+  const tags = (s.tags || []).filter(match)
+  $('#branch-list').innerHTML = sec('Local', local.map(b => item(b.name, 'local', trackHTML(b))))
+    + sec('Remote', remote.slice(0, 50).map(r => item(r, 'remote')), Math.max(0, remote.length - 50))
+    + sec('Tags', tags.slice(0, 30).map(t => item(t, 'tag')), Math.max(0, tags.length - 30))
+    || '<div class="bp-more faint">No branch or tag matches.</div>'
 }
 
 // ---------- graph ----------
@@ -1500,7 +1650,52 @@ $('#log-rows').addEventListener('scroll', () => {
 })
 let logTimer
 for (const id of ['#log-q', '#log-author', '#log-path']) $(id).addEventListener('input', () => { clearTimeout(logTimer); logTimer = setTimeout(() => loadLog(), 250) })
-$('#log-ref').onchange = () => loadLog()
+$('#log-ref').onchange = () => { loadLog(); renderBranches() }
+$('#branches').addEventListener('click', e => {
+  const dir = e.target.closest('[data-bdir]')
+  if (dir) {
+    const k = dir.dataset.bdir
+    state.bClosed.has(k) ? state.bClosed.delete(k) : state.bClosed.add(k)
+    return renderBranches()
+  }
+  const row = e.target.closest('.bref')
+  if (!row) return
+  if (e.target.closest('[data-more]')) return openRefMenu(row.dataset.ref, row.dataset.kind, e.target.closest('[data-more]'))
+  if (state.mode !== 'log') setMode('log').then(() => setLogRef(row.dataset.ref))
+  else setLogRef(row.dataset.ref)
+})
+$('#branches').addEventListener('contextmenu', e => {
+  const row = e.target.closest('.bref')
+  if (!row || row.dataset.kind === 'view') return
+  e.preventDefault()
+  openRefMenu(row.dataset.ref, row.dataset.kind, row)
+})
+$('#branch').onclick = e => { e.stopPropagation(); toggleBranchPop() }
+$('#branch-filter').oninput = renderBranchPop
+$('#branch-filter').addEventListener('keydown', e => {
+  // Enter opens the menu of the only match, so "type a name, Enter, Enter" checks it out.
+  const rows = document.querySelectorAll('#branch-list .bp-row')
+  if (e.key === 'Enter' && rows.length === 1) { e.preventDefault(); openRefMenu(rows[0].dataset.ref, rows[0].dataset.kind, rows[0]) }
+})
+$('#branch-list').addEventListener('click', e => {
+  const row = e.target.closest('.bp-row')
+  if (row) openRefMenu(row.dataset.ref, row.dataset.kind, row)
+})
+$('#bp-new').onclick = async () => {
+  toggleBranchPop(false)
+  const name = prompt('New branch from the current commit', '')?.trim()
+  if (name) await gitAction({ action: 'branch:create', from: name })
+}
+$('#ref-menu').addEventListener('click', e => { const b = e.target.closest('.menu-item'); if (b && menuFor) runRefAction(+b.dataset.i) })
+$('#ref-menu').addEventListener('keydown', e => {
+  const items = [...document.querySelectorAll('#ref-menu .menu-item')], i = items.indexOf(document.activeElement)
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus() }
+})
+document.addEventListener('click', e => {
+  if (!e.target.isConnected || e.target.closest('#ref-menu')) return
+  if (!$('#ref-menu').hidden && !e.target.closest('[data-more], .bp-row')) closeRefMenu()
+  if (!$('#branch-pop').hidden && !e.target.closest('#branch-pop')) toggleBranchPop(false)
+})
 $('#stashes').addEventListener('click', e => {
   const b = e.target.closest('button[data-ref]')
   if (b) gitAction({ action: 'stash:apply', stashRef: b.dataset.ref })
@@ -1544,7 +1739,7 @@ setInterval(renderTracking, 30000)
 $('#merge').onclick = () => gitAction({ action: 'merge', from: $('#branch-select').value })
 $('#rebase').onclick = () => gitAction({ action: 'rebase', from: $('#branch-select').value })
 $('#stash-create').onclick = () => gitAction({ action: 'stash:create', message: $('#stash-message').value }).then(() => { $('#stash-message').value = '' })
-$('#file-filter').oninput = () => { renderQueue(); renderTree() }
+$('#file-filter').oninput = () => { renderQueue(); renderTree(); renderBranches() }
 $('#diff-scope').onchange = () => { syncScopeInputs(); $('#diff').scrollTop = 0; loadDiff() }
 $('#ignore-ws').onchange = loadDiff
 document.querySelectorAll('.layout-switch button').forEach(b => b.onclick = () => setDiffMode(b.dataset.layout))
@@ -1587,6 +1782,9 @@ document.addEventListener('keydown', e => {
     return
   }
   if (e.key === 'Escape' && e.target.id === 'editor' && state.returnTo && state.returnTo === activeTab()?.path) { e.preventDefault(); backToReview(); return }
+  // Keys inside the branch popup and menu belong to their buttons (Enter activates the focused item).
+  if (e.key !== 'Escape' && e.target.closest?.('#ref-menu, #branch-pop')) return
+  if (e.key === 'Escape' && (!$('#ref-menu').hidden || !$('#branch-pop').hidden)) { e.preventDefault(); if (!$('#ref-menu').hidden) closeRefMenu(); else toggleBranchPop(false); return }
   if (e.key === 'Escape' && state.mode === 'diff' && state.fromLog && !typing(e) && $('#help').hidden) { e.preventDefault(); setMode('log'); return }
   if (e.key === 'Escape') { $('#help').hidden = true; toggleThemes(false); if (typing(e)) e.target.blur(); return }
   if (typing(e) || e.altKey) return

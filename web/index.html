@@ -20,7 +20,7 @@ try {
     <div class="logo">e</div>
     <span id="repo" class="repo"></span>
     <span class="sep">/</span>
-    <span id="branch" class="branch" title="Current branch">—</span>
+    <button id="branch" class="branch" title="Branches: checkout, merge, rebase, delete">—</button>
     <span id="track" class="track" hidden></span>
     <button id="fetch" class="btn quiet sm net" title="Fetch all remotes (git fetch --all --prune)" hidden><svg class="i" viewBox="0 0 16 16"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Fetch <span id="fetched" class="faint"></span></button>
     <button id="sync" class="btn quiet sm net" hidden><svg class="i" viewBox="0 0 16 16"><path d="M13 6.5A5 5 0 0 0 4 4.5M3 9.5a5 5 0 0 0 9 2"/><path d="M4 1.8v2.9h2.9M12 14.2v-2.9H9.1"/></svg><span id="sync-label">Sync</span></button>
@@ -36,6 +36,11 @@ try {
     <button id="theme-open" class="btn quiet icon" title="Theme"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11z" fill="currentColor"/></svg></button>
     <button id="help-open" class="btn quiet icon" title="Shortcuts (?)">?</button>
   </div>
+  <div id="branch-pop" class="pop branch-pop" hidden>
+    <input id="branch-filter" class="field" placeholder="Search branches and tags" autocomplete="off" spellcheck="false">
+    <button id="bp-new" class="th"><span class="ok">＋</span>New branch…</button>
+    <div id="branch-list"></div>
+  </div>
   <div id="theme-pop" class="pop" hidden>
     <input id="theme-filter" class="field" placeholder="Search themes" autocomplete="off" spellcheck="false">
     <div id="theme-list"></div>
@@ -48,6 +53,7 @@ try {
       <div class="seg rail-switch" role="tablist">
         <button data-rail="changes" class="on" role="tab">Changes <span id="change-count" class="count"></span></button>
         <button data-rail="files" role="tab">Files</button>
+        <button data-rail="branches" role="tab">Branches</button>
       </div>
     </div>
     <div class="filter-row">
@@ -63,6 +69,7 @@ try {
         <button id="delete-file" class="btn quiet sm">Delete</button>
       </div>
     </div>
+    <div id="branches" class="list" hidden></div>
     <div class="side-foot"><span><kbd>n</kbd><kbd>p</kbd> file</span><span><kbd>j</kbd><kbd>k</kbd> hunk</span><span><kbd>x</kbd> reviewed</span></div>
   </aside>
 
@@ -159,6 +166,8 @@ try {
   <span id="status">Ready</span>
   <span class="console-help">⌘K files · ⌘D review/files · ⌘B sidebar · ⌘J Git · ? shortcuts</span>
 </footer>
+
+<div id="ref-menu" class="menu" role="menu" hidden></div>
 
 <div id="palette" class="modal" hidden>
   <div class="palette-card">
