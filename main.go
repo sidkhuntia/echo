@@ -64,13 +64,19 @@ type fileSig struct {
 	binary bool
 }
 
-// Commit carries the full hash for copying and diffing, and the short one for display.
+// logPage is how many commits the Log and History views load per request.
+const logPage = 200
+
+// Commit is one log row: the full hash for copying and diffing, the short one for display,
+// parents for drawing the graph, and the ref names that point at it (git's %D decoration).
 type Commit struct {
-	Hash    string `json:"hash"`
-	Short   string `json:"short"`
-	Author  string `json:"author"`
-	Time    int64  `json:"time"`
-	Subject string `json:"subject"`
+	Hash    string   `json:"hash"`
+	Short   string   `json:"short"`
+	Parents []string `json:"parents"`
+	Refs    []string `json:"refs"`
+	Author  string   `json:"author"`
+	Time    int64    `json:"time"`
+	Subject string   `json:"subject"`
 }
 
 // CommitDetail is everything the History and Log views show about one commit.
@@ -128,10 +134,12 @@ type GitStatus struct {
 	// FetchedAt is the Unix time of the last fetch (FETCH_HEAD's mtime), 0 if never.
 	FetchedAt int64    `json:"fetchedAt"`
 	Changes   []Change `json:"changes"`
-	Commits   []Commit `json:"commits"`
-	Branches  []string `json:"branches"`
-	Stashes   []Stash  `json:"stashes"`
-	Error     string   `json:"error,omitempty"`
+	// Head and RefsSig change whenever history or any ref moves, so the browser knows when to reload the log.
+	Head     string   `json:"head"`
+	RefsSig  string   `json:"refsSig"`
+	Branches []string `json:"branches"`
+	Stashes  []Stash  `json:"stashes"`
+	Error    string   `json:"error,omitempty"`
 }
 
 type TreeNode struct {
@@ -201,6 +209,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/git", a.handleGit)
 	mux.HandleFunc("/api/diff", a.handleDiff)
+	mux.HandleFunc("/api/log", a.handleLog)
 	mux.HandleFunc("/api/commit", a.handleCommit)
 	mux.HandleFunc("/api/commit/contains", a.handleContains)
 	mux.HandleFunc("/api/stream", a.handleStream)
@@ -461,10 +470,11 @@ func (a *App) gitStatus() GitStatus {
 			c.Added, c.Binary = sig.lines, sig.binary
 		}
 	}
-	// %aN applies .mailmap, so the author shows under their canonical full name. The time is
-	// absolute (%at) so the status only changes when history does; the browser renders "2h ago".
-	if out, err := a.git("log", "-n", "100", "--format=%H%x09%h%x09%aN%x09%at%x09%s"); err == nil {
-		status.Commits = parseCommits(out)
+	if out, err := a.git("rev-parse", "-q", "--verify", "HEAD"); err == nil {
+		status.Head = strings.TrimSpace(out)
+	}
+	if out, err := a.git("for-each-ref", "--format=%(objectname) %(refname)"); err == nil {
+		status.RefsSig = hashBytes([]byte(out))[:12]
 	}
 	if out, err := a.git("branch", "-a", "--format=%(refname:short)"); err == nil {
 		status.Branches = parseLines(out)
@@ -816,6 +826,92 @@ func (a *App) handleDiff(w http.ResponseWriter, r *http.Request) {
 }
 
 // untrackedDiff renders untracked files as new-file diffs; plain `git diff` leaves them out.
+// handleLog pages through history in topological order, so the browser can draw the graph.
+// ref is "all" (every branch, remote, and tag), or one ref; q matches the message, or jumps to a
+// commit when it is a hash; author and path filter like `git log --author` and `git log -- path`.
+func (a *App) handleLog(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	skip, _ := strconv.Atoi(q.Get("skip"))
+	limit, err := strconv.Atoi(q.Get("limit"))
+	if err != nil || limit <= 0 || limit > 1000 {
+		limit = logPage
+	}
+	empty := map[string]any{"commits": []Commit{}, "more": false}
+	if a.base() == emptyTree {
+		writeJSON(w, empty)
+		return
+	}
+	args := []string{"log", "--topo-order", logFormat}
+	var revs []string
+	switch ref := q.Get("ref"); ref {
+	case "", "all":
+		revs = []string{"--branches", "--remotes", "--tags", "HEAD"}
+	default:
+		if err := validRef(ref); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		revs = []string{"--end-of-options", ref}
+	}
+	text := strings.TrimSpace(q.Get("q"))
+	author := strings.TrimSpace(q.Get("author"))
+	hash := ""
+	if isHex(text) {
+		hash, _ = a.resolveCommit(text)
+	}
+	if hash != "" {
+		// A hash is a jump, not a search: show exactly that commit.
+		revs, skip, limit = []string{hash}, 0, 0
+		args = append(args, "--no-walk")
+	} else if text != "" {
+		args = append(args, "--grep="+text)
+	}
+	if author != "" {
+		args = append(args, "--author="+author)
+	}
+	if text != "" || author != "" {
+		// Filters are typed text, not regexes: "fix(" should match a literal "fix(".
+		args = append(args, "--regexp-ignore-case", "--fixed-strings")
+	}
+	if skip > 0 {
+		args = append(args, "--skip="+strconv.Itoa(skip))
+	}
+	if limit > 0 {
+		args = append(args, "-n", strconv.Itoa(limit+1))
+	}
+	args = append(append(args, revs...), "--")
+	if path := q.Get("path"); path != "" {
+		if _, err := a.safePath(path); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		args = append(args, path)
+	}
+	out, err := a.git(args...)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	commits := parseCommits(out)
+	more := limit > 0 && len(commits) > limit
+	if more {
+		commits = commits[:limit]
+	}
+	writeJSON(w, map[string]any{"commits": commits, "more": more})
+}
+
+func isHex(s string) bool {
+	if len(s) < 4 || len(s) > 40 {
+		return false
+	}
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", c) {
+			return false
+		}
+	}
+	return true
+}
+
 // resolveCommit turns a user-supplied ref into a full commit hash, so later commands never see the raw input.
 func (a *App) resolveCommit(ref string) (string, error) {
 	if err := validRef(ref); err != nil {
@@ -1060,15 +1156,24 @@ func parseNumstat(s string) map[string]Change {
 	return out
 }
 
-// parseCommits reads "full\tshort\tauthor\tunixtime\tsubject" lines; the subject is last because it may contain tabs.
+// logFormat separates fields with the ASCII unit separator and records with the record separator,
+// so subjects and ref names can hold tabs or newlines-free text without ambiguity.
+const logFormat = "--format=%H%x1f%h%x1f%P%x1f%D%x1f%aN%x1f%at%x1f%s%x1e"
+
+// parseCommits reads logFormat records: hash, short, parents, refs, author, unix time, subject.
 func parseCommits(s string) []Commit {
-	var out []Commit
-	for _, line := range strings.Split(s, "\n") {
-		parts := strings.SplitN(line, "\t", 5)
-		if len(parts) == 5 {
-			t, _ := strconv.ParseInt(parts[3], 10, 64)
-			out = append(out, Commit{Hash: parts[0], Short: parts[1], Author: parts[2], Time: t, Subject: parts[4]})
+	out := []Commit{}
+	for _, rec := range strings.Split(s, "\x1e") {
+		parts := strings.SplitN(strings.TrimLeft(rec, "\n"), "\x1f", 7)
+		if len(parts) != 7 {
+			continue
 		}
+		c := Commit{Hash: parts[0], Short: parts[1], Parents: strings.Fields(parts[2]), Refs: []string{}, Author: parts[4], Subject: parts[6]}
+		if parts[3] != "" {
+			c.Refs = strings.Split(parts[3], ", ")
+		}
+		c.Time, _ = strconv.ParseInt(parts[5], 10, 64)
+		out = append(out, c)
 	}
 	return out
 }

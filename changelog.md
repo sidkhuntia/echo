@@ -3,6 +3,9 @@
 ## Unreleased
 
 - The title bar shows the current branch's incoming ↓ and outgoing ↑ commits against its upstream, with Fetch (and how long ago the last fetch was) and Sync buttons. Sync pulls using your Git pull settings, then pushes if you're ahead; a branch with no upstream shows Publish instead. The branch list shows the same counts.
+- Added a Log view (Review · Files · Log): a commit graph of every branch with lanes, branch and tag labels, author, and date, loaded 200 commits at a time as you scroll. Filter by message text or a pasted hash, branch, author, or path. The details pane shows the full message, the branches that contain the commit, and its changed files; `Enter` opens the diff and `Esc` comes back.
+- The History tab draws the same graph for the current branch, and shows branch and tag labels on commits.
+- Commits are no longer sent in every live status update; the log is fetched separately and only reloaded when a ref moves.
 - Clicking a commit in History expands it: the full message, author and committer, parents, the branches and tags that contain it, and a folder tree of changed files with +/− counts. Clicking a file jumps to it in the commit diff. The full id is copied from a Copy button instead of on every click.
 - Fixed: marking a file reviewed and folding a diff file by its header threw an error, because two diff helpers had been removed by mistake.
 - Fetch, pull, push, sync, and publish run one at a time with a two-minute timeout, and the buttons show progress.

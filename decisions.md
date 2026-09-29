@@ -278,7 +278,11 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** in the History tab, clicking a commit expands it in place (one at a time) and shows its diff in Review; clicking it again folds it. Single-child folder chains in the file tree collapse into one row.
 - **Default:** details come from a lazy `GET /api/commit?hash=`; `--contains` lookups load after the rest because they can be slow on large repositories.
 - **Default:** commits move out of the SSE status into `GET /api/log` (paged, 200 at a time); the status carries a refs signature so the browser refetches the log only when refs change.
-- **Default:** graph lanes are computed in the browser from `%H %P %D` in topological order and drawn as SVG, without a library.
+- **Default:** graph lanes are computed in the browser from `%H %P %D` in topological order and drawn as SVG, without a library. Lanes keep their column (no compaction), colors follow the lane, merge commits are hollow dots, and the graph is capped at 16 lanes wide.
+- **Default:** "All branches" means `--branches --remotes --tags HEAD`, not `--all`, so stashes and echo's own refs never appear in the graph.
+- **Default:** the Log search matches commit messages as literal, case-insensitive text; a 4–40 character hex string that names a commit jumps to that commit instead. Author and path filters work like `git log --author` and `git log -- <path>`.
+- **Default:** the History tab shows the current branch (100 commits) with the same graph; the lanes continue through an expanded commit.
+- **Default:** in Log, `↑`/`↓` or `j`/`k` move the selection, `Enter` or a double-click opens the diff in Review, and `Esc` in Review returns to the Log with the selection kept.
 - **Accepted:** in Log mode the sidebar shows a Branches tree (local, remote, tags) that filters the log; the branch pill opens an IntelliJ-style branches popup with checkout, merge, rebase, compare, and delete.
 - **Accepted:** GitLens extras in scope: file history (`git log --follow` for a file), inline blame on the editor's caret line with a blame gutter toggle, and compare branches (commits only in A / only in B plus the combined diff).
 - **Default:** delivery order: A) ahead/behind, Fetch, Sync/Publish; B) commit details and files; C) `/api/log`, graph, Log mode; D) branches sidebar and popup; E) file history, blame, compare.

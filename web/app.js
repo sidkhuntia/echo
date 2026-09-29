@@ -9,6 +9,10 @@ const state = {
   palette: { items: [], sel: 0 },
   // History: the expanded commit, cached details (commits never change), and folders closed per commit.
   expanded: '', details: new Map(), contains: new Map(), cdirClosed: new Set(),
+  // hist: the History tab (current branch). log: the Log view. refsKey: HEAD plus a ref signature;
+  // both reload only when it changes. fromLog: Review was opened from the Log, so Esc goes back.
+  hist: { commits: [], rows: [] }, log: { commits: [], rows: [], more: false, loading: false, loaded: false, seq: 0, sel: '' },
+  refsKey: '', fromLog: false,
 }
 const mod = e => e.metaKey || e.ctrlKey
 const typing = e => e.target.closest?.('input, textarea, select')
@@ -872,6 +876,10 @@ function setMode(m) {
   document.querySelectorAll('.mode-switch button').forEach(b => b.classList.toggle('on', b.dataset.mode === m))
   $('#diff-bar').hidden = m !== 'diff'
   $('#file-bar').hidden = m !== 'file'
+  $('#log-bar').hidden = m !== 'log'
+  $('#log').classList.toggle('active', m === 'log')
+  if (m !== 'diff') state.fromLog = false
+  if (m === 'log') { if (!state.log.loaded) loadLog(); $('#log-rows').focus({ preventScroll: true }) }
   $('#file-crumb').hidden = m !== 'file' || !activeTab()
   $('#diff').classList.toggle('active', m === 'diff')
   if (m === 'diff' && was !== 'diff') {
@@ -897,18 +905,182 @@ function renderGit() {
   const staged = [...state.changes.values()].filter(c => c.staged).length
   $('#staged-count').textContent = staged ? `${staged} staged` : 'Nothing staged'
   $('#stashes').innerHTML = (s.stashes || []).map(x => `<div class="list-row"><span title="${esc(x.subject)}"><b>${esc(x.ref)}</b> ${esc(x.subject)}</span><button class="btn sm" data-ref="${esc(x.ref)}">Apply</button></div>`).join('') || '<div class="list-row muted"><span>No stashes</span></div>'
-  // Branches move, so "contains" is refetched after any status change; details are immutable and stay cached.
-  state.contains.clear()
+  // History and the log reload only when HEAD or a ref moved; "contains" answers go stale at the same moment.
+  const key = `${s.head || ''}:${s.refsSig || ''}`
+  if (key !== state.refsKey) {
+    state.refsKey = key
+    state.contains.clear()
+    loadHistory()
+    if (state.log.loaded) loadLog()
+  }
+  renderLogRefs()
+}
+
+// ---------- graph ----------
+// layoutGraph assigns each commit a lane. lanes[j] is the commit that lane j is heading down to;
+// a row records the lanes above it (before), below it (after), which lanes end in its node (into),
+// and which lane each parent continues on (out). Lanes are not compacted, so a lane keeps its column.
+const LANE = 12, HUES = 8, LOG_H = 26, HIST_H = 44
+function layoutGraph(commits) {
+  const lanes = [], rows = []
+  let color = 0
+  const free = () => { const i = lanes.findIndex(l => !l); return i < 0 ? lanes.length : i }
+  for (const c of commits) {
+    const before = lanes.slice()
+    let col = lanes.findIndex(l => l && l.hash === c.hash)
+    if (col < 0) { col = free(); lanes[col] = { hash: c.hash, color: color++ } }
+    const own = lanes[col].color
+    const into = []
+    lanes.forEach((l, j) => { if (l && j !== col && l.hash === c.hash) { into.push(j); lanes[j] = null } })
+    const out = c.parents.map((p, k) => {
+      if (k === 0) { lanes[col] = { hash: p, color: own }; return col }
+      let j = lanes.findIndex(l => l && l.hash === p)
+      if (j < 0) { j = free(); lanes[j] = { hash: p, color: color++ } }
+      return j
+    })
+    if (!c.parents.length) lanes[col] = null
+    while (lanes.length && !lanes[lanes.length - 1]) lanes.pop()
+    rows.push({ col, color: own, before, after: lanes.slice(), into, out, merge: c.parents.length > 1 })
+  }
+  return rows
+}
+
+const graphWidth = rows => LANE * Math.min(16, Math.max(1, ...rows.map(r => Math.max(r.before.length, r.after.length, r.col + 1))))
+const laneX = j => LANE / 2 + j * LANE
+
+function graphSVG(r, h, w) {
+  const m = h / 2, cx = laneX(r.col)
+  const seg = (d, color) => `<path d="${d}" class="g${color % HUES}"/>`
+  const curve = (x1, y1, x2, y2) => `M${x1} ${y1}C${x1} ${(y1 + y2) / 2} ${x2} ${(y1 + y2) / 2} ${x2} ${y2}`
+  let p = ''
+  r.before.forEach((l, j) => {
+    if (!l) return
+    if (j === r.col) p += seg(`M${cx} 0V${m}`, l.color)
+    else if (r.into.includes(j)) p += seg(curve(laneX(j), 0, cx, m), l.color)
+    else p += seg(`M${laneX(j)} 0V${h}`, l.color)
+  })
+  r.out.forEach(j => { p += seg(j === r.col ? `M${cx} ${m}V${h}` : curve(cx, m, laneX(j), h), r.after[j].color) })
+  return `<svg class="graph" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">${p}<circle cx="${cx}" cy="${m}" r="3.5" class="g${r.color % HUES}${r.merge ? ' m' : ''}"/></svg>`
+}
+
+// railSVG carries the lanes below a row through a block of any height (the expanded History detail).
+function railSVG(lanes, w) {
+  const p = lanes.map((l, j) => l ? `<path d="M${laneX(j)} 0V10" class="g${l.color % HUES}" vector-effect="non-scaling-stroke"/>` : '').join('')
+  return `<svg class="graph rail" width="${w}" viewBox="0 0 ${w} 10" preserveAspectRatio="none" aria-hidden="true">${p}</svg>`
+}
+
+// Decorations from %D: "HEAD -> main", "origin/main", "tag: v1", or a bare "HEAD" when detached.
+function refChips(refs) {
+  const local = new Set((state.status?.local || []).map(b => b.name))
+  return (refs || []).map(r => {
+    if (r.startsWith('HEAD -> ')) return `<span class="chip loc head" title="Current branch">${esc(r.slice(8))}</span>`
+    if (r === 'HEAD') return '<span class="chip head" title="Detached HEAD">HEAD</span>'
+    if (r.startsWith('tag: ')) return `<span class="chip tag">${esc(r.slice(5))}</span>`
+    if (r.endsWith('/HEAD')) return ''
+    return `<span class="chip ${local.has(r) ? 'loc' : 'rem'}">${esc(r)}</span>`
+  }).join('')
+}
+
+// ---------- log ----------
+async function loadLog(append = false) {
+  const L = state.log
+  L.loaded = true
+  const params = new URLSearchParams({ ref: $('#log-ref').value || 'all', skip: append ? L.commits.length : 0 })
+  for (const [k, id] of [['q', '#log-q'], ['author', '#log-author'], ['path', '#log-path']]) {
+    const v = $(id).value.trim()
+    if (v) params.set(k, v)
+  }
+  const seq = ++L.seq
+  L.loading = true
+  try {
+    const data = await api('/api/log?' + params)
+    if (seq !== L.seq) return
+    L.commits = append ? L.commits.concat(data.commits) : data.commits
+    L.more = data.more
+    L.rows = layoutGraph(L.commits)
+    if (!append) $('#log-rows').scrollTop = 0
+    renderLog()
+  } catch (e) {
+    if (seq === L.seq) $('#log-rows').innerHTML = `<div class="empty"><b>Can’t load the log</b><span>${esc(e.message)}</span></div>`
+  } finally { if (seq === L.seq) L.loading = false }
+}
+
+function renderLog() {
+  const L = state.log, w = graphWidth(L.rows), view = $('#log-rows')
+  $('#log-summary').textContent = L.commits.length ? `${L.commits.length}${L.more ? '+' : ''} commits` : ''
+  if (!L.commits.length) {
+    view.innerHTML = '<div class="empty"><b>No commits match</b><span>Clear a filter to see more history.</span></div>'
+    $('#log-detail').innerHTML = ''
+    return
+  }
+  const top = view.scrollTop
+  view.innerHTML = L.commits.map((c, i) => `<div class="lrow ${c.hash === L.sel ? 'sel' : ''}" data-hash="${esc(c.hash)}">${graphSVG(L.rows[i], LOG_H, w)}<span class="lsub" title="${esc(c.subject)}">${refChips(c.refs)}<span class="ltext">${esc(c.subject)}</span></span><span class="lauth">${esc(c.author)}</span><span class="ltime" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div>`).join('')
+    + (L.more ? '<div class="lmore faint">Loading more…</div>' : '')
+  view.scrollTop = top
+  if (L.commits.some(c => c.hash === L.sel)) paintLogDetail()
+  else selectLog(L.commits[0].hash)
+}
+
+function selectLog(hash, scroll = false) {
+  state.log.sel = hash
+  $('#log-rows .lrow.sel')?.classList.remove('sel')
+  const row = $(`#log-rows .lrow[data-hash="${CSS.escape(hash)}"]`)
+  row?.classList.add('sel')
+  if (scroll) row?.scrollIntoView({ block: 'nearest' })
+  paintLogDetail()
+  $('#log-detail').scrollTop = 0
+  loadDetail(hash)
+}
+
+function stepLog(dir) {
+  const L = state.log
+  const i = Math.min(L.commits.length - 1, Math.max(0, L.commits.findIndex(c => c.hash === L.sel) + dir))
+  if (L.commits[i]) selectLog(L.commits[i].hash, true)
+}
+
+function paintLogDetail() {
+  const c = state.log.commits.find(c => c.hash === state.log.sel)
+  $('#log-detail').innerHTML = c ? `<div class="ld-head"><div class="ld-subject">${esc(c.subject)}</div><button class="btn sm" data-diff title="Show this commit's diff in Review (Esc comes back)">View diff</button></div>
+    <div class="ld-refs">${refChips(c.refs)}</div><div class="ld-body">${detailHTML(c.hash)}</div>` : ''
+}
+
+function openLogDiff() {
+  const c = state.log.commits.find(c => c.hash === state.log.sel)
+  if (!c) return
+  state.fromLog = true
+  showCommitDiff(c.hash, c.short).then(() => setStatus('Esc returns to the log'))
+}
+
+function renderLogRefs() {
+  const s = state.status || {}, sel = $('#log-ref')
+  const remotes = new Set(s.remotes || [])
+  const names = (s.branches || []).filter(b => !remotes.has(b) && !b.endsWith('/HEAD'))
+  const key = names.join('\n')
+  if (sel.dataset.key === key) return
+  sel.dataset.key = key
+  const keep = sel.value || 'all'
+  sel.innerHTML = `<option value="all">All branches</option><option value="HEAD">Current branch</option>${names.length ? `<optgroup label="Branch">${names.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('')}</optgroup>` : ''}`
+  sel.value = [...sel.options].some(o => o.value === keep) ? keep : 'all'
+}
+
+async function loadHistory() {
+  if (state.status && !state.status.git) return
+  try {
+    const data = await api('/api/log?ref=HEAD&limit=100')
+    state.hist.commits = data.commits
+    state.hist.rows = layoutGraph(data.commits)
+  } catch { state.hist.commits = []; state.hist.rows = [] }
   renderHistory()
 }
 
 // ---------- history ----------
 function renderHistory() {
-  const s = state.status || {}
-  $('#history').innerHTML = (s.commits || []).map(c => `<div class="commit-row ${c.hash === state.expanded ? 'open' : ''}" data-hash="${esc(c.hash)}" data-short="${esc(c.short)}" title="${esc(c.subject)}\nClick to show details and the diff">
-      <div class="c-subject"><span class="tw">${c.hash === state.expanded ? '▾' : '▸'}</span>${esc(c.subject)}</div>
-      <div class="c-meta"><b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div>
-    </div>${c.hash === state.expanded ? `<div class="c-detail">${detailHTML(c.hash)}</div>` : ''}`).join('') || '<div class="list-row muted"><span>No commits yet</span></div>'
+  const { commits, rows } = state.hist, w = graphWidth(rows)
+  $('#history').innerHTML = commits.map((c, i) => `<div class="commit-row ${c.hash === state.expanded ? 'open' : ''}" data-hash="${esc(c.hash)}" data-short="${esc(c.short)}" title="${esc(c.subject)}\nClick to show details and the diff">
+      <span class="c-graph">${graphSVG(rows[i], HIST_H, w)}</span>
+      <div class="c-main"><div class="c-subject">${refChips(c.refs)}${esc(c.subject)}</div>
+      <div class="c-meta"><b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div></div>
+    </div>${c.hash === state.expanded ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(rows[i].after, w)}</span><div class="c-dbody">${detailHTML(c.hash)}</div></div>` : ''}`).join('') || '<div class="list-row muted"><span>No commits yet</span></div>'
   renderHistoryCurrent()
 }
 
@@ -932,7 +1104,7 @@ function containsHTML(hash) {
   const c = state.contains.get(hash)
   if (!c) return '<span class="faint">Finding branches…</span>'
   if (c.error) return `<span class="faint">Branches unavailable</span>`
-  const chip = (cls, n) => `<span class="ref ${cls}">${esc(n)}</span>`
+  const chip = (cls, n) => `<span class="chip ${cls}">${esc(n)}</span>`
   const n = c.branches.length + c.remotes.length
   const chips = [...c.branches.map(b => chip('loc', b)), ...c.remotes.map(b => chip('rem', b)), ...c.tags.map(t => chip('tag', t))]
   const shown = chips.slice(0, 12).join('') + (chips.length > 12 ? `<span class="faint">+${chips.length - 12} more</span>` : '')
@@ -965,13 +1137,14 @@ async function loadDetail(hash) {
   if (!state.details.has(hash)) jobs.push(api('/api/commit?hash=' + encodeURIComponent(hash)).then(d => state.details.set(hash, d), e => state.details.set(hash, { error: e.message })))
   if (!state.contains.has(hash)) jobs.push(api('/api/commit/contains?hash=' + encodeURIComponent(hash)).then(c => state.contains.set(hash, c), e => state.contains.set(hash, { error: e.message })))
   // Details and branches arrive separately; repaint as each lands so a slow --contains never blocks the files.
-  for (const j of jobs) j.then(() => { if (state.expanded === hash) paintDetail(hash) })
+  for (const j of jobs) j.then(() => paintDetail(hash))
   await Promise.all(jobs)
 }
 
 function paintDetail(hash) {
-  const el = $(`#history .commit-row[data-hash="${CSS.escape(hash)}"] + .c-detail`)
+  const el = $(`#history .commit-row[data-hash="${CSS.escape(hash)}"] + .c-detail .c-dbody`)
   if (el) el.innerHTML = detailHTML(hash)
+  if (state.log.sel === hash) paintLogDetail()
 }
 
 // Opening a commit shows its diff in Review; clicking the open row again folds it.
@@ -1262,32 +1435,50 @@ $('#theme-list').onclick = e => { const t = e.target.closest('[data-theme-id]');
 // Picking a theme re-renders the list, so a detached click target still counts as inside the picker.
 document.addEventListener('click', e => { if (!$('#theme-pop').hidden && e.target.isConnected && !e.target.closest('#theme-pop')) toggleThemes(false) })
 osLight.addEventListener('change', () => { applyTheme(); swatches.clear(); if (!$('#theme-pop').hidden) renderThemes() })
-$('#history').addEventListener('click', async e => {
-  const t = e.target
-  const hash = t.closest('.c-detail')?.previousElementSibling?.dataset.hash
-  if (t.closest('[data-copy]')) {
-    const b = t.closest('[data-copy]')
-    try {
-      await copyText(b.dataset.copy)
+// Clicks inside commit details, shared by the History tab and the Log view. Returns false if unhandled.
+function detailClick(e, hash, inLog) {
+  const t = e.target, hit = sel => t.closest(sel)
+  if (hit('[data-copy]')) {
+    const b = hit('[data-copy]')
+    copyText(b.dataset.copy).then(() => {
       b.textContent = 'Copied'
       setTimeout(() => { b.textContent = 'Copy' }, 1200)
-    } catch (err) { setStatus('Could not copy the commit id: ' + err.message, 'err') }
-  } else if (t.closest('[data-go]')) {
-    const p = t.closest('[data-go]').dataset.go
-    if ((state.status?.commits || []).some(c => c.hash === p)) { if (state.expanded !== p) selectCommit(p) }
-    else showCommitDiff(p, p.slice(0, 7))
-  } else if (t.closest('[data-cdir]')) {
-    const key = hash + ':' + t.closest('[data-cdir]').dataset.cdir
+    }, err => setStatus('Could not copy the commit id: ' + err.message, 'err'))
+  } else if (hit('[data-go]')) {
+    const p = hit('[data-go]').dataset.go
+    const list = inLog ? state.log.commits : state.hist.commits
+    if (!list.some(c => c.hash === p)) showCommitDiff(p, p.slice(0, 7))
+    else if (inLog) selectLog(p, true)
+    else if (state.expanded !== p) selectCommit(p)
+  } else if (hit('[data-cdir]')) {
+    const key = hash + ':' + hit('[data-cdir]').dataset.cdir
     state.cdirClosed.has(key) ? state.cdirClosed.delete(key) : state.cdirClosed.add(key)
     paintDetail(hash)
-  } else if (t.closest('[data-cfile]')) {
-    $('#history .tnode.active')?.classList.remove('active')
-    t.closest('[data-cfile]').classList.add('active')
-    goCommitFile(hash, t.closest('[data-cfile]').dataset.cfile)
-  } else if (t.closest('.commit-row')) {
-    selectCommit(t.closest('.commit-row').dataset.hash, t.closest('.commit-row').dataset.short)
-  }
+  } else if (hit('[data-cfile]')) {
+    document.querySelectorAll('.c-files .tnode.active').forEach(n => n.classList.remove('active'))
+    hit('[data-cfile]').classList.add('active')
+    state.fromLog = inLog
+    goCommitFile(hash, hit('[data-cfile]').dataset.cfile).then(() => { state.fromLog = inLog })
+  } else if (hit('[data-diff]')) openLogDiff()
+  else return false
+  return true
+}
+$('#history').addEventListener('click', e => {
+  const hash = e.target.closest('.c-detail')?.previousElementSibling?.dataset.hash
+  if (hash && detailClick(e, hash, false)) return
+  const row = e.target.closest('.commit-row')
+  if (row) selectCommit(row.dataset.hash, row.dataset.short)
 })
+$('#log-detail').addEventListener('click', e => detailClick(e, state.log.sel, true))
+$('#log-rows').addEventListener('click', e => { const r = e.target.closest('.lrow'); if (r) selectLog(r.dataset.hash) })
+$('#log-rows').addEventListener('dblclick', e => { if (e.target.closest('.lrow')) openLogDiff() })
+$('#log-rows').addEventListener('scroll', () => {
+  const v = $('#log-rows'), L = state.log
+  if (L.more && !L.loading && v.scrollTop + v.clientHeight > v.scrollHeight - 600) loadLog(true)
+})
+let logTimer
+for (const id of ['#log-q', '#log-author', '#log-path']) $(id).addEventListener('input', () => { clearTimeout(logTimer); logTimer = setTimeout(() => loadLog(), 250) })
+$('#log-ref').onchange = () => loadLog()
 $('#stashes').addEventListener('click', e => {
   const b = e.target.closest('button[data-ref]')
   if (b) gitAction({ action: 'stash:apply', stashRef: b.dataset.ref })
@@ -1374,8 +1565,16 @@ document.addEventListener('keydown', e => {
     return
   }
   if (e.key === 'Escape' && e.target.id === 'editor' && state.returnTo && state.returnTo === activeTab()?.path) { e.preventDefault(); backToReview(); return }
+  if (e.key === 'Escape' && state.mode === 'diff' && state.fromLog && !typing(e) && $('#help').hidden) { e.preventDefault(); setMode('log'); return }
   if (e.key === 'Escape') { $('#help').hidden = true; toggleThemes(false); if (typing(e)) e.target.blur(); return }
   if (typing(e) || e.altKey) return
+  if (state.mode === 'log') {
+    const k = { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[e.key]
+    if (k) { e.preventDefault(); stepLog(k) }
+    else if (e.key === 'Enter') { e.preventDefault(); openLogDiff() }
+    else if (e.key === '?') $('#help').hidden = false
+    return
+  }
   const vimStep = dir => { if (state.config.vim && state.mode === 'file') $('#editor').scrollBy(0, dir * 60) }
   switch (e.key) {
     case '?': $('#help').hidden = false; break

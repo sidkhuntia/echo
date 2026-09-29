@@ -71,6 +71,7 @@ try {
       <div class="seg mode-switch" role="tablist">
         <button data-mode="diff" class="on" role="tab">Review</button>
         <button data-mode="file" role="tab">Files</button>
+        <button data-mode="log" role="tab" title="Commit graph of every branch">Log</button>
       </div>
       <div class="vr"></div>
       <div id="diff-bar" class="bar-group">
@@ -94,6 +95,13 @@ try {
         <label class="toggle"><input id="ignore-ws" type="checkbox"><span class="sw"></span>Hide whitespace</label>
         <span id="diff-summary" class="summary"></span>
       </div>
+      <div id="log-bar" class="bar-group" hidden>
+        <input id="log-q" class="field log-q" placeholder="Search messages or paste a hash" autocomplete="off" spellcheck="false">
+        <select id="log-ref" class="field" title="Which history to show"><option value="all">All branches</option><option value="HEAD">Current branch</option></select>
+        <input id="log-author" class="field log-f" placeholder="Author" autocomplete="off" spellcheck="false">
+        <input id="log-path" class="field log-f" placeholder="Path" autocomplete="off" spellcheck="false">
+        <span id="log-summary" class="summary"></span>
+      </div>
       <div id="file-bar" class="bar-group" hidden>
         <div id="tabs" class="tabs"></div>
         <span id="stage-count" class="summary"></span>
@@ -104,6 +112,10 @@ try {
     <div id="banner" class="banner" hidden></div>
     <div class="stage">
       <div id="diff" class="diff-view active"></div>
+      <div id="log" class="log-view">
+        <div id="log-rows" class="log-rows" tabindex="0"></div>
+        <aside id="log-detail" class="log-detail"></aside>
+      </div>
       <div id="highlight" class="code-view"></div>
       <div id="gutter" class="gutter" aria-hidden="true"></div>
       <textarea id="editor" class="editor" spellcheck="false" wrap="off"></textarea>
@@ -171,6 +183,8 @@ try {
       <dt><kbd>e</kbd></dt><dd>Edit the current hunk in the file (or double-click a line)</dd>
       <dt><kbd>o</kbd></dt><dd>Open current file</dd>
       <dt><kbd>Esc</kbd></dt><dd>In the editor: back to the review line you came from</dd>
+      <dt><kbd>↑</kbd> <kbd>↓</kbd> <kbd>j</kbd> <kbd>k</kbd></dt><dd>In Log: previous / next commit</dd>
+      <dt><kbd>↵</kbd></dt><dd>In Log: show the commit's diff (<kbd>Esc</kbd> comes back)</dd>
       <dt><kbd>?</kbd></dt><dd>Show this card</dd>
       <dt><kbd>Esc</kbd></dt><dd>Close overlays</dd>
     </dl>

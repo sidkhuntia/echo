@@ -97,13 +97,17 @@ func TestParseNumstat(t *testing.T) {
 }
 
 func TestParseCommits(t *testing.T) {
-	got := parseCommits("abc123full\tabc123\tAda Lovelace\t1700000000\tfix:\ttabs in subject\nbad line\n")
-	if len(got) != 1 {
+	got := parseCommits("abc123full\x1fabc123\x1fp1 p2\x1fHEAD -> main, tag: v1\x1fAda Lovelace\x1f1700000000\x1ffix:\ttabs in subject\x1e\nroot\x1fr\x1f\x1f\x1fB\x1f1\x1fFirst\x1e\nbad\x1e")
+	if len(got) != 2 {
 		t.Fatalf("got %+v", got)
 	}
-	want := Commit{Hash: "abc123full", Short: "abc123", Author: "Ada Lovelace", Time: 1700000000, Subject: "fix:\ttabs in subject"}
-	if got[0] != want {
-		t.Errorf("got %+v, want %+v", got[0], want)
+	c := got[0]
+	if c.Hash != "abc123full" || c.Short != "abc123" || c.Author != "Ada Lovelace" || c.Time != 1700000000 || c.Subject != "fix:\ttabs in subject" ||
+		strings.Join(c.Parents, " ") != "p1 p2" || strings.Join(c.Refs, "|") != "HEAD -> main|tag: v1" {
+		t.Errorf("got %+v", c)
+	}
+	if r := got[1]; len(r.Parents) != 0 || len(r.Refs) != 0 || r.Subject != "First" {
+		t.Errorf("root = %+v", r)
 	}
 }
 
@@ -397,5 +401,73 @@ func TestCommitMergeFiles(t *testing.T) {
 	json.Unmarshal(request(a, http.MethodGet, "/api/commit?hash=HEAD", "").Body.Bytes(), &d)
 	if len(d.Parents) != 2 || len(d.Files) != 1 || d.Files[0].Path != "side.txt" {
 		t.Errorf("merge detail = %+v", d)
+	}
+}
+
+func TestLogEndpoint(t *testing.T) {
+	a := testRepo(t)
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		cmd.Dir = a.root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("add", ".")
+	run("commit", "-qm", "Fix (parser)")
+	run("switch", "-qc", "side")
+	os.WriteFile(filepath.Join(a.root, "side.txt"), []byte("s\n"), 0o644)
+	run("add", ".")
+	run("commit", "-qm", "Side work")
+	run("switch", "-q", "-")
+	type page struct {
+		Commits []Commit
+		More    bool
+	}
+	get := func(query string) page {
+		t.Helper()
+		w := request(a, http.MethodGet, "/api/log?"+query, "")
+		var p page
+		if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", query, w.Code, w.Body)
+		}
+		return p
+	}
+	subjects := func(p page) string {
+		var s []string
+		for _, c := range p.Commits {
+			s = append(s, c.Subject)
+		}
+		return strings.Join(s, ",")
+	}
+	if got := subjects(get("")); got != "Side work,Fix (parser),init" {
+		t.Errorf("all = %s", got)
+	}
+	if got := subjects(get("ref=HEAD")); got != "Fix (parser),init" {
+		t.Errorf("HEAD = %s", got)
+	}
+	if p := get("limit=1"); len(p.Commits) != 1 || !p.More {
+		t.Errorf("limit=1 = %+v", p)
+	}
+	if p := get("skip=2&limit=5"); subjects(p) != "init" || p.More {
+		t.Errorf("skip = %+v", p)
+	}
+	if got := subjects(get("q=fix+(")); got != "Fix (parser)" {
+		t.Errorf("literal grep = %s", got)
+	}
+	if got := subjects(get("path=side.txt")); got != "Side work" {
+		t.Errorf("path = %s", got)
+	}
+	head := get("ref=HEAD").Commits[1]
+	if p := get("q=" + head.Short); subjects(p) != "init" {
+		t.Errorf("hash jump = %s", subjects(p))
+	}
+	if refs := get("").Commits[0].Refs; strings.Join(refs, ",") != "side" {
+		t.Errorf("refs = %v", refs)
+	}
+	for _, bad := range []string{"ref=--all", "path=../x"} {
+		if w := request(a, http.MethodGet, "/api/log?"+bad, ""); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d", bad, w.Code)
+		}
 	}
 }

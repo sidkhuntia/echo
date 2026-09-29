@@ -434,32 +434,79 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 .list-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .list-row b { font: 500 11.5px var(--mono); color: var(--accent); margin-right: 6px; }
 .list-row.muted { color: var(--faint); }
-.commit-row { padding: 6px 8px; margin: 0 -8px; border-radius: var(--r); cursor: pointer; color: var(--fg-2); font-size: 12px; position: relative; }
-.commit-row .c-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.commit-row { display: flex; height: 44px; padding: 0 8px 0 4px; margin: 0 -8px; border-radius: var(--r); cursor: pointer; color: var(--fg-2); font-size: 12px; position: relative; }
+.c-graph { flex: none; position: relative; margin-right: 6px; }
+.c-graph .graph { display: block; }
+.c-graph .rail { position: absolute; inset: 0; height: 100%; }
+.c-main { flex: 1; min-width: 0; padding-top: 6px; }
+.commit-row .c-subject { display: flex; align-items: center; gap: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .commit-row .c-meta { display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 11px; color: var(--muted); min-width: 0; }
 .commit-row .c-meta b { font: 500 11px var(--mono); color: var(--accent); flex: none; }
 .commit-row .c-author { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .commit-row .c-time { margin-left: auto; flex: none; color: var(--faint); }
-.commit-row .c-subject .tw { display: inline-block; width: 12px; color: var(--faint); font-size: 9px; }
-.commit-row .c-meta { padding-left: 12px; }
 .commit-row.open { background: var(--hover); color: var(--fg); border-radius: var(--r) var(--r) 0 0; }
-.c-detail { margin: 0 -8px 6px; padding: 8px 8px 8px 20px; background: var(--hover); border-radius: 0 0 var(--r) var(--r); display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--fg-2); animation: rise .15s ease-out both; }
+.c-detail { margin: 0 -8px; padding: 0 8px 0 4px; background: var(--hover); border-radius: 0 0 var(--r) var(--r); display: flex; font-size: 12px; color: var(--fg-2); }
+.c-dbody, .ld-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.c-dbody { padding: 4px 0 10px; animation: rise .15s ease-out both; }
 .c-body { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); line-height: 1.5; }
 .c-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; color: var(--muted); font-size: 11.5px; }
 .c-line.mono, .mono { font-family: var(--mono); }
 .c-hash { font-size: 11px; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
 .c-link { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 11px; }
 .c-link:hover { text-decoration: underline; }
-.ref { font: 500 10.5px/16px var(--mono); padding: 0 5px; border-radius: 4px; white-space: nowrap; }
-.ref.loc { color: var(--add); background: var(--add-soft); }
-.ref.rem { color: var(--info); background: color-mix(in srgb, var(--info) 14%, transparent); }
-.ref.tag { color: var(--warn); background: var(--warn-soft); }
+.chip { font: 500 10.5px/16px var(--mono); padding: 0 5px; border-radius: 4px; white-space: nowrap; }
+.chip.loc { color: var(--add); background: var(--add-soft); }
+.chip.rem { color: var(--info); background: color-mix(in srgb, var(--info) 14%, transparent); }
+.chip.tag { color: var(--warn); background: var(--warn-soft); }
 .c-files-head { margin-top: 2px; padding-top: 6px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11.5px; }
 .c-files .tnode { height: 22px; font-size: 12px; }
 .c-files .tnode:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
 .c-files .tnode .st { margin-left: 0; }
 .c-files .stat { margin-left: auto; display: flex; gap: 4px; font: 11px var(--mono); }
-.c-detail .err { color: var(--del); }
+.c-detail .err, .ld-body .err { color: var(--del); }
+.chip.head { font-weight: 700; }
+.c-subject .chip { flex: none; }
+
+/* ---------- graph ---------- */
+.graph path { fill: none; stroke: var(--g); stroke-width: 1.6; }
+.graph circle { fill: var(--g); stroke: var(--g); stroke-width: 1.6; }
+.graph circle.m { fill: var(--surface); }
+.graph .g0 { --g: var(--info); }
+.graph .g1 { --g: var(--add); }
+.graph .g2 { --g: var(--accent); }
+.graph .g3 { --g: var(--del); }
+.graph .g4 { --g: var(--warn); }
+.graph .g5 { --g: color-mix(in srgb, var(--info) 50%, var(--del)); }
+.graph .g6 { --g: color-mix(in srgb, var(--add) 50%, var(--info)); }
+.graph .g7 { --g: color-mix(in srgb, var(--accent) 50%, var(--del)); }
+
+/* ---------- log ---------- */
+.log-view { position: absolute; inset: 0; display: none; }
+.log-view.active { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); }
+.log-rows { overflow: auto; outline: none; padding: 4px 0 40px; background: var(--surface); }
+.lrow { display: grid; grid-template-columns: auto minmax(0, 1fr) 150px 72px; align-items: center; gap: 10px; height: 26px; padding: 0 14px 0 8px; font-size: 12.5px; color: var(--fg-2); white-space: nowrap; cursor: default; }
+.lrow .graph { display: block; }
+.lrow:hover { background: var(--hover); }
+.lrow.sel { background: var(--accent-soft); color: var(--fg); }
+.lsub { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
+.lsub .chip { flex: none; }
+.ltext, .lauth { overflow: hidden; text-overflow: ellipsis; }
+.lauth { color: var(--muted); font-size: 12px; }
+.ltime { text-align: right; color: var(--faint); font-size: 12px; }
+.lmore { padding: 8px 16px; font-size: 12px; }
+.log-detail { border-left: 1px solid var(--line); overflow: auto; padding: 14px 16px 40px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--fg-2); }
+.ld-head { display: flex; gap: 8px; align-items: flex-start; }
+.ld-subject { flex: 1; font-weight: 600; font-size: 13.5px; line-height: 1.4; color: var(--fg); overflow-wrap: anywhere; }
+.ld-refs { display: flex; flex-wrap: wrap; gap: 4px; }
+.ld-refs:empty { display: none; }
+.log-q { width: 230px; }
+.log-f { width: 110px; }
+@media (max-width: 1100px) {
+  .log-view.active { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 45%; }
+  .log-detail { border-left: 0; border-top: 1px solid var(--line); }
+  .lrow { grid-template-columns: auto minmax(0, 1fr) 64px; }
+  .lauth { display: none; }
+}
 .commit-row:hover { background: var(--hover); color: var(--fg); }
 .commit-row.current { background: var(--accent-soft); color: var(--fg); }
 .no-git-repo .insp { opacity: .4; pointer-events: none; }
