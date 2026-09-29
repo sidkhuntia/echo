@@ -67,6 +67,8 @@ type Config struct {
 	Blame      string         `json:"blame"`
 	Panels     []string       `json:"panels"`
 	PanelSizes map[string]int `json:"panelSizes"`
+	// LSPDismissed lists language servers whose install prompt was answered "Not now".
+	LSPDismissed []string `json:"lspDismissed"`
 }
 
 type App struct {
@@ -77,6 +79,7 @@ type App struct {
 	sigs  map[string]fileSig
 	// net serializes network actions; a second fetch/pull/push while one runs is refused, not queued.
 	net sync.Mutex
+	lsp *lspManager
 }
 
 // Instance is what one echo process reports about itself, so its siblings can list it in the repo switcher.
@@ -339,6 +342,7 @@ func newApp(root string, port int) *App {
 		root:  root,
 		port:  port,
 		sigs:  map[string]fileSig{},
+		lsp:   newLSPManager(root),
 		hosts: map[string]bool{"127.0.0.1:" + p: true, "localhost:" + p: true},
 	}
 }
@@ -347,6 +351,9 @@ func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/tree", a.handleTree)
 	mux.HandleFunc("/api/file", a.handleFile)
+	mux.HandleFunc("/api/raw", a.handleRaw)
+	mux.HandleFunc("/api/lsp/tokens", a.handleLSPTokens)
+	mux.HandleFunc("/api/lsp/install", a.handleLSPInstall)
 	mux.HandleFunc("/api/git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/git", a.handleGit)
 	mux.HandleFunc("/api/diff", a.handleDiff)
@@ -500,6 +507,24 @@ func (a *App) handleFile(w http.ResponseWriter, r *http.Request) {
 		content = ""
 	}
 	writeJSON(w, map[string]any{"path": filepath.ToSlash(rel), "content": content, "hash": sig.hash, "binary": sig.binary})
+}
+
+// handleRaw serves a file's bytes, for images in rendered Markdown. The sandbox policy keeps an
+// SVG or HTML file from running script with echo's origin.
+func (a *App) handleRaw(w http.ResponseWriter, r *http.Request) {
+	path, err := a.safePath(r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeFile(w, r, path)
 }
 
 // handleFileRev returns a file as it is at HEAD or in the index, for the editor's change bars.

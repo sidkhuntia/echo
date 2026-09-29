@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The editor now highlights code using language servers installed on your Mac (gopls, TypeScript, basedpyright, rust-analyzer, clangd, SourceKit-LSP, jdtls, Ruby LSP, Lua, zls, Bash). If a file's server isn't installed, a note above the editor shows the install command with Install, Copy command, and Not now; editing never waits on it.
+- Markdown files open rendered, with headings, tables, task lists, alerts, code blocks, images from the repository, and links that open other files in echo. Switch between Preview and Edit in the file bar or with `⌘⇧V`.
 - The Changes sidebar now works like VS Code's Source Control: "Staged changes" and "Changes" are separate groups (plus "Merge changes" for conflicts), and a partly staged file appears in both with each side's own counts. Hover a row for `+` (stage), `−` (unstage), discard, and open; hover a group header for Stage all or Unstage all. Group headers fold.
 - Discard in the "Changes" group, and in the Unstaged diff view, now throws away only unstaged edits and keeps what you staged.
 - Clicking a row while the diff shows Unstaged or Staged switches to that row's side.

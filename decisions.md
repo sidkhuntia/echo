@@ -67,7 +67,7 @@ Terminal
       -> embedded vanilla JavaScript UI
         -> system git CLI
         -> local filesystem
-        -> installed language servers, later
+        -> installed language servers (highlighting)
 ```
 
 ## 4. Core Git scope
@@ -184,13 +184,17 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** switching tabs preserves unsaved edits.
 - **Accepted:** only explicit save writes to disk.
 - **Accepted:** the interface should behave like a normal editor for basic navigation and file viewing.
-- **Default:** the read-only file surface currently shows plain text until LSP highlighting is implemented.
+- **Accepted:** the editor is highlighted from language-server semantic tokens. The textarea keeps doing all editing; its text turns transparent and a layer behind it draws only the visible lines in color, so large files cost the same as small ones.
+- **Default:** while typing, lines above and below the edit keep their last tokens (shifted by the lines added or removed) and the edited lines stay plain until the server answers again, 250 ms after typing stops.
+- **Accepted:** Markdown files (`.md`, `.markdown`) open rendered, like a GitHub preview, with a Preview / Edit switch in the file bar (`⌘⇧V`). Jumping to a line from the review opens the source instead.
+- **Default:** the Markdown renderer is a small vanilla module (`web/markdown.js`) covering GitHub-flavored Markdown: headings, emphasis, code, fenced blocks, nested and task lists, quotes, `[!NOTE]`-style alerts, tables, reference links, autolinks, and front matter.
+- **Default:** raw HTML in Markdown is allowed for layout (centered logos, `<details>`), but everything is parsed inertly and passed through an allowlist of tags and attributes; scripts, event handlers, frames, SVG, and non-web URL schemes are removed, and ids and classes survive only with an `md-` prefix so a document cannot clobber echo's own elements.
+- **Default:** relative images load through `/api/raw`, which serves repository files with a `sandbox` Content-Security-Policy and `nosniff`. Remote `https` images (badges) load as in any Markdown preview. Relative links open the file in echo, `#anchors` scroll, and web links open a new browser tab.
 - **Default:** file changes are held in browser memory and marked as dirty in the tab.
 - **Accepted:** saving sends the hash of the content that was opened; the server refuses the save with `409` if the file changed on disk since, so an agent's edit is never silently overwritten.
 - **Accepted:** clean tabs reload automatically when their file changes on disk; dirty tabs show a banner offering the disk version or an explicit overwrite.
 - **Default:** tabs can be closed; closing a dirty tab asks first because the unsaved edits exist nowhere else.
 - **Default:** binary files are detected (NUL bytes in the first 8000 bytes) and not shown or saved.
-- **Deferred:** LSP syntax highlighting.
 - **Deferred:** split editor panes.
 - **Deferred:** editor undo/redo features beyond native textarea behavior.
 
@@ -208,7 +212,13 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** missing language servers must not block opening or editing a file.
 - **Default:** fall back to plain text when a language server is unavailable.
 - **Default:** do not warn loudly or prevent editing because a server is missing.
-- **Default:** do not add a language-server dependency until the editor surface is ready to consume tokens.
+- **Corrected decision:** servers cannot be discovered without knowing their command names, so echo keeps a small catalog (`lspServers` in `lsp.go`) mapping file extensions to server commands and install commands: gopls, typescript-language-server, basedpyright, rust-analyzer, clangd, sourcekit-lsp, jdtls, ruby-lsp, lua-language-server, zls, and bash-language-server. A file uses the first installed server for its extension.
+- **Default:** servers are looked up on `PATH` plus the folders installers use that a Terminal `PATH` often lacks (`~/go/bin`, `~/.cargo/bin`, `~/.local/bin`, Homebrew, Homebrew's keg-only LLVM, and the Xcode command line tools).
+- **Accepted:** when a file's server is not installed, a one-line note above the editor offers Install, Copy command, and Not now. Install runs that catalog entry's command on the server (never a command sent by the page), one at a time, with a ten-minute limit. Not now is remembered per server in the config (`lspDismissed`).
+- **Default:** echo is a minimal LSP client over stdio using only the standard library: `initialize`, full-text `didOpen`/`didChange`, and `textDocument/semanticTokens/full`. It answers the server's own requests with empty results. One server process runs per catalog entry per echo process, started on first use, rooted at the repository, and it exits with echo when its stdin closes.
+- **Default:** a server that fails to start is not retried until echo restarts or the server is installed from the prompt; a slow answer (a server still indexing) is retried.
+- **Default:** servers that classify only names (TypeScript, Pyright, clangd) leave comments, strings, and numbers uncolored, so the editor finds those lexically and lays the server's tokens over them. This runs only when a server is answering; without one the editor stays plain text.
+- **Default:** token colors come from the theme's existing tokens (accent for keywords, add for strings, warn for numbers and constants, info for types), so every theme highlights without new palette entries.
 
 ## 9. Tabs and workspace model
 
@@ -405,7 +415,6 @@ These are YAGNI decisions for v1:
 
 These are not rejected. They are waiting until the basic review loop is proven:
 
-1. LSP syntax highlighting using installed language servers.
 2. Hunk-level stage and unstage controls.
 4. Word-level diff highlighting.
 5. Native file picker and richer context menus.

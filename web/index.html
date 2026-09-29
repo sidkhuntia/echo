@@ -116,6 +116,10 @@ try {
       </div>
       <div id="file-bar" class="bar-group" hidden>
         <div id="tabs" class="tabs"></div>
+        <div id="md-switch" class="seg" role="tablist" title="Markdown: rendered or source (⌘⇧V)" hidden>
+          <button data-md="preview" role="tab">Preview</button>
+          <button data-md="edit" role="tab">Edit</button>
+        </div>
         <span id="stage-count" class="summary"></span>
         <button id="file-history" class="btn quiet sm" hidden title="Commits that changed this file, across renames">History</button>
         <button id="blame-toggle" class="btn quiet sm" hidden title="Show who last changed each line; click an entry to see its commit">Blame</button>
@@ -124,6 +128,7 @@ try {
     </div>
     <div id="file-crumb" class="crumb" hidden><span id="file-path" class="file-path"></span></div>
     <div id="banner" class="banner" hidden></div>
+    <div id="lsp-banner" class="banner note" hidden></div>
     <div class="stage">
       <div id="diff" class="diff-view active"></div>
       <div id="blame-ghost" class="blame-ghost" hidden></div>
@@ -133,6 +138,8 @@ try {
         <aside id="log-detail" class="log-detail"></aside>
       </div>
       <div id="highlight" class="code-view"></div>
+      <div id="md" class="md-view"></div>
+      <div id="syntax" class="syntax" aria-hidden="true"></div>
       <div id="gutter" class="gutter" aria-hidden="true"></div>
       <textarea id="editor" class="editor" spellcheck="false" wrap="off"></textarea>
     </div>
@@ -195,6 +202,7 @@ try {
       <dt><kbd>⌘B</kbd></dt><dd>Toggle sidebar</dd>
       <dt><kbd>⌘J</kbd></dt><dd>Toggle Git panel</dd>
       <dt><kbd>⌘S</kbd></dt><dd>Save current file</dd>
+      <dt><kbd>⌘⇧V</kbd></dt><dd>Markdown: switch Preview / Edit</dd>
       <dt><kbd>⌘↵</kbd></dt><dd>Commit (in the message box)</dd>
       <dt><kbd>n</kbd> <kbd>p</kbd></dt><dd>Next / previous changed file</dd>
       <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next / previous hunk</dd>

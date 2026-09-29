@@ -1,3 +1,5 @@
+import { renderMarkdown, sanitize } from './markdown.js'
+
 const $ = s => document.querySelector(s)
 const state = {
   tree: [], treeStale: true, tabs: [], active: -1, selected: '',
@@ -19,6 +21,8 @@ const state = {
   blameGutter: false, rangeDots: '..',
   // Changes rail groups (merge, staged, work) folded by the user.
   qClosed: new Set(),
+  // lspExt: file extensions whose language server is missing, unsupported, or failed, so they are not asked again.
+  lspExt: new Map(), installing: '',
 }
 const mod = e => e.metaKey || e.ctrlKey
 const typing = e => e.target.closest?.('input, textarea, select')
@@ -590,10 +594,11 @@ async function openFile(path, { line = 0, fromReview = false } = {}) {
   if (i < 0) {
     try {
       const data = await fetchFile(path)
-      state.tabs.push({ path, ...fromDisk(data), seen: state.changes.get(path)?.hash ?? null })
+      state.tabs.push({ path, ...fromDisk(data), seen: state.changes.get(path)?.hash ?? null, preview: isMarkdown(path) })
       i = state.tabs.length - 1
     } catch (e) { return setStatus(e.message, 'err') }
   }
+  if (line) state.tabs[i].preview = false
   state.active = i
   state.selected = path
   state.returnTo = fromReview ? path : ''
@@ -635,8 +640,12 @@ function renderTabs() {
 function renderEditor() {
   const file = state.mode === 'file'
   const tab = activeTab()
-  const editing = file && !!tab && !tab.binary
-  $('#save').hidden = !editing
+  const text = file && !!tab && !tab.binary
+  const preview = text && isMarkdown(tab.path) && tab.preview
+  const editing = text && !preview
+  $('#save').hidden = !text
+  $('#md-switch').hidden = !text || !isMarkdown(tab.path)
+  document.querySelectorAll('#md-switch button').forEach(b => b.classList.toggle('on', (b.dataset.md === 'preview') === !!preview))
   $('#file-history').hidden = !file || !tab || !state.status?.git
   $('#blame-toggle').hidden = !editing || !state.status?.git
   $('#blame-toggle').classList.toggle('on', state.blameGutter)
@@ -645,19 +654,259 @@ function renderEditor() {
   paintBlameGhost()
   $('#file-path').innerHTML = tab ? `${dirname(tab.path) ? `<i>${esc(dirname(tab.path))}/</i>` : ''}<b>${esc(basename(tab.path))}</b>` : ''
   $('#file-crumb').hidden = !file || !tab
-  $('#stage-count').textContent = editing ? `${lineCount(tab)} lines${tab.content !== tab.saved ? ' · unsaved' : ''}` : ''
-  $('#highlight').classList.toggle('active', file && !editing)
+  $('#stage-count').textContent = text ? `${lineCount(tab)} lines${tab.content !== tab.saved ? ' · unsaved' : ''}` : ''
+  $('#highlight').classList.toggle('active', file && !text)
+  $('#md').classList.toggle('active', !!preview)
+  if (preview) renderPreview(tab)
   $('#editor').classList.toggle('active', editing)
   $('#gutter').classList.toggle('active', editing)
   $('#save').disabled = !tab || tab.content === tab.saved
   if (editing && $('#editor').value !== tab.content) $('#editor').value = tab.content
-  if (file && !editing) {
+  if (file && !text) {
     $('#highlight').innerHTML = !tab
       ? `<div class="empty"><b>No file open</b>Press <kbd>⌘K</kbd> or pick a file from the sidebar.</div>`
       : `<div class="empty"><b>Binary file</b>Not shown.</div>`
   }
   renderBanner()
   refreshGutter()
+  paintSyntax()
+  if (editing) requestTokens(tab)
+  else renderLspBanner()
+}
+
+// ---------- syntax highlighting ----------
+// Colors come from an installed language server's semantic tokens. The textarea's text turns
+// transparent and a layer behind it draws the visible lines in color. Without a server the
+// editor stays plain text, and a missing server gets a one-line offer to install it.
+const extOf = p => (p.match(/\.[^./]+$/)?.[0] || '').toLowerCase()
+let tokensTimer
+
+async function requestTokens(tab, retry = 0) {
+  if (!tab || tab.binary || isMarkdown(tab.path)) return
+  if (state.lspExt.has(extOf(tab.path))) return renderLspBanner()
+  if (tab.hl?.text === tab.content || tab.hlAsked === tab.content) return
+  const text = tab.content
+  tab.hlAsked = text
+  let res
+  try { res = await post('/api/lsp/tokens', { path: tab.path, content: text }) } catch { tab.hlAsked = null; return }
+  if (res.status === 'error') {
+    tab.hlAsked = null
+    if (tab === activeTab()) setStatus(`No highlighting from ${res.server?.name}: ${res.message}`, 'err')
+    // A server that would not start stays down for this session; a slow answer is tried again later.
+    if (!/deadline|cancel/i.test(res.message || '')) state.lspExt.set(extOf(tab.path), res)
+    return
+  }
+  if (res.status !== 'ok') { state.lspExt.set(extOf(tab.path), res); return renderLspBanner() }
+  // A server still loading the workspace can answer with nothing at first.
+  if (!res.tokens?.length && text.trim() && retry < 3) {
+    setTimeout(() => { tab.hlAsked = null; if (tab === activeTab()) requestTokens(tab, retry + 1) }, 1500 * (retry + 1))
+    return
+  }
+  tab.hl = { text, src: text.split('\n'), lines: tokenLines(res) }
+  if (tab === activeTab() && state.mode === 'file') paintSyntax()
+}
+
+function tokenLines(res) {
+  const bit = name => { const k = (res.modifiers || []).indexOf(name); return k < 0 ? 0 : 1 << k }
+  const ro = bit('readonly'), lib = bit('defaultLibrary'), dep = bit('deprecated')
+  const lines = [], t = res.tokens || []
+  for (let i = 0; i + 4 < t.length; i += 5) {
+    let cls = 'tk-' + String(res.legend[t[i + 3]] || 'x').replace(/[^\w-]/g, '')
+    if (t[i + 4] & ro) cls += ' tk-readonly'
+    if (t[i + 4] & lib) cls += ' tk-lib'
+    if (t[i + 4] & dep) cls += ' tk-deprecated'
+    ;(lines[t[i]] ||= []).push([t[i + 1], t[i + 2], cls])
+  }
+  return lines
+}
+
+// While typing, tokens describe the last text sent. Lines above and below the edit keep theirs
+// (shifted by the lines added or removed); the edited lines stay plain until the next answer.
+function tokenRow(tab) {
+  const hl = tab.hl
+  if (hl.text === tab.content) return i => i
+  if (hl.mapFor !== tab.content) {
+    const a = hl.src, b = tabLines(tab)
+    let p = 0, q = 0
+    while (p < a.length && p < b.length && a[p] === b[p]) p++
+    while (q < a.length - p && q < b.length - p && a[a.length - 1 - q] === b[b.length - 1 - q]) q++
+    hl.map = { p, q, na: a.length, nb: b.length }
+    hl.mapFor = tab.content
+  }
+  const { p, q, na, nb } = hl.map
+  return i => i < p ? i : i >= nb - q ? i - nb + na : -1
+}
+
+function tabLines(tab) {
+  if (tab.linesFor !== tab.content) { tab.linesFor = tab.content; tab.lines = tab.content.split('\n') }
+  return tab.lines
+}
+
+// Some servers (TypeScript, Pyright, clangd) only classify names, so comments, strings, and numbers
+// are found lexically underneath; a server token always wins where both cover the same text.
+const LEX_NUM = String.raw`\b(?:0[xXbBoO][\da-fA-F_]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)\b`
+const LEX_STR = String.raw`"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'`
+const LEX = {
+  c: new RegExp(String.raw`(\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$))|(${LEX_STR}|` + '`' + String.raw`(?:[^` + '`' + String.raw`\\]|\\[\s\S])*` + '`' + `)|(${LEX_NUM})`, 'g'),
+  hash: new RegExp(String.raw`(#[^\n]*)|("""[\s\S]*?"""|'''[\s\S]*?'''|${LEX_STR})|(${LEX_NUM})`, 'g'),
+  lua: new RegExp(String.raw`(--\[\[[\s\S]*?\]\]|--[^\n]*)|(${LEX_STR})|(${LEX_NUM})`, 'g'),
+}
+const lexFamily = p => /\.(py|pyi|rb|sh|bash|zsh)$/i.test(p) ? 'hash' : /\.lua$/i.test(p) ? 'lua' : 'c'
+
+function lexLines(tab) {
+  if (tab.lexFor === tab.content) return tab.lex
+  const out = [], text = tab.content, re = LEX[lexFamily(tab.path)]
+  let line = 0, start = 0, m
+  re.lastIndex = 0
+  while ((m = re.exec(text))) {
+    if (!m[0]) { re.lastIndex++; continue }
+    const cls = m[1] ? 'tk-comment' : m[2] ? 'tk-string' : 'tk-number'
+    for (let nl = text.indexOf('\n', start); nl >= 0 && nl < m.index; nl = text.indexOf('\n', start)) { line++; start = nl + 1 }
+    // A token spanning lines (block comment, template string) becomes one span per line.
+    let at = m.index
+    const end = m.index + m[0].length
+    while (at < end) {
+      const nl = text.indexOf('\n', at)
+      const stop = nl < 0 || nl >= end ? end : nl
+      if (stop > at) (out[line] ||= []).push([at - start, stop - at, cls])
+      if (stop === end) break
+      line++; start = stop + 1; at = start
+    }
+  }
+  tab.lexFor = tab.content
+  tab.lex = out
+  return out
+}
+
+// lineSpans lays server tokens over lexical ones: a lexical span keeps only the parts no server
+// token covers, so `"crypto/sha256"` stays a string around gopls's package-name token.
+function lineSpans(server, lexical) {
+  if (!lexical) return server
+  if (!server) return lexical
+  const out = [...server]
+  for (const [c, n, cls] of lexical) {
+    let at = c
+    for (const [sc, sn] of server) {
+      if (sc + sn <= at || sc >= c + n) continue
+      if (sc > at) out.push([at, sc - at, cls])
+      at = Math.max(at, sc + sn)
+    }
+    if (at < c + n) out.push([at, c + n - at, cls])
+  }
+  return out.sort((a, b) => a[0] - b[0])
+}
+
+function colorLine(text, spans) {
+  if (!spans) return esc(text)
+  let h = '', at = 0
+  for (const [c, n, cls] of spans) {
+    if (c < at || c >= text.length) continue
+    const end = Math.min(text.length, c + n)
+    h += esc(text.slice(at, c)) + `<span class="${cls}">${esc(text.slice(c, end))}</span>`
+    at = end
+  }
+  return h + esc(text.slice(at))
+}
+
+// Only the visible rows are drawn, like the gutter.
+function paintSyntax() {
+  const layer = $('#syntax'), ed = $('#editor'), tab = activeTab()
+  const on = state.mode === 'file' && ed.classList.contains('active') && !!tab?.hl
+  ed.classList.toggle('hl', on)
+  layer.classList.toggle('active', on)
+  if (!on) { layer.innerHTML = ''; return }
+  const lines = tabLines(tab), row = tokenRow(tab), lex = lexLines(tab)
+  const first = Math.max(0, Math.floor((ed.scrollTop - PAD) / LINE) - 2)
+  const last = Math.min(lines.length, first + Math.ceil(ed.clientHeight / LINE) + 4)
+  let h = ''
+  for (let i = first; i < last; i++) {
+    const r = row(i)
+    h += `<div class="sl" style="top:${PAD + i * LINE - ed.scrollTop}px">${colorLine(lines[i], lineSpans(r < 0 ? null : tab.hl.lines[r], lex[i]))}</div>`
+  }
+  layer.innerHTML = `<div style="transform:translateX(${-ed.scrollLeft}px)">${h}</div>`
+}
+
+function renderLspBanner() {
+  const b = $('#lsp-banner'), tab = activeTab()
+  const info = state.mode === 'file' && tab && !tab.binary && !tab.preview && state.lspExt.get(extOf(tab.path))
+  if (!info || info.status !== 'missing' || (state.config.lspDismissed || []).includes(info.server.id)) { b.hidden = true; return }
+  const s = info.server, busy = state.installing === s.id
+  b.innerHTML = `<span class="grow">Highlighting for <b>${esc(extOf(tab.path))}</b> files uses <b>${esc(s.name)}</b>, which isn't installed. <code>${esc(s.install.join(' '))}</code></span>
+    <button class="btn sm quiet" data-lsp="dismiss" ${busy ? 'disabled' : ''}>Not now</button>
+    <button class="btn sm" data-lsp="copy">Copy command</button>
+    <button class="btn sm primary" data-lsp="install" ${state.installing ? 'disabled' : ''}>${busy ? 'Installing…' : 'Install'}</button>`
+  b.hidden = false
+}
+
+async function installServer(s) {
+  state.installing = s.id
+  renderLspBanner()
+  setStatus(`Installing ${s.name}: ${s.install.join(' ')}`)
+  try {
+    await post('/api/lsp/install', { id: s.id })
+    for (const [ext, info] of state.lspExt) if (info.server?.id === s.id) state.lspExt.delete(ext)
+    for (const t of state.tabs) t.hlAsked = null
+    setStatus(`Installed ${s.name}`, 'ok')
+  } catch (e) { setStatus(e.message, 'err') }
+  state.installing = ''
+  renderLspBanner()
+  if (state.mode === 'file') requestTokens(activeTab())
+}
+
+// ---------- markdown preview ----------
+const isMarkdown = p => /\.(md|markdown|mdown|mkd)$/i.test(p)
+
+// resolvePath joins a link in a document to a repository path; "/x" is the repository root, as on GitHub.
+function resolvePath(from, link) {
+  const parts = link.startsWith('/') ? [] : dirname(from).split('/').filter(Boolean)
+  for (const seg of link.split('/')) {
+    if (!seg || seg === '.') continue
+    if (seg === '..') { if (!parts.length) return null; parts.pop() } else parts.push(seg)
+  }
+  return parts.join('/')
+}
+
+// mdURL keeps web and in-page links, points repository images at /api/raw, and drops other schemes.
+function mdURL(tab) {
+  return (v, kind) => {
+    v = v.trim()
+    if (v.startsWith('#')) return kind === 'link' ? v : null
+    if (/^https?:/i.test(v) || (kind === 'link' && /^mailto:/i.test(v))) return v
+    if (/^[a-z][\w+.-]*:|^\/\//i.test(v)) return null
+    if (kind === 'link') return v
+    let rel
+    try { rel = resolvePath(tab.path, decodeURIComponent(v.split(/[?#]/)[0])) } catch { return null }
+    return rel ? `/api/raw?path=${encodeURIComponent(rel)}` : null
+  }
+}
+
+function renderPreview(tab) {
+  const view = $('#md')
+  if (view.shownTab === tab && view.shownText === tab.content) return
+  const same = view.shownTab === tab
+  if (view.shownTab && !same) view.shownTab.mdScroll = view.scrollTop
+  const doc = document.createElement('article')
+  doc.className = 'md-doc'
+  doc.append(...sanitize(renderMarkdown(tab.content), mdURL(tab)).childNodes)
+  view.replaceChildren(doc)
+  if (!same) view.scrollTop = tab.mdScroll || 0
+  view.shownTab = tab
+  view.shownText = tab.content
+}
+
+function setPreview(on) {
+  const tab = activeTab()
+  if (!tab || !isMarkdown(tab.path) || state.mode !== 'file') return
+  if (tab.preview && !on) tab.mdScroll = $('#md').scrollTop
+  tab.preview = on
+  renderEditor()
+  if (!on) $('#editor').focus({ preventScroll: true })
+}
+
+function scrollToAnchor(hash) {
+  let id = hash.replace(/^#/, '')
+  try { id = decodeURIComponent(id) } catch {}
+  $('#md').querySelector(`[id="${CSS.escape('md-' + id.toLowerCase())}"]`)?.scrollIntoView({ block: 'start' })
 }
 
 // ---------- change bars ----------
@@ -1750,6 +1999,34 @@ $('#tabs').addEventListener('click', e => {
   const tab = e.target.closest('.tab')
   if (tab) { state.active = +tab.dataset.i; state.returnTo = ''; setMode('file'); renderTree() }
 })
+$('#lsp-banner').addEventListener('click', async e => {
+  const act = e.target.closest('[data-lsp]')?.dataset.lsp
+  const tab = activeTab(), info = tab && state.lspExt.get(extOf(tab.path))
+  if (!act || !info?.server) return
+  const s = info.server
+  if (act === 'install') installServer(s)
+  if (act === 'copy') { await copyText(s.install.join(' ')); setStatus('Copied: ' + s.install.join(' '), 'ok') }
+  if (act === 'dismiss') {
+    state.config.lspDismissed = [...new Set([...(state.config.lspDismissed || []), s.id])]
+    renderLspBanner()
+    post('/api/config', { lspDismissed: state.config.lspDismissed }).catch(err => setStatus(err.message, 'err'))
+  }
+})
+document.querySelectorAll('#md-switch button').forEach(b => b.onclick = () => setPreview(b.dataset.md === 'preview'))
+$('#md').addEventListener('click', e => {
+  const a = e.target.closest('a[href]')
+  if (!a) return
+  e.preventDefault()
+  const href = a.getAttribute('href'), tab = activeTab()
+  if (href.startsWith('#')) return scrollToAnchor(href)
+  if (/^(https?|mailto):/i.test(href)) return window.open(href, '_blank', 'noopener')
+  const [p, hash] = href.split('#')
+  let rel
+  try { rel = resolvePath(tab.path, decodeURIComponent(p.split('?')[0])) } catch {}
+  if (!rel) return setStatus(`Can't open ${href}`, 'err')
+  openFile(rel).then(() => { if (hash && activeTab()?.path === rel) scrollToAnchor(hash) })
+})
+$('#md').addEventListener('scroll', () => { const t = activeTab(); if (t?.preview) t.mdScroll = $('#md').scrollTop })
 $('#banner').addEventListener('click', async e => {
   const act = e.target.closest('[data-banner]')?.dataset.banner
   const tab = activeTab()
@@ -1894,11 +2171,14 @@ $('#editor').addEventListener('input', () => {
   $('#save').disabled = !dirty
   $('#stage-count').textContent = `${lineCount(t)} lines${dirty ? ' · unsaved' : ''}`
   paintGutter()
+  paintSyntax()
+  clearTimeout(tokensTimer)
+  tokensTimer = setTimeout(() => { if (t === activeTab()) requestTokens(t) }, 250)
   clearTimeout(marksTimer)
   marksTimer = setTimeout(() => { if (t === activeTab()) { computeMarks(t); paintGutter() } }, 120)
 })
 let marksTimer, gutterFrame
-$('#editor').addEventListener('scroll', () => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(() => { paintGutter(); paintBlameGhost() }) })
+$('#editor').addEventListener('scroll', () => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(() => { paintGutter(); paintSyntax(); paintBlameGhost() }) })
 let ghostFrame, blameTimer
 for (const ev of ['keyup', 'mouseup', 'focus']) $('#editor').addEventListener(ev, () => { cancelAnimationFrame(ghostFrame); ghostFrame = requestAnimationFrame(paintBlameGhost) })
 $('#editor').addEventListener('input', () => {
@@ -1986,6 +2266,7 @@ document.addEventListener('keydown', e => {
     else if (k === 'j') { e.preventDefault(); toggleLedger() }
     else if (k === 'd') { e.preventDefault(); setMode(state.mode === 'diff' ? 'file' : 'diff') }
     else if (k === 's') { e.preventDefault(); saveFile() }
+    else if (k === 'v' && e.shiftKey && state.mode === 'file' && isMarkdown(activeTab()?.path || '')) { e.preventDefault(); setPreview(!activeTab().preview) }
     else if (e.key === 'Enter' && e.target.id === 'commit-message') { e.preventDefault(); $('#commit').click() }
     return
   }

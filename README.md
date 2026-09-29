@@ -37,7 +37,8 @@ It opens your browser at `http://127.0.0.1:6030`. Each process serves one reposi
 
 - collapsible folder tree with path filter
 - multi-file tabs with in-memory unsaved edits
-- plain textarea editor, always editable
+- plain textarea editor, always editable, highlighted by your installed language servers (echo offers to install a missing one)
+- Markdown files open rendered, with a Preview / Edit switch (`⌘⇧V`)
 - Changes sidebar grouped like VS Code: staged and unstaged changes (and conflicts) listed separately, with `+`/`−` to stage or unstage a file and Stage all / Unstage all on each group
 - per-file diffs including untracked files; all-changes, unstaged, staged, ref-range, and single-commit scopes
 - stacked or split diff layout
@@ -62,7 +63,7 @@ It opens your browser at `http://127.0.0.1:6030`. Each process serves one reposi
 ## Development
 
 ```sh
-gofmt -w main.go
+gofmt -w *.go
 go build ./...
 go test ./...
 ```
