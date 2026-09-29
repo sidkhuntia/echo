@@ -52,10 +52,12 @@ const netTimeout = 2 * time.Minute
 const maxUntrackedDiff = 1 << 20
 
 type Config struct {
-	Vim        bool           `json:"vim"`
-	Theme      string         `json:"theme"`
-	DiffMode   string         `json:"diffMode"`
-	GutterBase string         `json:"gutterBase"`
+	Vim        bool   `json:"vim"`
+	Theme      string `json:"theme"`
+	DiffMode   string `json:"diffMode"`
+	GutterBase string `json:"gutterBase"`
+	// Blame is "line" (show who last changed the caret line) or "off".
+	Blame      string         `json:"blame"`
 	Panels     []string       `json:"panels"`
 	PanelSizes map[string]int `json:"panelSizes"`
 }
@@ -230,6 +232,7 @@ func (a *App) routes() http.Handler {
 	// Not /api/log: ad and tracker blockers refuse requests to URLs that look like analytics logging.
 	mux.HandleFunc("/api/history", a.handleLog)
 	mux.HandleFunc("/api/commit", a.handleCommit)
+	mux.HandleFunc("/api/blame", a.handleBlame)
 	mux.HandleFunc("/api/commit/contains", a.handleContains)
 	mux.HandleFunc("/api/stream", a.handleStream)
 	mux.HandleFunc("/api/config", a.handleConfig)
@@ -845,7 +848,12 @@ func (a *App) handleDiff(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		args = append(args, from+".."+to)
+		// dots=3 compares from the merge base, like a pull request: only what "to" added since it forked.
+		dots := ".."
+		if q.Get("dots") == "3" {
+			dots = "..."
+		}
+		args = append(args, from+dots+to)
 	case "commit":
 		ref := q.Get("ref")
 		if err := validRef(ref); err != nil {
@@ -922,12 +930,20 @@ func (a *App) handleLog(w http.ResponseWriter, r *http.Request) {
 	if limit > 0 {
 		args = append(args, "-n", strconv.Itoa(limit+1))
 	}
-	args = append(append(args, revs...), "--")
-	if path := q.Get("path"); path != "" {
-		if _, err := a.safePath(path); err != nil {
+	path := q.Get("path")
+	if path != "" {
+		abs, err := a.safePath(path)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// A file's history follows it across renames; --follow only works for one file, not a folder.
+		if info, err := os.Stat(abs); err != nil || !info.IsDir() {
+			args = append(args, "--follow")
+		}
+	}
+	args = append(append(args, revs...), "--")
+	if path != "" {
 		args = append(args, path)
 	}
 	out, err := a.git(args...)
@@ -953,6 +969,97 @@ func isHex(s string) bool {
 		}
 	}
 	return true
+}
+
+// BlameCommit is one commit that last touched some lines of a file.
+type BlameCommit struct {
+	Hash    string `json:"hash"`
+	Author  string `json:"author"`
+	Time    int64  `json:"time"`
+	Summary string `json:"summary"`
+}
+
+// Blame maps each line (Lines[i] for line i+1) to an index into Commits.
+type Blame struct {
+	Commits []BlameCommit `json:"commits"`
+	Lines   []int         `json:"lines"`
+}
+
+// handleBlame blames the editor's text rather than the file on disk, so unsaved edits line up;
+// lines that are not committed come back with Git's all-zero hash.
+func (a *App) handleBlame(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if _, err := a.safePath(req.Path); err != nil || req.Path == "" {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	cmd := a.gitCmd("blame", "--porcelain", "--contents", "-", "--", req.Path)
+	cmd.Stdin = strings.NewReader(req.Content)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		// Files Git does not track have no blame; that is not an error worth showing.
+		writeJSON(w, Blame{Commits: []BlameCommit{}, Lines: []int{}})
+		return
+	}
+	writeJSON(w, parseBlame(string(out)))
+}
+
+// parseBlame reads `git blame --porcelain`: a "<hash> <orig> <final> [<count>]" header per line,
+// commit fields (author, author-time, summary) the first time a hash appears, then "\t<text>".
+func parseBlame(s string) Blame {
+	b := Blame{Commits: []BlameCommit{}, Lines: []int{}}
+	index := map[string]int{}
+	cur, final := -1, 0
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(line, "\t") {
+			for len(b.Lines) < final {
+				b.Lines = append(b.Lines, -1)
+			}
+			if cur >= 0 && final > 0 {
+				b.Lines[final-1] = cur
+			}
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) >= 3 && len(f[0]) == 40 && isHex(f[0][:8]) {
+			if _, err := strconv.Atoi(f[2]); err == nil {
+				i, ok := index[f[0]]
+				if !ok {
+					i = len(b.Commits)
+					index[f[0]] = i
+					b.Commits = append(b.Commits, BlameCommit{Hash: f[0]})
+				}
+				cur = i
+				final, _ = strconv.Atoi(f[2])
+				continue
+			}
+		}
+		if cur < 0 {
+			continue
+		}
+		c := &b.Commits[cur]
+		if v, ok := strings.CutPrefix(line, "author "); ok {
+			c.Author = v
+		} else if v, ok := strings.CutPrefix(line, "author-time "); ok {
+			c.Time, _ = strconv.ParseInt(v, 10, 64)
+		} else if v, ok := strings.CutPrefix(line, "summary "); ok {
+			c.Summary = v
+		}
+	}
+	return b
 }
 
 // resolveCommit turns a user-supplied ref into a full commit hash, so later commands never see the raw input.
@@ -1297,7 +1404,7 @@ func parseStashes(s string) []Stash {
 }
 
 func loadConfig() Config {
-	cfg := Config{DiffMode: "unified", GutterBase: "head", Panels: []string{"tree", "editor", "git"}, PanelSizes: map[string]int{}}
+	cfg := Config{DiffMode: "unified", GutterBase: "head", Blame: "line", Panels: []string{"tree", "editor", "git"}, PanelSizes: map[string]int{}}
 	data, err := os.ReadFile(configPath())
 	if err == nil {
 		_ = json.Unmarshal(data, &cfg)

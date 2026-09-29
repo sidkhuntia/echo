@@ -288,12 +288,17 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** in Log, `↑`/`↓` or `j`/`k` move the selection, `Enter` or a double-click opens the diff in Review, and `Esc` in Review returns to the Log with the selection kept.
 - **Accepted:** in Log mode the sidebar shows a Branches tree (local, remote, tags) that filters the log; the branch pill opens an IntelliJ-style branches popup with checkout, merge, rebase, compare, and delete.
 - **Default:** the sidebar has a third rail, Branches: "All branches", "Current branch", then Local, Remote, and Tags, with names grouped into folders by their `/` prefixes and local branches showing ↓/↑. Clicking an entry shows it in the Log. Entering the Log switches the sidebar to Branches and leaving it restores the previous rail. The sidebar filter box filters branches on this rail.
-- **Default:** every branch or tag has one action menu, opened from ⋯ or right-click in the sidebar or from a row in the branches popup: Checkout (a remote branch checks out its local branch, creating a tracking one if needed; a tag checks out detached), New branch from here, Merge into the current branch, Rebase the current branch onto it, Diff with the current branch (the "Compare refs" scope, tip to tip), Show in Log, and Delete for local branches.
+- **Default:** every branch or tag has one action menu, opened from ⋯ or right-click in the sidebar or from a row in the branches popup: Checkout (a remote branch checks out its local branch, creating a tracking one if needed; a tag checks out detached), New branch from here, Merge into the current branch, Rebase the current branch onto it, Compare with the current branch, Show in Log, and Delete for local branches.
 - **Default:** Delete uses `git branch -d`, so Git refuses to delete unmerged work; there is no force delete and no remote branch delete in the UI.
 - **Default:** new branch names are asked with a browser prompt, like file paths.
 - **Default:** in the branches popup, typing filters; Enter on a single match opens its menu, and Enter again runs the first action (usually Checkout).
 - **Default:** the Log adapts to its own width (a container query), not the window's: below 860px the details pane moves under the graph, and below 620px the author column hides.
 - **Accepted:** GitLens extras in scope: file history (`git log --follow` for a file), inline blame on the editor's caret line with a blame gutter toggle, and compare branches (commits only in A / only in B plus the combined diff).
+- **Default:** file history is the Log filtered to one path on the current branch, following renames (`git log --follow`, used when the path is a file rather than a folder). It opens from History in the editor's file bar or a diff file header; Enter or View diff jumps to that file in the commit.
+- **Default:** blame runs on the editor's text (`git blame --porcelain --contents -`), so unsaved edits line up and show as "not committed yet". It refetches 600 ms after typing stops and when a ref moves; stale blame is hidden rather than shown on the wrong lines.
+- **Default:** inline blame (author, age, and subject after the caret line, GitLens-style) is on by default; Settings turns it off, saved in the config as `blame` (`line` or `off`). The Blame button in the file bar adds a per-line column for the session; clicking an entry opens that commit in the Log.
+- **Default:** Compare with the current branch shows two lists in the Log, "Only in <other>" and "Only in <current>" (`a..b` and `b..a`, up to 500 each), with a swap button. "Files changed" opens the merge-base diff (`a...b`, what a pull request shows); Esc returns to the comparison.
+- **Default:** the Compare refs scope has a `..` / `...` toggle: two dots compare the tips, three dots compare from the merge base.
 - **Default:** delivery order: A) ahead/behind, Fetch, Sync/Publish; B) commit details and files; C) `/api/history`, graph, Log mode; D) branches sidebar and popup; E) file history, blame, compare.
 
 ## 13. Non-Git directories
@@ -312,7 +317,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** panel sizes should be configurable.
 - **Accepted:** panel order should be configurable.
 - **Default:** the config file is stored under the OS user config directory as `echo/config.json`.
-- **Default:** the config contains vim mode, theme, diff mode, gutter base, panel list, and panel sizes.
+- **Default:** the config contains vim mode, theme, diff mode, gutter base, inline blame, panel list, and panel sizes.
 - **Default:** panel visibility toggles are available in the v1 header.
 - **Deferred:** draggable panel resizing.
 - **Deferred:** drag-to-reorder panel layout.

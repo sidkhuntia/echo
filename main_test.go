@@ -508,3 +508,93 @@ func TestBranchActions(t *testing.T) {
 	act(`{"action":"branch:create","from":"x","to":"--orphan"}`, http.StatusBadRequest)
 	act(`{"action":"branch:delete","from":"-D"}`, http.StatusBadRequest)
 }
+
+func TestBlameFollowsEditorText(t *testing.T) {
+	a := testRepo(t)
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "-c", "user.name=Ada", "-c", "user.email=t@t"}, args...)...)
+		cmd.Dir = a.root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("checkout", "-q", "--", "keep.txt")
+	// The editor holds "one\ntwo\n" plus an unsaved third line.
+	w := request(a, http.MethodPost, "/api/blame", `{"path":"keep.txt","content":"one\ntwo\nunsaved\n"}`)
+	var b Blame
+	if err := json.Unmarshal(w.Body.Bytes(), &b); err != nil || w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if len(b.Lines) != 3 || b.Lines[0] != b.Lines[1] {
+		t.Fatalf("blame = %+v", b)
+	}
+	if c := b.Commits[b.Lines[0]]; c.Summary != "init" || c.Time == 0 {
+		t.Errorf("committed line = %+v", c)
+	}
+	if c := b.Commits[b.Lines[2]]; strings.Trim(c.Hash, "0") != "" {
+		t.Errorf("unsaved line = %+v, want the zero hash", c)
+	}
+	w = request(a, http.MethodPost, "/api/blame", `{"path":"agent.txt","content":"x\n"}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"lines":[]`) {
+		t.Errorf("untracked: %d %s", w.Code, w.Body)
+	}
+	if w := request(a, http.MethodPost, "/api/blame", `{"path":"../x","content":""}`); w.Code != http.StatusBadRequest {
+		t.Errorf("escape: %d", w.Code)
+	}
+}
+
+func TestFileHistoryFollowsRenames(t *testing.T) {
+	a := testRepo(t)
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		cmd.Dir = a.root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("stash", "-u")
+	run("mv", "keep.txt", "kept.txt")
+	run("commit", "-qm", "rename")
+	var p struct{ Commits []Commit }
+	json.Unmarshal(request(a, http.MethodGet, "/api/history?ref=HEAD&path=kept.txt", "").Body.Bytes(), &p)
+	if len(p.Commits) != 2 || p.Commits[1].Subject != "init" {
+		t.Errorf("history of kept.txt = %+v", p.Commits)
+	}
+}
+
+func TestRangeDiffFromMergeBase(t *testing.T) {
+	a := testRepo(t)
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		cmd.Dir = a.root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("stash", "-u")
+	run("branch", "side")
+	base := strings.TrimSpace(must(a.git("branch", "--show-current")))
+	os.WriteFile(filepath.Join(a.root, "main-only.txt"), []byte("m\n"), 0o644)
+	run("add", ".")
+	run("commit", "-qm", "main moves on")
+	run("switch", "-q", "side")
+	os.WriteFile(filepath.Join(a.root, "side-only.txt"), []byte("s\n"), 0o644)
+	run("add", ".")
+	run("commit", "-qm", "side work")
+	diff := func(dots string) string {
+		return request(a, http.MethodGet, "/api/diff?scope=range&from="+base+"&to=side&dots="+dots, "").Body.String()
+	}
+	if d := diff("3"); strings.Contains(d, "main-only.txt") || !strings.Contains(d, "side-only.txt") {
+		t.Errorf("three-dot diff should show only side's work: %s", d)
+	}
+	if d := diff("2"); !strings.Contains(d, "main-only.txt") {
+		t.Errorf("two-dot diff should compare tips: %s", d)
+	}
+}
+
+func must(s string, err error) string {
+	if err != nil {
+		panic(err)
+	}
+	return s
+}

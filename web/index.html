@@ -91,7 +91,7 @@ try {
         </select>
         <span id="range-inputs" class="ref-group" hidden>
           <input id="diff-from" class="field ref" placeholder="from ref" autocomplete="off" spellcheck="false">
-          <span class="faint">→</span>
+          <button id="range-dots" class="btn quiet sm dots" title="Two dots: compare the two tips. Click for three dots: only what “to” added since it forked from “from”, like a pull request.">..</button>
           <input id="diff-to" class="field ref" placeholder="to ref" autocomplete="off" spellcheck="false">
         </span>
         <input id="diff-commit" class="field ref" placeholder="commit" autocomplete="off" spellcheck="false" hidden>
@@ -112,6 +112,8 @@ try {
       <div id="file-bar" class="bar-group" hidden>
         <div id="tabs" class="tabs"></div>
         <span id="stage-count" class="summary"></span>
+        <button id="file-history" class="btn quiet sm" hidden title="Commits that changed this file, across renames">History</button>
+        <button id="blame-toggle" class="btn quiet sm" hidden title="Show who last changed each line; click an entry to see its commit">Blame</button>
         <button id="save" class="btn primary" hidden disabled>Save <kbd>⌘S</kbd></button>
       </div>
     </div>
@@ -119,7 +121,9 @@ try {
     <div id="banner" class="banner" hidden></div>
     <div class="stage">
       <div id="diff" class="diff-view active"></div>
+      <div id="blame-ghost" class="blame-ghost" hidden></div>
       <div id="log" class="log-view">
+        <div id="log-compare" class="compare" hidden></div>
         <div id="log-rows" class="log-rows" tabindex="0"></div>
         <aside id="log-detail" class="log-detail"></aside>
       </div>
@@ -204,6 +208,7 @@ try {
         <option value="index">Index — unstaged changes only</option>
       </select>
     </label>
+    <label class="check"><input id="inline-blame" type="checkbox"> Show who last changed the caret line in the editor</label>
     <label class="check"><input id="vim-mode" type="checkbox"> Vim keys in Files view (j/k scroll)</label>
   </div>
 </div>

@@ -49,7 +49,9 @@ echo-desk -port 7778 ~/code/other-project
 - title bar with incoming ↓ / outgoing ↑ commits, Fetch, and Sync (or Publish for a branch with no upstream)
 - Log view: commit graph of every branch with branch and tag labels, filters (message or hash, branch, author, path), and a details pane with the full message, containing branches, and changed files
 - History tab: the current branch's graph; commits expand to show their details and files
-- Branches: a sidebar tree (local, remote, tags) that filters the Log, and a branches popup on the branch name with checkout, new branch, merge, rebase, diff, and delete
+- file history (follows renames), inline blame on the caret line, and a blame column in the editor
+- compare two branches: commits only on each side, and the merge-base diff
+- Branches: a sidebar tree (local, remote, tags) that filters the Log, and a branches popup on the branch name with checkout, new branch, merge, rebase, compare, and delete
 - saves never overwrite a file an agent changed after you opened it
 - keys: `n`/`p` file, `j`/`k` hunk, `x` mark reviewed, `e` edit at hunk, `o` open, `⌘K` find a file
 - file create, rename, delete

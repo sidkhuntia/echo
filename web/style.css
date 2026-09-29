@@ -346,6 +346,20 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .gd { position: absolute; top: -5px; right: 2px; width: 0; height: 0; border: 5px solid transparent; border-left: 7px solid var(--del); }
 .gd.end { top: auto; bottom: -5px; }
 .gd.staged { opacity: .45; }
+/* blame: a column left of the line numbers, and a ghost note at the end of the caret line */
+.stage.blame-on .gutter, .stage.blame-on .gl { width: 230px; }
+.stage.blame-on .editor { padding-left: 242px; }
+.gbl { position: absolute; left: 10px; width: 160px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px/20px var(--sans); color: var(--muted); pointer-events: auto; cursor: pointer; }
+.gbl:hover { color: var(--accent); }
+.gbl.new { color: var(--faint); cursor: default; }
+.blame-ghost { position: absolute; z-index: 2; pointer-events: none; white-space: nowrap; max-width: 60%; overflow: hidden; text-overflow: ellipsis; font: italic 12px/20px var(--sans); color: var(--faint); }
+#blame-toggle.on { color: var(--accent); background: var(--accent-soft); }
+.dots { font-family: var(--mono); min-width: 30px; }
+.compare { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2); font-size: 12px; white-space: nowrap; }
+.compare b { font: 600 12px var(--mono); color: var(--fg); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.compare [data-cmp="diff"] { margin-left: auto; }
+.lgroup { position: sticky; top: 0; z-index: 1; display: flex; gap: 8px; align-items: baseline; padding: 8px 14px 6px; background: var(--surface); border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--fg); }
+.lgroup .faint { font-weight: 400; }
 .editor:focus { box-shadow: inset 2px 0 0 var(--accent); }
 .code-view { padding: 10px 0 40vh; counter-reset: ln; color: var(--fg-2); }
 .code-view .l { display: block; white-space: pre; padding-right: 24px; min-width: max-content; }
@@ -506,7 +520,10 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 
 /* ---------- log ---------- */
 .log-view { position: absolute; inset: 0; display: none; }
-.log-view.active { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); }
+.log-view.active { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "cmp cmp" "rows detail"; }
+.log-rows { grid-area: rows; }
+.log-detail { grid-area: detail; }
+#log-compare { grid-area: cmp; }
 .log-rows { overflow: auto; outline: none; padding: 4px 0 40px; background: var(--surface); }
 .lrow { display: grid; grid-template-columns: auto minmax(0, 1fr) 150px 72px; align-items: center; gap: 10px; height: 26px; padding: 0 14px 0 8px; font-size: 12.5px; color: var(--fg-2); white-space: nowrap; cursor: default; }
 .lrow .graph { display: block; }
@@ -528,7 +545,7 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 /* The Log sizes itself by its own width, since the sidebar and Git panel decide how much it gets. */
 .stage { container: stage / inline-size; }
 @container stage (max-width: 860px) {
-  .log-view.active { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 42%; }
+  .log-view.active { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) 42%; grid-template-areas: "cmp" "rows" "detail"; }
   .log-detail { border-left: 0; border-top: 1px solid var(--line); }
 }
 @container stage (max-width: 620px) {

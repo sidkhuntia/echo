@@ -5,6 +5,9 @@
 - The title bar shows the current branch's incoming ↓ and outgoing ↑ commits against its upstream, with Fetch (and how long ago the last fetch was) and Sync buttons. Sync pulls using your Git pull settings, then pushes if you're ahead; a branch with no upstream shows Publish instead. The branch list shows the same counts.
 - Added a Log view (Review · Files · Log): a commit graph of every branch with lanes, branch and tag labels, author, and date, loaded 200 commits at a time as you scroll. Filter by message text or a pasted hash, branch, author, or path. The details pane shows the full message, the branches that contain the commit, and its changed files; `Enter` opens the diff and `Esc` comes back.
 - The History tab draws the same graph for the current branch, and shows branch and tag labels on commits.
+- Added file history: History in the editor or on a diff header shows the commits that changed a file, following renames.
+- Added blame: who last changed the caret line appears at the end of it (Settings can turn this off), and the Blame button adds a per-line column whose entries open their commit. Blame follows unsaved edits.
+- Added Compare with current branch: the Log lists what each side has that the other lacks, and "Files changed" shows the merge-base diff, like a pull request. Compare refs gained a `..` / `...` switch.
 - Added a Branches view in the sidebar (local, remote, tags, grouped into folders) that filters the Log, and a branches popup on the branch name in the title bar. Each branch or tag has a menu: checkout, new branch from here, merge, rebase, diff with the current branch, show in Log, and delete.
 - The Log lays itself out by its own width, so the graph stays readable with both side panels open.
 - The README explains how to install echo as `echo-desk` and open any repository, several at once on different ports.

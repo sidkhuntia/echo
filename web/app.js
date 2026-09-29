@@ -15,6 +15,8 @@ const state = {
   refsKey: '', fromLog: false,
   // Branches rail: folders closed by the user, and the rail to restore when leaving the Log.
   bClosed: new Set(), railBeforeLog: '',
+  // blameGutter: the per-line blame column (session only). rangeDots: '..' tip to tip, '...' from the merge base.
+  blameGutter: false, rangeDots: '..',
 }
 const mod = e => e.metaKey || e.ctrlKey
 const typing = e => e.target.closest?.('input, textarea, select')
@@ -324,7 +326,7 @@ async function loadDiff() {
   if (sc === 'range') {
     const from = $('#diff-from').value.trim(), to = $('#diff-to').value.trim()
     if (!from || !to) return diffMessage('Compare two refs', 'Type a “from” and “to” ref — a branch, tag, or commit.')
-    params.set('from', from); params.set('to', to)
+    params.set('from', from); params.set('to', to); params.set('dots', state.rangeDots === '...' ? '3' : '2')
   }
   if (sc === 'commit') {
     const ref = $('#diff-commit').value.trim()
@@ -405,6 +407,7 @@ function fileHTML(f, i) {
   const proof = c ? `<button class="proof rv-${rv} ${state.justStamped === f.path ? 'just' : ''}" data-act="review" title="${rv === 'stale' ? 'Changed since you reviewed it · ' : ''}x"><span class="tick"></span>${label}</button>` : ''
   const acts = [
     !f.isDeleted ? '<button class="btn quiet sm" data-act="open" title="o">Open</button>' : '',
+    state.status?.git ? '<button class="btn quiet sm" data-act="history" title="Commits that changed this file">History</button>' : '',
     c ? `<button class="btn quiet sm" data-act="stage">${fullyStaged(c) ? 'Unstage' : 'Stage'}</button><button class="btn quiet sm" data-act="discard">Discard</button>` : '',
   ].join('')
   let body = ''
@@ -641,6 +644,12 @@ function renderEditor() {
   const tab = activeTab()
   const editing = file && !!tab && !tab.binary
   $('#save').hidden = !editing
+  $('#file-history').hidden = !file || !tab || !state.status?.git
+  $('#blame-toggle').hidden = !editing || !state.status?.git
+  $('#blame-toggle').classList.toggle('on', state.blameGutter)
+  $('.stage').classList.toggle('blame-on', editing && state.blameGutter)
+  if (editing) ensureBlame(tab)
+  paintBlameGhost()
   $('#file-path').innerHTML = tab ? `${dirname(tab.path) ? `<i>${esc(dirname(tab.path))}/</i>` : ''}<b>${esc(basename(tab.path))}</b>` : ''
   $('#file-crumb').hidden = !file || !tab
   $('#stage-count').textContent = editing ? `${lineCount(tab)} lines${tab.content !== tab.saved ? ' · unsaved' : ''}` : ''
@@ -791,10 +800,18 @@ function paintGutter() {
   const n = lineCount(tab), mk = tab.marks
   const first = Math.max(0, Math.floor((ed.scrollTop - PAD) / LINE) - 2)
   const last = Math.min(n, first + Math.ceil(ed.clientHeight / LINE) + 4)
+  // The blame column labels the first line of each run of lines from the same commit.
+  const bl = state.blameGutter && freshBlame(tab)
   let h = ''
   for (let i = first; i < last; i++) {
     const kind = mk?.kinds[i], del = mk?.dels.get(i), end = i === n - 1 ? mk?.dels.get(n) : undefined
-    h += `<div class="gl" style="top:${PAD + i * LINE - ed.scrollTop}px">${i + 1}`
+    let who = ''
+    if (bl) {
+      const k = bl.lines[i], c = bl.commits[k]
+      if (c && (i === first || bl.lines[i - 1] !== k)) who = uncommitted(c) ? '<span class="gbl new">Not committed yet</span>'
+        : `<span class="gbl" data-hash="${esc(c.hash)}" title="${esc(c.summary)}\n${esc(c.author)}, ${esc(new Date(c.time * 1000).toLocaleString())}\n${esc(c.hash.slice(0, 7))} · click to see the commit">${esc(c.author)} · ${ago(c.time).replace(' ago', '')}</span>`
+    }
+    h += `<div class="gl" style="top:${PAD + i * LINE - ed.scrollTop}px">${who}${i + 1}`
       + (kind ? `<i class="gb ${kind}${mk.staged[i] ? ' staged' : ''}" title="${kind === 'add' ? 'Added' : 'Modified'}${mk.staged[i] ? ', staged' : ''}"></i>` : '')
       + (del !== undefined ? `<i class="gd${del ? ' staged' : ''}"></i>` : '')
       + (end !== undefined ? `<i class="gd end${end ? ' staged' : ''}"></i>` : '')
@@ -930,6 +947,7 @@ function renderGit() {
     state.contains.clear()
     loadHistory()
     if (state.log.loaded) loadLog()
+    if (state.mode === 'file') ensureBlame(activeTab())
   }
   renderLogRefs()
   renderBranches()
@@ -998,7 +1016,7 @@ function refActions(ref, kind) {
   if (!isCur && cur) {
     a.push([`Merge into ${cur}`, { action: 'merge', from: ref }])
     a.push([`Rebase ${cur} onto this`, { action: 'rebase', from: ref }])
-    a.push([`Diff ${cur} → this`, 'diff'])
+    a.push([`Compare with ${cur}`, 'compare'])
   }
   a.push(['Show in Log', 'log'])
   if (kind === 'local' && !isCur) a.push(['Delete', { action: 'branch:delete', from: ref }, 'danger'])
@@ -1029,14 +1047,8 @@ async function runRefAction(i) {
   if (what === 'new') {
     const name = prompt(`New branch from ${ref}`, '')?.trim()
     if (name) await gitAction({ action: 'branch:create', from: name, to: ref })
-  } else if (what === 'diff') {
-    $('#diff-scope').value = 'range'
-    $('#diff-from').value = state.status?.branch || 'HEAD'
-    $('#diff-to').value = ref
-    syncScopeInputs()
-    await setMode('diff')
-    $('#diff').scrollTop = 0
-    loadDiff()
+  } else if (what === 'compare') {
+    startCompare(state.status.branch, ref)
   } else if (what === 'log') {
     await setMode('log')
     setLogRef(ref)
@@ -1045,6 +1057,7 @@ async function runRefAction(i) {
 
 // setLogRef filters the Log to one ref; tags are not in the branch list, so they get an option on demand.
 function setLogRef(ref) {
+  state.log.compare = null
   const sel = $('#log-ref')
   if (![...sel.options].some(o => o.value === ref)) sel.add(new Option(ref, ref))
   sel.value = ref
@@ -1152,7 +1165,22 @@ async function loadLog(append = false) {
   }
   const seq = ++L.seq
   L.loading = true
+  renderCompareBar()
   try {
+    if (L.compare) {
+      // Two lists, each laid out on its own: what b has that a lacks, then the reverse.
+      const { a, b } = L.compare
+      const side = ref => { const p = new URLSearchParams(params); p.delete('skip'); p.set('limit', '500'); p.set('ref', ref); return api('/api/history?' + p) }
+      const [onlyB, onlyA] = await Promise.all([side(`${a}..${b}`), side(`${b}..${a}`)])
+      if (seq !== L.seq) return
+      L.groups = [{ title: `Only in ${b}`, n: onlyB.commits.length, more: onlyB.more }, { title: `Only in ${a}`, n: onlyA.commits.length, more: onlyA.more }]
+      L.commits = onlyB.commits.concat(onlyA.commits)
+      L.rows = layoutGraph(onlyB.commits).concat(layoutGraph(onlyA.commits))
+      L.more = false
+      $('#log-rows').scrollTop = 0
+      return renderLog()
+    }
+    L.groups = null
     const data = await api('/api/history?' + params)
     if (seq !== L.seq) return
     L.commits = append ? L.commits.concat(data.commits) : data.commits
@@ -1168,17 +1196,20 @@ async function loadLog(append = false) {
 function renderLog() {
   const L = state.log, w = graphWidth(L.rows), view = $('#log-rows')
   $('#log-summary').textContent = L.commits.length ? `${L.commits.length}${L.more ? '+' : ''} commits` : ''
-  if (!L.commits.length) {
+  if (!L.commits.length && !L.groups) {
     view.innerHTML = '<div class="empty"><b>No commits match</b><span>Clear a filter to see more history.</span></div>'
     $('#log-detail').innerHTML = ''
     return
   }
   const top = view.scrollTop
-  view.innerHTML = L.commits.map((c, i) => `<div class="lrow ${c.hash === L.sel ? 'sel' : ''}" data-hash="${esc(c.hash)}">${graphSVG(L.rows[i], LOG_H, w)}<span class="lsub" title="${esc(c.subject)}">${refChips(c.refs)}<span class="ltext">${esc(c.subject)}</span></span><span class="lauth">${esc(c.author)}</span><span class="ltime" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div>`).join('')
-    + (L.more ? '<div class="lmore faint">Loading more…</div>' : '')
+  const rowsHTML = (from, to) => L.commits.slice(from, to).map((c, k) => { const i = from + k; return `<div class="lrow ${c.hash === L.sel ? 'sel' : ''}" data-hash="${esc(c.hash)}">${graphSVG(L.rows[i], LOG_H, w)}<span class="lsub" title="${esc(c.subject)}">${refChips(c.refs)}<span class="ltext">${esc(c.subject)}</span></span><span class="lauth">${esc(c.author)}</span><span class="ltime" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div>` }).join('')
+  const head = g => `<div class="lgroup">${esc(g.title)}<span class="faint">${g.n}${g.more ? '+' : ''} commit${g.n === 1 ? '' : 's'}</span></div>${g.n ? '' : '<div class="lmore faint">Nothing — the other side already has all of it.</div>'}`
+  view.innerHTML = L.groups ? head(L.groups[0]) + rowsHTML(0, L.groups[0].n) + head(L.groups[1]) + rowsHTML(L.groups[0].n)
+    : rowsHTML(0) + (L.more ? '<div class="lmore faint">Loading more…</div>' : '')
   view.scrollTop = top
   if (L.commits.some(c => c.hash === L.sel)) paintLogDetail()
-  else selectLog(L.commits[0].hash)
+  else if (L.commits.length) selectLog(L.commits[0].hash)
+  else { L.sel = ''; $('#log-detail').innerHTML = '' }
 }
 
 function selectLog(hash, scroll = false) {
@@ -1208,7 +1239,9 @@ function openLogDiff() {
   const c = state.log.commits.find(c => c.hash === state.log.sel)
   if (!c) return
   state.fromLog = true
-  showCommitDiff(c.hash, c.short).then(() => setStatus('Esc returns to the log'))
+  const path = $('#log-path').value.trim()
+  const shown = path ? goCommitFile(c.hash, path) : showCommitDiff(c.hash, c.short)
+  shown.then(() => { state.fromLog = true; setStatus('Esc returns to the log') })
 }
 
 function renderLogRefs() {
@@ -1375,6 +1408,98 @@ function counts(b) {
   if (!b || !b.upstream) return ''
   if (b.gone) return '  (gone)'
   return (b.behind ? `  ↓${b.behind}` : '') + (b.ahead ? `  ↑${b.ahead}` : '')
+}
+
+// ---------- blame ----------
+const blameInline = () => state.config.blame !== 'off'
+const uncommitted = c => !c.hash.replace(/0/g, '')
+// Blame is for the text in the editor; once you type, it is stale until the next fetch lands.
+const freshBlame = tab => tab?.blame && tab.blame.content === tab.content && tab.blame.key === state.refsKey ? tab.blame.data : null
+
+async function ensureBlame(tab) {
+  if (!tab || tab.binary || !state.status?.git || (!blameInline() && !state.blameGutter) || freshBlame(tab)) return
+  const content = tab.content, key = state.refsKey, seq = tab.blameSeq = (tab.blameSeq || 0) + 1
+  try {
+    const data = await post('/api/blame', { path: tab.path, content: tab.eol === '\r\n' ? content.replace(/\n/g, '\r\n') : content })
+    if (seq !== tab.blameSeq) return
+    tab.blame = { content, key, data }
+  } catch { return }
+  if (tab === activeTab()) { paintGutter(); paintBlameGhost() }
+}
+
+let charWidth = 0
+function paintBlameGhost() {
+  const g = $('#blame-ghost'), ed = $('#editor'), tab = activeTab()
+  const b = state.mode === 'file' && blameInline() && ed.classList.contains('active') && freshBlame(tab)
+  if (!b) { g.hidden = true; return }
+  const text = ed.value, pos = ed.selectionEnd
+  let line = 1
+  for (let k = text.indexOf('\n'); k >= 0 && k < pos; k = text.indexOf('\n', k + 1)) line++
+  const c = b.commits[b.lines[line - 1]]
+  const top = PAD + (line - 1) * LINE - ed.scrollTop
+  if (!c || top < 0 || top > ed.clientHeight - LINE) { g.hidden = true; return }
+  const start = text.lastIndexOf('\n', pos - 1) + 1, nl = text.indexOf('\n', pos)
+  const cols = [...text.slice(start, nl < 0 ? undefined : nl)].reduce((n, ch) => ch === '\t' ? n + 4 - n % 4 : n + 1, 0)
+  if (!charWidth) { const cx = document.createElement('canvas').getContext('2d'); cx.font = getComputedStyle(ed).font; charWidth = cx.measureText('0000000000').width / 10 }
+  g.textContent = uncommitted(c) ? 'You · not committed yet' : `${c.author}, ${ago(c.time)} · ${c.summary}`
+  g.style.top = top + 'px'
+  g.style.left = parseFloat(getComputedStyle(ed).paddingLeft) + cols * charWidth + 36 - ed.scrollLeft + 'px'
+  g.hidden = false
+}
+
+// showCommitInLog opens the Log on exactly one commit, the way pasting its hash into search does.
+async function showCommitInLog(hash) {
+  state.log.compare = null
+  $('#log-q').value = hash.slice(0, 12)
+  $('#log-author').value = ''; $('#log-path').value = ''
+  await setMode('log')
+  loadLog()
+}
+
+async function openFileHistory(path) {
+  state.log.compare = null
+  $('#log-q').value = ''; $('#log-author').value = ''
+  $('#log-path').value = path
+  $('#log-ref').value = 'HEAD'
+  await setMode('log')
+  loadLog()
+  setStatus(`History of ${path} on the current branch`)
+}
+
+// ---------- compare ----------
+// Comparing a with b lists what each side has that the other lacks, like IntelliJ's "Compare with".
+async function startCompare(a, b) {
+  state.log.compare = { a, b }
+  $('#log-q').value = ''; $('#log-author').value = ''; $('#log-path').value = ''
+  await setMode('log')
+  loadLog()
+}
+
+function renderCompareBar() {
+  const c = state.log.compare
+  $('#log-compare').hidden = !c
+  $('#log-ref').hidden = !!c
+  if (c) $('#log-compare').innerHTML = `<span class="faint">Compare</span><b title="${esc(c.a)}">${esc(c.a)}</b><button class="btn quiet sm" data-cmp="swap" title="Swap the two sides">⇄</button><b title="${esc(c.b)}">${esc(c.b)}</b>
+    <button class="btn sm" data-cmp="diff" title="Files ${esc(c.b)} changed since it forked from ${esc(c.a)} (${esc(c.a)}...${esc(c.b)})">Files changed</button><button class="btn quiet sm" data-cmp="close" title="Stop comparing">×</button>`
+}
+
+async function openCompareDiff() {
+  const { a, b } = state.log.compare
+  $('#diff-scope').value = 'range'
+  $('#diff-from').value = a
+  $('#diff-to').value = b
+  setRangeDots('...')
+  syncScopeInputs()
+  state.fromLog = true
+  await setMode('diff')
+  $('#diff').scrollTop = 0
+  await loadDiff()
+  setStatus(`Files changed on ${b} since it forked from ${a} — Esc returns to the comparison`)
+}
+
+function setRangeDots(d) {
+  state.rangeDots = d
+  $('#range-dots').textContent = d
 }
 
 // The async Clipboard API can be denied (embedded browsers, permissions); the textarea path still works on a click.
@@ -1568,6 +1693,7 @@ $('#diff').addEventListener('click', e => {
   else if (act === 'open') openFile(f.path, { fromReview: true })
   else if (act === 'stage') stageToggle(f.path)
   else if (act === 'discard') gitAction({ action: 'discard', paths: [f.path] })
+  else if (act === 'history') openFileHistory(f.path)
   else if (e.target.closest('.dfile-head')) toggleFold(i)
 })
 $('#diff').addEventListener('dblclick', e => {
@@ -1714,7 +1840,30 @@ $('#editor').addEventListener('input', () => {
   marksTimer = setTimeout(() => { if (t === activeTab()) { computeMarks(t); paintGutter() } }, 120)
 })
 let marksTimer, gutterFrame
-$('#editor').addEventListener('scroll', () => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(paintGutter) })
+$('#editor').addEventListener('scroll', () => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(() => { paintGutter(); paintBlameGhost() }) })
+let ghostFrame, blameTimer
+for (const ev of ['keyup', 'mouseup', 'focus']) $('#editor').addEventListener(ev, () => { cancelAnimationFrame(ghostFrame); ghostFrame = requestAnimationFrame(paintBlameGhost) })
+$('#editor').addEventListener('input', () => {
+  $('#blame-ghost').hidden = true
+  clearTimeout(blameTimer)
+  blameTimer = setTimeout(() => ensureBlame(activeTab()), 600)
+})
+$('#gutter').addEventListener('click', e => { const b = e.target.closest('.gbl[data-hash]'); if (b) showCommitInLog(b.dataset.hash) })
+$('#file-history').onclick = () => { const t = activeTab(); if (t) openFileHistory(t.path) }
+$('#blame-toggle').onclick = () => { state.blameGutter = !state.blameGutter; renderEditor(); paintGutter() }
+$('#range-dots').onclick = () => { setRangeDots(state.rangeDots === '..' ? '...' : '..'); loadDiff() }
+$('#log-compare').addEventListener('click', e => {
+  const act = e.target.closest('[data-cmp]')?.dataset.cmp, c = state.log.compare
+  if (!act || !c) return
+  if (act === 'swap') { state.log.compare = { a: c.b, b: c.a }; loadLog() }
+  else if (act === 'diff') openCompareDiff()
+  else { state.log.compare = null; loadLog() }
+})
+$('#inline-blame').onchange = async () => {
+  state.config.blame = $('#inline-blame').checked ? 'line' : 'off'
+  renderEditor()
+  try { await post('/api/config', state.config); setStatus('Settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
+}
 $('#new-file').onclick = () => fileAction('create')
 $('#rename-file').onclick = () => fileAction('rename')
 $('#delete-file').onclick = () => fileAction('delete')
@@ -1815,6 +1964,7 @@ async function loadConfig() {
   try { state.config = await api('/api/config'); $('#vim-mode').checked = !!state.config.vim } catch {}
   if (state.config.diffMode !== 'split') state.config.diffMode = 'unified'
   $('#gutter-base').value = gutterBase()
+  $('#inline-blame').checked = blameInline()
   document.querySelectorAll('.layout-switch button').forEach(b => b.classList.toggle('on', b.dataset.layout === state.config.diffMode))
   if (state.diffFiles.length) renderDiff()
   applyTheme()
