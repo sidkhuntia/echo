@@ -29,6 +29,8 @@ type lspServer struct {
 	// Langs maps a file extension to the LSP languageId the server expects.
 	Langs map[string]string `json:"-"`
 	Init  any               `json:"-"`
+	// Env returns extra environment for the server process, such as a JAVA_HOME it can run on.
+	Env func() []string `json:"-"`
 }
 
 // lspServers is the catalog, in preference order: a file uses the first installed server that
@@ -47,7 +49,7 @@ var lspServers = []lspServer{
 	{ID: "sourcekit-lsp", Name: "SourceKit-LSP", Cmd: []string{"sourcekit-lsp"}, Install: []string{"xcode-select", "--install"},
 		Langs: map[string]string{".swift": "swift"}},
 	{ID: "jdtls", Name: "Eclipse JDT language server", Cmd: []string{"jdtls"}, Install: []string{"brew", "install", "jdtls"},
-		Langs: map[string]string{".java": "java"}},
+		Langs: map[string]string{".java": "java"}, Env: func() []string { return javaHomeEnv(21) }},
 	{ID: "ruby-lsp", Name: "Ruby LSP", Cmd: []string{"ruby-lsp"}, Install: []string{"gem", "install", "--user-install", "ruby-lsp"},
 		Langs: map[string]string{".rb": "ruby"}},
 	{ID: "lua-language-server", Name: "Lua language server", Cmd: []string{"lua-language-server"}, Install: []string{"brew", "install", "lua-language-server"},
@@ -116,14 +118,60 @@ func lookPath(name string) (string, bool) {
 }
 
 // lspEnv runs servers and installers with the wider PATH, so a server can find its own runtime (node, go).
-func lspEnv() []string {
+// extra entries (KEY=value) replace inherited ones.
+func lspEnv(extra ...string) []string {
+	skip := map[string]bool{"PATH": true}
+	for _, kv := range extra {
+		k, _, _ := strings.Cut(kv, "=")
+		skip[k] = true
+	}
 	env := []string{}
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "PATH=") {
+		if k, _, _ := strings.Cut(kv, "="); !skip[k] {
 			env = append(env, kv)
 		}
 	}
-	return append(env, "PATH="+searchPath())
+	return append(append(env, extra...), "PATH="+searchPath())
+}
+
+// javaHomeEnv finds a JDK of at least version min when the inherited JAVA_HOME is older. Shells
+// often pin JAVA_HOME to a project's JDK (17, say) while jdtls itself needs 21, so only the server
+// process gets the newer one; the project still builds against whatever it configures.
+func javaHomeEnv(min int) []string {
+	if cur := os.Getenv("JAVA_HOME"); cur == "" || javaMajor(cur) >= min {
+		return nil
+	}
+	if out, err := exec.Command("/usr/libexec/java_home", "-v", fmt.Sprintf("%d+", min)).Output(); err == nil {
+		if home := strings.TrimSpace(string(out)); javaMajor(home) >= min {
+			return []string{"JAVA_HOME=" + home}
+		}
+	}
+	for _, home := range []string{"/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home", "/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home"} {
+		if javaMajor(home) >= min {
+			return []string{"JAVA_HOME=" + home}
+		}
+	}
+	return nil
+}
+
+// javaMajor reads a JDK's major version from its release file (JAVA_VERSION="17.0.2"), or 0.
+func javaMajor(home string) int {
+	data, err := os.ReadFile(filepath.Join(home, "release"))
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if v, ok := strings.CutPrefix(line, "JAVA_VERSION="); ok {
+			v = strings.Trim(strings.TrimSpace(v), `"`)
+			v = strings.TrimPrefix(v, "1.") // 1.8 is Java 8
+			if f := strings.FieldsFunc(v, func(r rune) bool { return r < '0' || r > '9' }); len(f) > 0 {
+				n, _ := strconv.Atoi(f[0])
+				return n
+			}
+			return 0
+		}
+	}
+	return 0
 }
 
 // lspClient is one running language server for this repository.
@@ -226,7 +274,11 @@ func startLSP(root string, s lspServer) (*lspClient, error) {
 	}
 	cmd := exec.Command(bin, s.Cmd[1:]...)
 	cmd.Dir = root
-	cmd.Env = lspEnv()
+	var extra []string
+	if s.Env != nil {
+		extra = s.Env()
+	}
+	cmd.Env = lspEnv(extra...)
 	stderr := &tail{}
 	cmd.Stderr = stderr
 	in, err := cmd.StdinPipe()
@@ -274,8 +326,10 @@ func startLSP(root string, s lspServer) (*lspClient, error) {
 	res, err := c.call(ctx, "initialize", init)
 	if err != nil {
 		c.kill()
+		// The last stderr line is usually the reason ("jdtls requires at least Java 21"); lead with it.
 		if why := stderr.String(); why != "" {
-			return nil, fmt.Errorf("%s did not start: %v\n%s", s.Name, err, why)
+			lines := strings.Split(why, "\n")
+			return nil, fmt.Errorf("%s did not start: %s\n%s", s.Name, strings.TrimSpace(lines[len(lines)-1]), why)
 		}
 		return nil, fmt.Errorf("%s did not start: %v", s.Name, err)
 	}

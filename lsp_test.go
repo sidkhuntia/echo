@@ -123,3 +123,34 @@ func TestLSPStatusEndpoint(t *testing.T) {
 		t.Error("restart kept the failed start")
 	}
 }
+
+func TestJavaHomeEnv(t *testing.T) {
+	dir := t.TempDir()
+	jdk := func(name, version string) string {
+		home := filepath.Join(dir, name)
+		os.MkdirAll(home, 0o755)
+		os.WriteFile(filepath.Join(home, "release"), []byte("IMPLEMENTOR=\"x\"\nJAVA_VERSION=\""+version+"\"\n"), 0o644)
+		return home
+	}
+	if got := javaMajor(jdk("17", "17.0.18")); got != 17 {
+		t.Errorf("javaMajor(17) = %d", got)
+	}
+	if got := javaMajor(jdk("8", "1.8.0_392")); got != 8 {
+		t.Errorf("javaMajor(8) = %d", got)
+	}
+	if got := javaMajor(jdk("bad", "")); got != 0 {
+		t.Errorf("javaMajor(empty) = %d", got)
+	}
+	t.Setenv("JAVA_HOME", jdk("21", "21.0.1"))
+	if env := javaHomeEnv(21); env != nil {
+		t.Errorf("a new enough JAVA_HOME was replaced: %v", env)
+	}
+	t.Setenv("JAVA_HOME", filepath.Join(dir, "17"))
+	env := javaHomeEnv(21)
+	if _, err := os.Stat("/usr/libexec/java_home"); err == nil && len(env) == 1 && javaMajor(strings.TrimPrefix(env[0], "JAVA_HOME=")) < 21 {
+		t.Errorf("javaHomeEnv picked an old JDK: %v", env)
+	}
+	if got := lspEnv("JAVA_HOME=/x"); strings.Count(strings.Join(got, "\n"), "JAVA_HOME=") != 1 {
+		t.Errorf("lspEnv kept the inherited JAVA_HOME: %v", got)
+	}
+}
