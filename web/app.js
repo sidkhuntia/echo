@@ -7,6 +7,8 @@ const state = {
   // diffStale: the diff missed an update while Files mode was showing; it reloads on the way back to Review.
   diffStale: false, diffReady: Promise.resolve(), diffScroll: 0,
   palette: { items: [], sel: 0 },
+  // History: the expanded commit, cached details (commits never change), and folders closed per commit.
+  expanded: '', details: new Map(), contains: new Map(), cdirClosed: new Set(),
 }
 const mod = e => e.metaKey || e.ctrlKey
 const typing = e => e.target.closest?.('input, textarea, select')
@@ -348,6 +350,21 @@ function renderDiff() {
   state.justStamped = ''
   state.current = -1
   updateCurrent()
+}
+
+function rerenderFile(i) {
+  const sec = $(`#diff .dfile[data-i="${i}"]`)
+  if (!sec) return
+  sec.outerHTML = fileHTML(state.diffFiles[i], i)
+  state.justStamped = ''
+  state.current = -1
+  updateCurrent()
+}
+
+function toggleFold(i) {
+  const f = state.diffFiles[i]
+  state.folded.set(f.path, !isFolded(f))
+  rerenderFile(i)
 }
 
 // Five blocks, GitHub-style, showing the add/delete balance of a file.
@@ -880,11 +897,112 @@ function renderGit() {
   const staged = [...state.changes.values()].filter(c => c.staged).length
   $('#staged-count').textContent = staged ? `${staged} staged` : 'Nothing staged'
   $('#stashes').innerHTML = (s.stashes || []).map(x => `<div class="list-row"><span title="${esc(x.subject)}"><b>${esc(x.ref)}</b> ${esc(x.subject)}</span><button class="btn sm" data-ref="${esc(x.ref)}">Apply</button></div>`).join('') || '<div class="list-row muted"><span>No stashes</span></div>'
-  $('#history').innerHTML = (s.commits || []).map(c => `<div class="commit-row" data-hash="${esc(c.hash)}" data-short="${esc(c.short)}" title="${esc(c.subject)}\n${esc(c.hash)}\nClick to copy the commit id and show its diff">
-      <div class="c-subject">${esc(c.subject)}</div>
+  // Branches move, so "contains" is refetched after any status change; details are immutable and stay cached.
+  state.contains.clear()
+  renderHistory()
+}
+
+// ---------- history ----------
+function renderHistory() {
+  const s = state.status || {}
+  $('#history').innerHTML = (s.commits || []).map(c => `<div class="commit-row ${c.hash === state.expanded ? 'open' : ''}" data-hash="${esc(c.hash)}" data-short="${esc(c.short)}" title="${esc(c.subject)}\nClick to show details and the diff">
+      <div class="c-subject"><span class="tw">${c.hash === state.expanded ? '▾' : '▸'}</span>${esc(c.subject)}</div>
       <div class="c-meta"><b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div>
-    </div>`).join('') || '<div class="list-row muted"><span>No commits yet</span></div>'
+    </div>${c.hash === state.expanded ? `<div class="c-detail">${detailHTML(c.hash)}</div>` : ''}`).join('') || '<div class="list-row muted"><span>No commits yet</span></div>'
   renderHistoryCurrent()
+}
+
+function detailHTML(hash) {
+  const d = state.details.get(hash)
+  if (!d) return '<div class="faint">Loading…</div>'
+  if (d.error) return `<div class="err">${esc(d.error)}</div>`
+  const when = t => `<span title="${esc(new Date(t * 1000).toLocaleString())}">${ago(t)}</span>`
+  const by = d.committer && d.committer !== d.author ? ` · committed by ${esc(d.committer)} ${when(d.commitTime)}` : ''
+  const parents = d.parents.map(p => `<button class="c-link mono" data-go="${esc(p)}" title="Show parent ${esc(p)}">${esc(p.slice(0, 7))}</button>`).join(' ')
+  return `${d.body ? `<div class="c-body">${esc(d.body)}</div>` : ''}
+    <div class="c-line"><span title="${esc(d.authorEmail)}">${esc(d.author)}</span> ${when(d.authorTime)}${by}</div>
+    <div class="c-line mono"><span class="c-hash">${esc(d.hash)}</span><button class="btn quiet sm c-copy" data-copy="${esc(d.hash)}" title="Copy the full commit id">Copy</button></div>
+    ${parents ? `<div class="c-line">${d.parents.length > 1 ? 'Parents' : 'Parent'} ${parents}</div>` : '<div class="c-line faint">Root commit</div>'}
+    <div class="c-line c-refs">${containsHTML(hash)}</div>
+    <div class="c-files-head">${d.files.length} file${d.files.length === 1 ? '' : 's'} changed${d.parents.length > 1 ? ' <span class="faint">vs first parent</span>' : ''}</div>
+    <div class="c-files">${commitTreeHTML(d)}</div>`
+}
+
+function containsHTML(hash) {
+  const c = state.contains.get(hash)
+  if (!c) return '<span class="faint">Finding branches…</span>'
+  if (c.error) return `<span class="faint">Branches unavailable</span>`
+  const chip = (cls, n) => `<span class="ref ${cls}">${esc(n)}</span>`
+  const n = c.branches.length + c.remotes.length
+  const chips = [...c.branches.map(b => chip('loc', b)), ...c.remotes.map(b => chip('rem', b)), ...c.tags.map(t => chip('tag', t))]
+  const shown = chips.slice(0, 12).join('') + (chips.length > 12 ? `<span class="faint">+${chips.length - 12} more</span>` : '')
+  return n || c.tags.length ? `<span class="faint">In ${n} branch${n === 1 ? '' : 'es'}</span> ${shown}` : '<span class="faint">Not on any branch</span>'
+}
+
+function commitTreeHTML(d) {
+  const files = new Map(d.files.map(f => [f.path, f]))
+  const render = (node, depth) => {
+    let h = ''
+    for (const [n, dir] of [...node.dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
+      // Chains of single-child folders collapse into one row ("web/static/js"), as IntelliJ does.
+      let label = n, cur = dir
+      while (cur.files.length === 0 && cur.dirs.size === 1) { const [[cn, cd]] = cur.dirs; label += '/' + cn; cur = cd }
+      const open = !state.cdirClosed.has(d.hash + ':' + cur.path)
+      h += `<div class="tnode dir" data-cdir="${esc(cur.path)}" style="padding-left:${depth * 14}px"><span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${esc(label)}</span></div>`
+      if (open) h += render(cur, depth + 1)
+    }
+    for (const p of node.files) {
+      const f = files.get(p)
+      h += `<div class="tnode" data-cfile="${esc(p)}" style="padding-left:${depth * 14}px" title="${esc(p)}\nShow this file in the commit diff"><span class="tw"></span>${badge(f.code)}<span class="nm">${esc(basename(p))}</span><span class="stat">${statHTML(f)}</span></div>`
+    }
+    return h
+  }
+  return render(buildTree(d.files.map(f => f.path)), 0) || '<div class="faint">No file changes</div>'
+}
+
+async function loadDetail(hash) {
+  const jobs = []
+  if (!state.details.has(hash)) jobs.push(api('/api/commit?hash=' + encodeURIComponent(hash)).then(d => state.details.set(hash, d), e => state.details.set(hash, { error: e.message })))
+  if (!state.contains.has(hash)) jobs.push(api('/api/commit/contains?hash=' + encodeURIComponent(hash)).then(c => state.contains.set(hash, c), e => state.contains.set(hash, { error: e.message })))
+  // Details and branches arrive separately; repaint as each lands so a slow --contains never blocks the files.
+  for (const j of jobs) j.then(() => { if (state.expanded === hash) paintDetail(hash) })
+  await Promise.all(jobs)
+}
+
+function paintDetail(hash) {
+  const el = $(`#history .commit-row[data-hash="${CSS.escape(hash)}"] + .c-detail`)
+  if (el) el.innerHTML = detailHTML(hash)
+}
+
+// Opening a commit shows its diff in Review; clicking the open row again folds it.
+function selectCommit(hash, short = hash.slice(0, 7)) {
+  state.expanded = state.expanded === hash ? '' : hash
+  renderHistory()
+  if (state.expanded) loadDetail(hash)
+  $(`#history .commit-row[data-hash="${CSS.escape(hash)}"]`)?.scrollIntoView({ block: 'nearest' })
+  return showCommitDiff(hash, short)
+}
+
+async function showCommitDiff(hash, short) {
+  const same = scope() === 'commit' && state.commit === hash && state.mode === 'diff'
+  state.commit = hash
+  $('#diff-scope').value = 'commit'
+  $('#diff-commit').value = short
+  syncScopeInputs()
+  state.commit = hash
+  renderHistoryCurrent()
+  await setMode('diff')
+  if (same) return
+  $('#diff').scrollTop = 0
+  await loadDiff()
+}
+
+async function goCommitFile(hash, path) {
+  await showCommitDiff(hash, hash.slice(0, 7))
+  const i = state.diffFiles.findIndex(f => f.path === path)
+  if (i < 0) return setStatus(`${path} has no text diff in this commit`)
+  if (isFolded(state.diffFiles[i])) { state.folded.set(path, false); rerenderFile(i) }
+  goFile(i)
 }
 
 // Counts are against the upstream as of the last fetch, so the Fetch button carries its age.
@@ -1145,23 +1263,30 @@ $('#theme-list').onclick = e => { const t = e.target.closest('[data-theme-id]');
 document.addEventListener('click', e => { if (!$('#theme-pop').hidden && e.target.isConnected && !e.target.closest('#theme-pop')) toggleThemes(false) })
 osLight.addEventListener('change', () => { applyTheme(); swatches.clear(); if (!$('#theme-pop').hidden) renderThemes() })
 $('#history').addEventListener('click', async e => {
-  const row = e.target.closest('.commit-row')
-  if (!row) return
-  try {
-    await copyText(row.dataset.hash)
-    row.classList.add('copied')
-    setTimeout(() => row.classList.remove('copied'), 1200)
-    setStatus(`Copied ${row.dataset.hash} to the clipboard`, 'ok')
-  } catch (err) { setStatus('Could not copy the commit id: ' + err.message, 'err') }
-  state.commit = row.dataset.hash
-  $('#diff-scope').value = 'commit'
-  $('#diff-commit').value = row.dataset.short
-  syncScopeInputs()
-  state.commit = row.dataset.hash
-  renderHistoryCurrent()
-  setMode('diff')
-  $('#diff').scrollTop = 0
-  loadDiff()
+  const t = e.target
+  const hash = t.closest('.c-detail')?.previousElementSibling?.dataset.hash
+  if (t.closest('[data-copy]')) {
+    const b = t.closest('[data-copy]')
+    try {
+      await copyText(b.dataset.copy)
+      b.textContent = 'Copied'
+      setTimeout(() => { b.textContent = 'Copy' }, 1200)
+    } catch (err) { setStatus('Could not copy the commit id: ' + err.message, 'err') }
+  } else if (t.closest('[data-go]')) {
+    const p = t.closest('[data-go]').dataset.go
+    if ((state.status?.commits || []).some(c => c.hash === p)) { if (state.expanded !== p) selectCommit(p) }
+    else showCommitDiff(p, p.slice(0, 7))
+  } else if (t.closest('[data-cdir]')) {
+    const key = hash + ':' + t.closest('[data-cdir]').dataset.cdir
+    state.cdirClosed.has(key) ? state.cdirClosed.delete(key) : state.cdirClosed.add(key)
+    paintDetail(hash)
+  } else if (t.closest('[data-cfile]')) {
+    $('#history .tnode.active')?.classList.remove('active')
+    t.closest('[data-cfile]').classList.add('active')
+    goCommitFile(hash, t.closest('[data-cfile]').dataset.cfile)
+  } else if (t.closest('.commit-row')) {
+    selectCommit(t.closest('.commit-row').dataset.hash, t.closest('.commit-row').dataset.short)
+  }
 })
 $('#stashes').addEventListener('click', e => {
   const b = e.target.closest('button[data-ref]')

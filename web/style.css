@@ -440,7 +440,26 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 .commit-row .c-meta b { font: 500 11px var(--mono); color: var(--accent); flex: none; }
 .commit-row .c-author { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .commit-row .c-time { margin-left: auto; flex: none; color: var(--faint); }
-.commit-row.copied::after { content: "Copied"; position: absolute; top: 6px; right: 8px; padding: 0 6px; border-radius: 4px; background: var(--add-soft); color: var(--add); font-size: 11px; animation: rise .15s ease-out both; }
+.commit-row .c-subject .tw { display: inline-block; width: 12px; color: var(--faint); font-size: 9px; }
+.commit-row .c-meta { padding-left: 12px; }
+.commit-row.open { background: var(--hover); color: var(--fg); border-radius: var(--r) var(--r) 0 0; }
+.c-detail { margin: 0 -8px 6px; padding: 8px 8px 8px 20px; background: var(--hover); border-radius: 0 0 var(--r) var(--r); display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--fg-2); animation: rise .15s ease-out both; }
+.c-body { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); line-height: 1.5; }
+.c-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; color: var(--muted); font-size: 11.5px; }
+.c-line.mono, .mono { font-family: var(--mono); }
+.c-hash { font-size: 11px; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.c-link { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 11px; }
+.c-link:hover { text-decoration: underline; }
+.ref { font: 500 10.5px/16px var(--mono); padding: 0 5px; border-radius: 4px; white-space: nowrap; }
+.ref.loc { color: var(--add); background: var(--add-soft); }
+.ref.rem { color: var(--info); background: color-mix(in srgb, var(--info) 14%, transparent); }
+.ref.tag { color: var(--warn); background: var(--warn-soft); }
+.c-files-head { margin-top: 2px; padding-top: 6px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11.5px; }
+.c-files .tnode { height: 22px; font-size: 12px; }
+.c-files .tnode:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.c-files .tnode .st { margin-left: 0; }
+.c-files .stat { margin-left: auto; display: flex; gap: 4px; font: 11px var(--mono); }
+.c-detail .err { color: var(--del); }
 .commit-row:hover { background: var(--hover); color: var(--fg); }
 .commit-row.current { background: var(--accent-soft); color: var(--fg); }
 .no-git-repo .insp { opacity: .4; pointer-events: none; }

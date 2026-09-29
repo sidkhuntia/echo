@@ -3,6 +3,8 @@
 ## Unreleased
 
 - The title bar shows the current branch's incoming ↓ and outgoing ↑ commits against its upstream, with Fetch (and how long ago the last fetch was) and Sync buttons. Sync pulls using your Git pull settings, then pushes if you're ahead; a branch with no upstream shows Publish instead. The branch list shows the same counts.
+- Clicking a commit in History expands it: the full message, author and committer, parents, the branches and tags that contain it, and a folder tree of changed files with +/− counts. Clicking a file jumps to it in the commit diff. The full id is copied from a Copy button instead of on every click.
+- Fixed: marking a file reviewed and folding a diff file by its header threw an error, because two diff helpers had been removed by mistake.
 - Fetch, pull, push, sync, and publish run one at a time with a two-minute timeout, and the buttons show progress.
 - Added a Stacked / Split switch for diffs; split shows the old version on the left and the new on the right. The choice is saved in the config.
 - Double-click any diff line, or press `e`, to open the file in the editor on that line; `Esc` returns to the same place in the review.

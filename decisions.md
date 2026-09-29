@@ -111,7 +111,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** the review surface renders one section per file with old/new line numbers and a sticky file header.
 - **Default:** lockfiles, generated files, and files with more than 1500 diff lines start folded.
 - **Accepted:** clicking a commit in history shows that commit's diff (`git show`, first parent for merges).
-- **Accepted:** clicking a commit also copies its full commit id to the clipboard.
+- **Corrected decision:** clicking a commit no longer copies its id; browsing history would overwrite the clipboard on every click. The expanded commit has a Copy button for the full id instead.
 - **Accepted:** history rows show the subject, short hash, the author's full name, and a relative time.
 - **Default:** the author name uses `%aN`, so `.mailmap` maps it to the canonical full name.
 - **Default:** the server sends the commit time as a Unix timestamp and the browser renders "2h ago", so the SSE status does not change just because time passed.
@@ -275,6 +275,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** the full commit log is a third main-surface mode, "Log" (Review · Files · Log): a filter bar (text/hash, branch, author, path), a graph table (lanes, ref chips, subject, author, date), and a details pane.
 - **Accepted:** the right panel's History tab stays as a compact log with the same graph lanes; a commit row expands in place to show its details and changed files.
 - **Accepted:** commit details show the subject and full body, author and committer, a copyable hash, parents, the branches and tags that contain the commit, and a collapsible folder tree of changed files with +/− counts. Clicking a file opens Review scoped to that commit at that file; `Esc` returns to the log.
+- **Default:** in the History tab, clicking a commit expands it in place (one at a time) and shows its diff in Review; clicking it again folds it. Single-child folder chains in the file tree collapse into one row.
 - **Default:** details come from a lazy `GET /api/commit?hash=`; `--contains` lookups load after the rest because they can be slow on large repositories.
 - **Default:** commits move out of the SSE status into `GET /api/log` (paged, 200 at a time); the status carries a refs signature so the browser refetches the log only when refs change.
 - **Default:** graph lanes are computed in the browser from `%H %P %D` in topological order and drawn as SVG, without a library.

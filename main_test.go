@@ -316,3 +316,86 @@ func TestPublishSyncFetch(t *testing.T) {
 		t.Errorf("after fetch: fetchedAt=%d remotes=%v", s.FetchedAt, s.Remotes)
 	}
 }
+
+func TestParseCommitDetail(t *testing.T) {
+	d, ok := parseCommitDetail("abc\x00p1 p2\x00Ada\x00a@x\x0017\x00Bob\x0018\x00Subject line\n\nBody one\nBody two\n\n")
+	if !ok || d.Subject != "Subject line" || d.Body != "Body one\nBody two" || len(d.Parents) != 2 || d.AuthorTime != 17 || d.Committer != "Bob" {
+		t.Errorf("got %+v, %v", d, ok)
+	}
+	if d, _ := parseCommitDetail("abc\x00\x00A\x00e\x001\x00A\x001\x00Only subject\n"); d.Body != "" || len(d.Parents) != 0 {
+		t.Errorf("root commit: %+v", d)
+	}
+}
+
+func TestParseContains(t *testing.T) {
+	got := parseContains("refs/heads/main\nrefs/remotes/origin/HEAD\nrefs/remotes/origin/main\nrefs/tags/v1\n")
+	if strings.Join(got.Branches, ",") != "main" || strings.Join(got.Remotes, ",") != "origin/main" || strings.Join(got.Tags, ",") != "v1" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestCommitEndpoints(t *testing.T) {
+	a := testRepo(t)
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		cmd.Dir = a.root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("add", ".")
+	run("commit", "-qm", "Second\n\nWhy it changed.")
+	run("tag", "v1")
+	w := request(a, http.MethodGet, "/api/commit?hash=HEAD", "")
+	var d CommitDetail
+	if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil || w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	byPath := map[string]Change{}
+	for _, f := range d.Files {
+		byPath[f.Path] = f
+	}
+	if d.Subject != "Second" || d.Body != "Why it changed." || len(d.Parents) != 1 || len(d.Files) != 2 {
+		t.Fatalf("detail = %+v", d)
+	}
+	if f := byPath["agent.txt"]; f.Code != "A" || f.Added != 1 {
+		t.Errorf("agent.txt = %+v", f)
+	}
+	if f := byPath["keep.txt"]; f.Code != "M" || f.Added != 2 || f.Deleted != 1 {
+		t.Errorf("keep.txt = %+v", f)
+	}
+	var c Contains
+	w = request(a, http.MethodGet, "/api/commit/contains?hash="+d.Hash, "")
+	if err := json.Unmarshal(w.Body.Bytes(), &c); err != nil || len(c.Branches) != 1 || strings.Join(c.Tags, ",") != "v1" {
+		t.Errorf("contains = %d %s", w.Code, w.Body)
+	}
+	for _, bad := range []string{"--all", "nope", ""} {
+		if w := request(a, http.MethodGet, "/api/commit?hash="+bad, ""); w.Code != http.StatusBadRequest {
+			t.Errorf("hash %q: %d", bad, w.Code)
+		}
+	}
+}
+
+// A merge lists the files it brought in relative to its first parent, like the commit diff.
+func TestCommitMergeFiles(t *testing.T) {
+	a := testRepo(t)
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		cmd.Dir = a.root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("stash", "-u")
+	run("switch", "-qc", "side")
+	os.WriteFile(filepath.Join(a.root, "side.txt"), []byte("s\n"), 0o644)
+	run("add", ".")
+	run("commit", "-qm", "side")
+	run("switch", "-q", "-")
+	run("merge", "-q", "--no-ff", "-m", "Merge side", "side")
+	var d CommitDetail
+	json.Unmarshal(request(a, http.MethodGet, "/api/commit?hash=HEAD", "").Body.Bytes(), &d)
+	if len(d.Parents) != 2 || len(d.Files) != 1 || d.Files[0].Path != "side.txt" {
+		t.Errorf("merge detail = %+v", d)
+	}
+}

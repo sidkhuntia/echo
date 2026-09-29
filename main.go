@@ -73,6 +73,27 @@ type Commit struct {
 	Subject string `json:"subject"`
 }
 
+// CommitDetail is everything the History and Log views show about one commit.
+type CommitDetail struct {
+	Hash        string   `json:"hash"`
+	Parents     []string `json:"parents"`
+	Author      string   `json:"author"`
+	AuthorEmail string   `json:"authorEmail"`
+	AuthorTime  int64    `json:"authorTime"`
+	Committer   string   `json:"committer"`
+	CommitTime  int64    `json:"commitTime"`
+	Subject     string   `json:"subject"`
+	Body        string   `json:"body"`
+	Files       []Change `json:"files"`
+}
+
+// Contains lists the refs a commit is reachable from.
+type Contains struct {
+	Branches []string `json:"branches"`
+	Remotes  []string `json:"remotes"`
+	Tags     []string `json:"tags"`
+}
+
 type Stash struct {
 	Ref     string `json:"ref"`
 	Subject string `json:"subject"`
@@ -180,6 +201,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/git", a.handleGit)
 	mux.HandleFunc("/api/diff", a.handleDiff)
+	mux.HandleFunc("/api/commit", a.handleCommit)
+	mux.HandleFunc("/api/commit/contains", a.handleContains)
 	mux.HandleFunc("/api/stream", a.handleStream)
 	mux.HandleFunc("/api/config", a.handleConfig)
 
@@ -793,6 +816,69 @@ func (a *App) handleDiff(w http.ResponseWriter, r *http.Request) {
 }
 
 // untrackedDiff renders untracked files as new-file diffs; plain `git diff` leaves them out.
+// resolveCommit turns a user-supplied ref into a full commit hash, so later commands never see the raw input.
+func (a *App) resolveCommit(ref string) (string, error) {
+	if err := validRef(ref); err != nil {
+		return "", err
+	}
+	out, err := a.git("rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
+	if err != nil || strings.TrimSpace(out) == "" {
+		return "", fmt.Errorf("no commit %q", ref)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// handleCommit returns a commit's message and its files. Files follow the commit diff view:
+// merges are compared with their first parent.
+func (a *App) handleCommit(w http.ResponseWriter, r *http.Request) {
+	hash, err := a.resolveCommit(r.URL.Query().Get("hash"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	out, err := a.git("show", "-s", "--format=%H%x00%P%x00%aN%x00%aE%x00%at%x00%cN%x00%ct%x00%B", hash)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	d, ok := parseCommitDetail(out)
+	if !ok {
+		http.Error(w, "unexpected git show output", http.StatusBadGateway)
+		return
+	}
+	diff := []string{"show", "--format=", "--no-renames", "--diff-merges=first-parent", "-z"}
+	codes, err := a.git(append(diff, "--name-status", hash)...)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	stats := map[string]Change{}
+	if out, err := a.git(append(diff, "--numstat", hash)...); err == nil {
+		stats = parseNumstat(out)
+	}
+	d.Files = parseNameStatus(codes)
+	for i := range d.Files {
+		s := stats[d.Files[i].Path]
+		d.Files[i].Added, d.Files[i].Deleted, d.Files[i].Binary = s.Added, s.Deleted, s.Binary
+	}
+	writeJSON(w, d)
+}
+
+// handleContains is separate from handleCommit because --contains walks history and can be slow.
+func (a *App) handleContains(w http.ResponseWriter, r *http.Request) {
+	hash, err := a.resolveCommit(r.URL.Query().Get("hash"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	out, err := a.git("for-each-ref", "--contains", hash, "--format=%(refname)", "refs/heads", "refs/remotes", "refs/tags")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, parseContains(out))
+}
+
 func (a *App) untrackedDiff() string {
 	out, err := a.git("ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
@@ -1006,6 +1092,49 @@ func parseBranches(s string) []Branch {
 		out = append(out, b)
 	}
 	return out
+}
+
+// parseCommitDetail reads NUL-separated hash, parents, author, email, time, committer, time, message.
+func parseCommitDetail(s string) (CommitDetail, bool) {
+	parts := strings.SplitN(s, "\x00", 8)
+	if len(parts) != 8 {
+		return CommitDetail{}, false
+	}
+	d := CommitDetail{Hash: parts[0], Parents: strings.Fields(parts[1]), Author: parts[2], AuthorEmail: parts[3], Committer: parts[5], Files: []Change{}}
+	d.AuthorTime, _ = strconv.ParseInt(parts[4], 10, 64)
+	d.CommitTime, _ = strconv.ParseInt(parts[6], 10, 64)
+	msg := strings.TrimRight(parts[7], "\n")
+	d.Subject, d.Body, _ = strings.Cut(msg, "\n")
+	d.Body = strings.Trim(d.Body, "\n")
+	return d, true
+}
+
+// parseNameStatus reads `--name-status -z` output: a status letter, then the path, each NUL-terminated.
+func parseNameStatus(s string) []Change {
+	out := []Change{}
+	f := strings.Split(strings.TrimLeft(s, "\x00\n"), "\x00")
+	for i := 0; i+1 < len(f); i += 2 {
+		if f[i] != "" {
+			out = append(out, Change{Code: f[i][:1], Path: f[i+1]})
+		}
+	}
+	return out
+}
+
+// parseContains sorts full ref names into local branches, remote branches, and tags. Remote HEAD
+// aliases (origin/HEAD) are skipped because they duplicate the branch they point to.
+func parseContains(s string) Contains {
+	c := Contains{Branches: []string{}, Remotes: []string{}, Tags: []string{}}
+	for _, ref := range parseLines(s) {
+		if name, ok := strings.CutPrefix(ref, "refs/heads/"); ok {
+			c.Branches = append(c.Branches, name)
+		} else if name, ok := strings.CutPrefix(ref, "refs/remotes/"); ok && !strings.HasSuffix(name, "/HEAD") {
+			c.Remotes = append(c.Remotes, name)
+		} else if name, ok := strings.CutPrefix(ref, "refs/tags/"); ok {
+			c.Tags = append(c.Tags, name)
+		}
+	}
+	return c
 }
 
 func parseStashes(s string) []Stash {
