@@ -309,6 +309,12 @@ The following Git capabilities were accepted as part of the product direction:
 - **Deferred:** native macOS filesystem event APIs.
 - **Deferred:** fine-grained event deduplication and per-file invalidation.
 
+## 12b. Discard all and Stage all & Commit
+
+- The Changes group header has a Discard all button. It runs the same worktree discard as the per-row button over the visible rows (untracked files are deleted, staged work stays) but confirms first, because it is many files at once.
+- Setting `commitAll` (off by default) makes Commit mean "stage everything, then commit". Any stage-all commit, whether from the setting or the split-button menu, asks first with a warning that staged and unstaged changes will both be committed. Committing staged only never asks.
+- `commit:all` runs `git add -A -- .` then `git commit`, and refuses while `git ls-files -u` shows conflicts, so a conflict cannot be marked resolved by accident.
+
 ## 12a. Git window (IntelliJ / GitLens direction)
 
 - **Accepted:** the Git experience follows IntelliJ IDEA's Git tool window, with GitLens-style extras.
@@ -466,7 +472,8 @@ These are not rejected. They are waiting until the basic review loop is proven:
 - Prefer the standard library over new dependencies.
 - Keep `web/` framework-free and build-step-free.
 - Use the system `git` CLI for all Git state changes.
-- Keep destructive behavior fast and unconfirmed, as chosen.
+- Keep destructive behavior fast and unconfirmed, as chosen, with these exceptions, which ask in an in-app dialog: Discard all in the Changes group, committing with everything staged first, discarding unsaved edits when closing a tab, and stopping echo processes.
+- Never use the browser's `alert`, `confirm` or `prompt`; use `ask()` in `web/app.js`.
 - Never weaken path validation or local-only binding.
 - Update `changelog.md` when behavior changes.
 - Update this file when a decision changes.

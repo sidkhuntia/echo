@@ -622,13 +622,32 @@ body.resizing { cursor: col-resize; user-select: none; }
 .insp[data-insp="commit"] [data-for="history"], .insp[data-insp="history"] [data-for="commit"] { display: none; }
 .sec { padding: 14px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
 .sec[data-for="history"] { border: 0; }
-.sec h4 { margin: 0 0 2px; font-size: 11px; font-weight: 600; color: var(--muted); display: flex; justify-content: space-between; }
+.sec h4 { margin: 0 0 2px; font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
 .sec h4 .dim { font-weight: 400; color: var(--faint); }
 .hrow { display: flex; gap: 6px; }
 .hrow > .field { flex: 1; }
 #commit-message { width: 100%; height: auto; min-height: 76px; resize: vertical; padding: 8px 10px; font-size: 12.5px; line-height: 1.45; }
-.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
-.grid4 .btn { padding: 0; }
+/* an input and its action read as one control */
+.hrow.join { gap: 0; }
+.hrow.join > .field { border-radius: var(--r) 0 0 var(--r); min-width: 0; }
+.hrow.join > .btn { border-radius: 0 var(--r) var(--r) 0; margin-left: -1px; }
+.hrow.join > .field:focus { position: relative; z-index: 1; }
+.sync { display: flex; align-items: center; gap: 4px; }
+.sync .btn { height: 26px; }
+.sync .btn:not(.quiet) { flex: 1; }
+.sync .vr { height: 14px; margin: 0 2px; }
+/* the commit card: what will be committed, the message, then one wide split button */
+.commit-card { background: linear-gradient(180deg, var(--accent-soft), transparent 70%); }
+.tally { display: inline-flex; gap: 10px; text-transform: none; letter-spacing: 0; font: 500 11px var(--mono); color: var(--muted); }
+.tally i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--faint); }
+.tally .s i { background: var(--add); }
+.tally .u i { background: var(--warn); }
+.split { display: flex; }
+.split .btn { height: 30px; }
+.split #commit { border-radius: var(--r) 0 0 var(--r); }
+.split .caret { width: 30px; padding: 0; border-radius: 0 var(--r) var(--r) 0; border-left: 1px solid color-mix(in srgb, var(--on-accent) 30%, transparent); }
+.hint { font-size: 11px; line-height: 1.4; color: var(--warn); }
+.hint::before { content: "↳ "; }
 .list-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; color: var(--fg-2); font-size: 12px; }
 .list-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .list-row b { font: 500 11.5px var(--mono); color: var(--accent); margin-right: 6px; }
@@ -813,3 +832,33 @@ body.resizing { cursor: col-resize; user-select: none; }
   .titlebar { grid-template-columns: 1fr minmax(160px, 280px) auto; }
   .console-help, .dstat .blocks { display: none; }
 }
+
+/* ---------- dialog: replaces the browser's alert, confirm and prompt ---------- */
+.dialog { z-index: 60; }
+.dialog-card { width: min(440px, calc(100vw - 32px)); padding: 0; }
+.dialog-body { display: flex; gap: 14px; padding: 18px 18px 14px; }
+.dialog-icon { flex: none; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft); }
+.dialog-icon svg.i { width: 17px; height: 17px; }
+.dialog[data-tone="danger"] .dialog-icon { color: var(--del); background: var(--del-soft); }
+.dialog[data-tone="warn"] .dialog-icon { color: var(--warn); background: var(--warn-soft); }
+.dialog-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.dialog-text h3 { margin: 4px 0 0; font-size: 14px; font-weight: 600; color: var(--fg); overflow-wrap: anywhere; }
+.dialog-msg { display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; line-height: 1.5; color: var(--fg-2); overflow-wrap: anywhere; }
+.dialog-msg:empty { display: none; }
+.dialog-msg p { margin: 0; }
+.dialog-msg .note { color: var(--muted); font-size: 12px; }
+.dialog-msg .alert { padding: 7px 10px; border-radius: var(--r); font-size: 12px; color: var(--fg); background: var(--warn-soft); box-shadow: inset 2px 0 0 var(--warn); }
+.dialog[data-tone="danger"] .dialog-msg .alert { background: var(--del-soft); box-shadow: inset 2px 0 0 var(--del); }
+.dialog-files { max-height: 172px; overflow: auto; margin: 0; padding: 4px; list-style: none; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); }
+.dialog-files li { display: flex; align-items: center; gap: 8px; height: 24px; padding: 0 6px; font: 11.5px var(--mono); color: var(--fg-2); }
+.dialog-files li span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.dialog-files li.more { color: var(--faint); font-family: var(--sans); }
+.dialog-quote { padding: 6px 10px; border-left: 2px solid var(--line-2); color: var(--fg); white-space: pre-wrap; max-height: 80px; overflow: auto; font-size: 12px; }
+.dialog-field { display: flex; flex-direction: column; gap: 5px; font-size: 11.5px; color: var(--muted); }
+.dialog-field .field { width: 100%; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); background: var(--bg); }
+.dialog-actions .btn { height: 28px; padding: 0 14px; }
+.dialog[data-tone="danger"] .btn.primary { background: var(--del); color: #fff; }
+.dialog[data-tone="warn"] .btn.primary { background: var(--warn); color: #1a1408; }
+.qacts .icon[data-act="discard"]:hover, .gacts .icon[data-act="discard-all"]:hover { color: var(--del); }
+#commit-menu { min-width: 190px; }

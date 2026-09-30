@@ -74,7 +74,9 @@ type Config struct {
 	DiffMode   string `json:"diffMode"`
 	GutterBase string `json:"gutterBase"`
 	// Blame is "line" (show who last changed the caret line) or "off".
-	Blame      string         `json:"blame"`
+	Blame string `json:"blame"`
+	// CommitAll makes the Commit button stage everything first (after the page asks).
+	CommitAll  bool           `json:"commitAll"`
 	Panels     []string       `json:"panels"`
 	PanelSizes map[string]int `json:"panelSizes"`
 	// LSPDismissed lists language servers whose install prompt was answered "Not now".
@@ -928,6 +930,8 @@ func (a *App) handleGit(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if req.Action == "discard" {
 		out, err = a.discard(req.Paths, req.Worktree)
+	} else if req.Action == "commit:all" {
+		out, err = a.commitAll(req.Message)
 	} else if netActions[req.Action] {
 		if !a.net.TryLock() {
 			http.Error(w, "another fetch, pull, or push is still running", http.StatusConflict)
@@ -1084,6 +1088,25 @@ func validRef(ref string) error {
 		}
 	}
 	return nil
+}
+
+// commitAll stages every change under the root, then commits. It refuses while a conflict is
+// unresolved, because staging would mark it resolved with its markers still in the file.
+func (a *App) commitAll(message string) (string, error) {
+	if strings.TrimSpace(message) == "" {
+		return "", errors.New("commit message required")
+	}
+	unmerged, err := a.git("ls-files", "-u")
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(unmerged) != "" {
+		return "", errors.New("resolve the merge conflicts first; staging everything would mark them resolved")
+	}
+	if out, err := a.gitCombined("add", "-A", "--", "."); err != nil {
+		return out, err
+	}
+	return a.gitCombined("commit", "-m", message)
 }
 
 // discard restores tracked paths and deletes untracked ones, so files an agent created can be rejected too.

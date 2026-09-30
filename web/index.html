@@ -176,19 +176,30 @@ try {
       <span id="staged-count" class="dim"></span>
     </div>
     <div id="insp" class="insp" data-insp="commit">
-      <section class="sec" data-for="commit">
+      <section class="sec commit-card" data-for="commit">
+        <h4>Commit <span id="commit-tally" class="tally"></span></h4>
         <textarea id="commit-message" class="field" placeholder="Summarize the change"></textarea>
-        <div class="hrow"><button id="commit" class="btn primary grow">Commit <kbd>⌘↵</kbd></button><button id="amend" class="btn">Amend</button><button id="stage-all" class="btn">Stage all</button></div>
+        <div class="split">
+          <button id="commit" class="btn primary grow"><span id="commit-label">Commit</span> <kbd>⌘↵</kbd></button>
+          <button id="commit-more" class="btn primary caret" title="Other ways to commit" aria-haspopup="menu"><svg class="i" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
+        </div>
+        <div id="commit-hint" class="hint" hidden></div>
       </section>
       <section class="sec" data-for="commit">
         <h4>Branch</h4>
-        <div class="hrow"><select id="branch-select" class="field"></select><button id="switch-branch" class="btn">Switch</button></div>
-        <div class="hrow"><input id="new-branch" class="field" placeholder="New branch name" autocomplete="off" spellcheck="false"><button id="create-branch" class="btn">Create</button></div>
-        <div class="grid4"><button id="pull" class="btn net">Pull</button><button id="push" class="btn net">Push</button><button id="merge" class="btn" title="Merge the selected branch">Merge</button><button id="rebase" class="btn" title="Rebase onto the selected branch">Rebase</button></div>
+        <div class="hrow join"><select id="branch-select" class="field"></select><button id="switch-branch" class="btn">Switch</button></div>
+        <div class="hrow join"><input id="new-branch" class="field" placeholder="New branch name" autocomplete="off" spellcheck="false"><button id="create-branch" class="btn">Create</button></div>
+        <div class="sync">
+          <button id="pull" class="btn net"><svg class="i" viewBox="0 0 16 16"><path d="M8 2.5v9M4.5 8 8 11.5 11.5 8M3.5 13.5h9"/></svg>Pull</button>
+          <button id="push" class="btn net"><svg class="i" viewBox="0 0 16 16"><path d="M8 13.5v-9M4.5 8 8 4.5 11.5 8M3.5 2.5h9"/></svg>Push</button>
+          <span class="vr"></span>
+          <button id="merge" class="btn quiet" title="Merge the selected branch">Merge</button>
+          <button id="rebase" class="btn quiet" title="Rebase onto the selected branch">Rebase</button>
+        </div>
       </section>
       <section class="sec" data-for="commit">
         <h4>Stash</h4>
-        <div class="hrow"><input id="stash-message" class="field" placeholder="Message (optional)" autocomplete="off"><button id="stash-create" class="btn">Stash</button></div>
+        <div class="hrow join"><input id="stash-message" class="field" placeholder="Message (optional)" autocomplete="off"><button id="stash-create" class="btn">Stash</button></div>
         <div id="stashes"></div>
       </section>
       <section class="sec" data-for="history">
@@ -212,6 +223,24 @@ try {
 </div>
 
 <div id="ref-menu" class="menu" role="menu" hidden></div>
+<div id="commit-menu" class="menu" role="menu" hidden></div>
+
+<div id="dialog" class="modal dialog" hidden>
+  <form class="modal-card dialog-card" role="alertdialog" aria-modal="true" aria-labelledby="dialog-title" method="dialog">
+    <div class="dialog-body">
+      <div id="dialog-icon" class="dialog-icon"></div>
+      <div class="dialog-text">
+        <h3 id="dialog-title"></h3>
+        <div id="dialog-msg" class="dialog-msg"></div>
+        <label id="dialog-field" class="dialog-field" hidden><span id="dialog-label"></span><input id="dialog-input" class="field" autocomplete="off" spellcheck="false"></label>
+      </div>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" id="dialog-cancel" class="btn">Cancel</button>
+      <button type="submit" id="dialog-ok" class="btn primary">OK</button>
+    </div>
+  </form>
+</div>
 
 <div id="palette" class="modal" hidden>
   <div class="palette-card">
@@ -265,6 +294,7 @@ try {
     </label>
     <label class="check"><input id="inline-blame" type="checkbox"> Show who last changed the caret line in the editor</label>
     <label class="check"><input id="word-wrap" type="checkbox"> Wrap long lines in the editor and the diff instead of scrolling sideways</label>
+    <label class="check"><input id="commit-all" type="checkbox"> Make Commit stage everything first (asks before it commits staged + unstaged changes)</label>
     <label class="check"><input id="vim-mode" type="checkbox"> Vim keys in Files view (j/k scroll)</label>
   </div>
 </div>

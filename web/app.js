@@ -64,6 +64,54 @@ function setStatus(msg, kind = '') {
   s.className = kind
 }
 
+const ICON_UNDO = '<svg class="i" viewBox="0 0 16 16"><path d="M5.5 3.5 3 6l2.5 2.5"/><path d="M3 6h6.5a3.5 3.5 0 0 1 0 7H7"/></svg>'
+
+// ---------- dialog ----------
+// ask() replaces the browser's confirm and prompt: it resolves true (or the typed text, with `input`)
+// when confirmed and null when cancelled by the button, Escape, or a click outside. `html` is trusted
+// markup, so callers escape whatever they put in it. Destructive or sweeping dialogs focus Cancel.
+const DIALOG_ICON = {
+  warn: '<svg class="i" viewBox="0 0 16 16"><path d="M8 2.5 14 13H2z"/><path d="M8 6.5v3M8 11.3v.2"/></svg>',
+  undo: ICON_UNDO,
+  branch: '<svg class="i" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="6" r="1.5"/><path d="M4.5 5v6M11.5 7.5c0 2.5-3 2-7 3.5"/></svg>',
+  file: '<svg class="i" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg>',
+  stop: '<svg class="i" viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="2"/></svg>',
+}
+let dlg = null
+function ask({ title, html = '', tone = '', icon = 'file', ok = 'OK', input = null }) {
+  dlg?.done(null)
+  const el = $('#dialog'), field = $('#dialog-input'), prev = document.activeElement
+  el.dataset.tone = tone
+  $('#dialog-title').textContent = title
+  $('#dialog-msg').innerHTML = html
+  $('#dialog-icon').innerHTML = DIALOG_ICON[icon] || ''
+  $('#dialog-ok').textContent = ok
+  $('#dialog-field').hidden = !input
+  if (input) { $('#dialog-label').textContent = input.label; field.value = input.value || ''; field.placeholder = input.placeholder || '' }
+  el.hidden = false
+  return new Promise(resolve => {
+    const done = v => {
+      if (dlg?.done !== done) return
+      dlg = null
+      el.hidden = true
+      resolve(v)
+      if (prev?.isConnected) prev.focus?.()
+    }
+    dlg = { done, input: !!input }
+    if (input) field.select()
+    else (tone ? $('#dialog-cancel') : $('#dialog-ok')).focus()
+  })
+}
+$('#dialog form').addEventListener('submit', e => {
+  e.preventDefault()
+  if (!dlg) return
+  if (!dlg.input) return dlg.done(true)
+  const v = $('#dialog-input').value.trim()
+  if (v) dlg.done(v)
+})
+$('#dialog-cancel').onclick = () => dlg?.done(null)
+$('#dialog').addEventListener('mousedown', e => { if (e.target === $('#dialog')) dlg?.done(null) })
+
 // ---------- change codes ----------
 function codeLetter(c) {
   if (c.code === '??') return 'A'
@@ -209,7 +257,7 @@ function renderSearch() {
 const ICON = {
   plus: '<svg class="i" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>',
   minus: '<svg class="i" viewBox="0 0 16 16"><path d="M3.5 8h9"/></svg>',
-  discard: '<svg class="i" viewBox="0 0 16 16"><path d="M5.5 3.5 3 6l2.5 2.5"/><path d="M3 6h6.5a3.5 3.5 0 0 1 0 7H7"/></svg>',
+  discard: ICON_UNDO,
   open: '<svg class="i" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg>',
   fold: '<svg class="i" viewBox="0 0 16 16"><path d="M4 6 8 2.5 12 6M4 9.5 8 13l4-3.5"/></svg>',
   unfold: '<svg class="i" viewBox="0 0 16 16"><path d="M4 2.5 8 6l4-3.5M4 6.5 8 10l4-3.5"/></svg>',
@@ -271,7 +319,7 @@ function renderQueue() {
       <span class="qmeta">${sideStat(st)}${sideTag(c, sec)}</span>
     </div>`
   }
-  const bulk = { staged: iconBtn('unstage-all', ICON.minus, 'Unstage all'), work: iconBtn('stage-all', ICON.plus, 'Stage all changes'), merge: iconBtn('stage-all', ICON.plus, 'Mark all resolved (stage)') }
+  const bulk = { staged: iconBtn('unstage-all', ICON.minus, 'Unstage all'), work: iconBtn('discard-all', ICON.discard, 'Discard all unstaged changes') + iconBtn('stage-all', ICON.plus, 'Stage all changes'), merge: iconBtn('stage-all', ICON.plus, 'Mark all resolved (stage)') }
   let h = ''
   for (const g of GROUPS) {
     const rows = list.filter(g.has)
@@ -285,10 +333,31 @@ function renderQueue() {
 }
 
 // Bulk actions take the paths of one group as it is shown, so a filter narrows them too.
-function groupPaths(sec) {
+function groupRows(sec) {
   const g = GROUPS.find(g => g.sec === sec)
   const filter = $('#file-filter').value.toLowerCase()
-  return [...state.changes.values()].filter(c => g.has(c) && (!filter || c.path.toLowerCase().includes(filter))).map(c => c.path)
+  return [...state.changes.values()].filter(c => g.has(c) && (!filter || c.path.toLowerCase().includes(filter)))
+}
+const groupPaths = sec => groupRows(sec).map(c => c.path)
+
+// A list of changed files for a dialog: the first few, then how many more.
+function fileListHTML(rows, sec, max = 6) {
+  const items = rows.slice(0, max).map(c => `<li title="${esc(c.path)}">${sideTag(c, sec)}<span>${esc(c.path)}</span></li>`)
+  if (rows.length > max) items.push(`<li class="more">…and ${rows.length - max} more</li>`)
+  return `<ul class="dialog-files">${items.join('')}</ul>`
+}
+const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`
+
+// Throws away every unstaged edit in the Changes group, and deletes its untracked files. Staged work stays.
+async function discardAll() {
+  const rows = groupRows('work')
+  if (!rows.length) return
+  const fresh = rows.filter(c => c.code === '??').length
+  const ok = await ask({
+    title: `Discard ${plural(rows.length, 'unstaged change')}?`, tone: 'danger', icon: 'undo', ok: 'Discard all',
+    html: `<p class="alert">This can’t be undone.${fresh ? ` ${plural(fresh, 'untracked file')} will be deleted from disk.` : ''}</p>${fileListHTML(rows, 'work')}<p class="note">Staged changes are kept.</p>`,
+  })
+  if (ok) discard(rows.map(c => c.path), true)
 }
 
 // Build a folder tree from the flat, sorted path list. Folders open by default when they hold a change or the open file.
@@ -750,9 +819,12 @@ function placeCaret(line) {
   paintGutter()
 }
 
-function closeTab(i) {
+async function closeTab(i) {
   const t = state.tabs[i]
-  if (t.content !== t.saved && !confirm(`Discard unsaved edits to ${t.path}?`)) return
+  if (t.content !== t.saved) {
+    const ok = await ask({ title: 'Discard unsaved edits?', tone: 'danger', icon: 'file', ok: 'Discard', html: `<p><b>${esc(t.path)}</b> has changes that were never saved.</p>` })
+    if (!ok || state.tabs[i] !== t) return
+  }
   state.tabs.splice(i, 1)
   if (state.active >= state.tabs.length || state.active > i) state.active--
   if (state.active < 0 && state.tabs.length) state.active = 0
@@ -1625,9 +1697,9 @@ async function saveFile(force = false) {
 async function fileAction(action) {
   const current = state.selected || activeTab()?.path
   if (action !== 'create' && !current) return setStatus('Select a file first')
-  const path = action === 'create' ? prompt('New file path') : current
+  const path = action === 'create' ? await ask({ title: 'New file', icon: 'file', ok: 'Create', input: { label: 'Path, relative to the repository', placeholder: 'src/name.ext' } }) : current
   if (!path) return
-  const newPath = action === 'rename' ? prompt('New path', path) : ''
+  const newPath = action === 'rename' ? await ask({ title: 'Rename file', icon: 'file', ok: 'Rename', input: { label: 'New path', value: path } }) : ''
   if (action === 'rename' && !newPath) return
   try {
     await post('/api/file', { action, path, newPath, content: '' })
@@ -1669,6 +1741,70 @@ function setMode(m) {
   return state.diffReady
 }
 
+// ---------- commit ----------
+function changeTally() {
+  const all = [...state.changes.values()]
+  return { conflicts: all.filter(conflicted).length, staged: all.filter(c => !conflicted(c) && c.index), unstaged: all.filter(c => !conflicted(c) && c.work) }
+}
+
+// The tally says what a commit would take; the button and hint say which commit the default is.
+function renderCommit() {
+  const t = changeTally(), all = !!state.config.commitAll
+  const bit = (cls, n, word) => n ? `<span class="${cls}"><i></i>${n} ${word}</span>` : ''
+  $('#commit-tally').innerHTML = bit('s', t.staged.length, 'staged') + bit('u', t.unstaged.length, 'unstaged') || 'Clean'
+  $('#commit-label').textContent = all ? 'Stage all & Commit' : 'Commit'
+  const hint = $('#commit-hint')
+  hint.hidden = !(all && t.unstaged.length)
+  hint.textContent = `Stages ${plural(t.unstaged.length, 'unstaged change')} first, after you confirm.`
+  $('#commit-menu').innerHTML = (all
+    ? '<button class="menu-item" data-c="staged" role="menuitem">Commit staged only</button>'
+    : '<button class="menu-item" data-c="all" role="menuitem">Stage all & Commit</button>')
+    + '<button class="menu-item" data-c="amend" role="menuitem">Amend last commit</button>'
+}
+
+function toggleCommitMenu(open) {
+  const m = $('#commit-menu')
+  m.hidden = !open
+  if (!open) return
+  const r = $('#commit-more').getBoundingClientRect()
+  m.style.left = Math.max(8, r.right - m.offsetWidth) + 'px'
+  m.style.top = r.bottom + 4 + 'px'
+  m.querySelector('.menu-item')?.focus()
+}
+
+// Amend replaces the last commit's message, so an empty box is filled with it to edit; choosing Amend
+// again (or a message typed first) rewrites the commit with what the box holds and whatever is staged.
+async function amend() {
+  const box = $('#commit-message')
+  if (box.value.trim()) return gitAction({ action: 'amend', message: box.value })
+  const head = state.status?.head
+  if (!head) return setStatus('There is no commit to amend yet', 'err')
+  try {
+    const d = await api('/api/commit?hash=' + encodeURIComponent(head))
+    box.value = d.body ? d.subject + '\n\n' + d.body : d.subject
+    box.focus()
+    setStatus('Edit the message, then choose Amend last commit again')
+  } catch (e) { setStatus(e.message, 'err') }
+}
+
+// Committing everything is the one commit that reaches past what the user staged, so it always asks.
+async function doCommit(all) {
+  const message = $('#commit-message').value
+  if (!message.trim()) { setStatus('Write a commit message first', 'err'); $('#commit-message').focus(); return }
+  if (!all) return gitAction({ action: 'commit', message })
+  const t = changeTally()
+  if (t.conflicts) return setStatus('Resolve the merge conflicts before staging everything', 'err')
+  if (!t.staged.length && !t.unstaged.length) return setStatus('Nothing to commit')
+  const fresh = t.unstaged.filter(c => c.code === '??').length
+  const ok = await ask({
+    title: 'Commit staged and unstaged changes?', tone: 'warn', icon: 'warn', ok: 'Stage all & Commit',
+    html: `<p class="alert">All staged <b>and</b> unstaged changes will be committed: ${plural(t.staged.length, 'file')} already staged, ${plural(t.unstaged.length, 'more file')} about to be staged${fresh ? ` (${fresh} untracked)` : ''}.</p>`
+      + (t.unstaged.length ? `<p class="note">Being staged now</p>${fileListHTML(t.unstaged, 'work')}` : '')
+      + `<p class="note">Message</p><div class="dialog-quote">${esc(message.trim())}</div>`,
+  })
+  if (ok) gitAction({ action: 'commit:all', message })
+}
+
 // ---------- ledger ----------
 function renderGit() {
   const s = state.status || {}
@@ -1681,6 +1817,7 @@ function renderGit() {
   $('#branch-select').innerHTML = (s.branches || []).map(b => `<option value="${esc(b)}" ${b === (keep || s.branch) ? 'selected' : ''}>${esc(b)}${counts(local.get(b))}</option>`).join('')
   const staged = [...state.changes.values()].filter(c => c.staged).length
   $('#staged-count').textContent = staged ? `${staged} staged` : 'Nothing staged'
+  renderCommit()
   $('#stashes').innerHTML = (s.stashes || []).map(x => `<div class="list-row"><span title="${esc(x.subject)}"><b>${esc(x.ref)}</b> ${esc(x.subject)}</span><button class="btn sm" data-act="apply" data-ref="${esc(x.ref)}">Apply</button><button class="btn sm quiet" data-act="drop" data-ref="${esc(x.ref)}" title="Drop this stash; its changes are only in the reflog afterwards">Drop</button></div>`).join('') || '<div class="list-row muted"><span>No stashes</span></div>'
   // History and the log reload only when HEAD or a ref moved; "contains" answers go stale at the same moment.
   const key = `${s.head || ''}:${s.refsSig || ''}`
@@ -1787,7 +1924,7 @@ async function runRefAction(i) {
   closeRefMenu()
   toggleBranchPop(false)
   if (what === 'new') {
-    const name = prompt(`New branch from ${ref}`, '')?.trim()
+    const name = await ask({ title: 'New branch', icon: 'branch', ok: 'Create', html: `<p class="note">Starts from <b>${esc(ref)}</b>.</p>`, input: { label: 'Branch name', placeholder: 'feature/name' } })
     if (name) await gitAction({ action: 'branch:create', from: name, to: ref })
   } else if (what === 'compare') {
     startCompare(state.status.branch, ref)
@@ -1875,7 +2012,8 @@ function switchRepo(port, newTab) {
 // says the server is gone, like any other lost connection.
 async function stopRepo(port, all) {
   const what = all ? 'every echo process' : basename(repos.find(r => r.port === port)?.root || '')
-  if (!confirm(`Stop ${all ? what : what + '’s echo process'}? Running work in it is finished first.`)) return
+  const ok = await ask({ title: all ? 'Stop every echo process?' : `Stop ${what}?`, tone: 'danger', icon: 'stop', ok: 'Stop', html: `<p>${all ? 'Every repository open in echo will stop.' : `<b>${esc(what)}</b>’s echo process will stop.`}</p><p class="note">Running work is finished first. Reopen a repository with the <code>echo</code> command in its folder.</p>` })
+  if (!ok) return
   try { await post('/api/shutdown', { port: all ? 0 : port, all }) } catch (e) { return setStatus(e.message, 'err') }
   if (all || port === +location.port) return setStatus('echo is stopping.', 'ok')
   setStatus(`stopped ${what}`, 'ok')
@@ -2331,7 +2469,7 @@ async function gitAction(body, button) {
     // Remote output leads with "To <url>" or progress lines; say what happened and keep Git's text in the tooltip.
     const done = { fetch: 'Fetched all remotes', pull: 'Pulled', push: 'Pushed', sync: 'Synced', publish: 'Published' }[body.action]
     setStatus(done ? `${done}\n${out.output || ''}` : out.output || `git ${body.action} done`, 'ok')
-    if (body.action === 'commit' || body.action === 'amend') $('#commit-message').value = ''
+    if (['commit', 'commit:all', 'amend'].includes(body.action)) $('#commit-message').value = ''
   } catch (e) { setStatus(e.message, 'err') }
   finally { if (net) { document.body.classList.remove('net-busy'); button?.classList.remove('busy') } }
   await refreshAll()
@@ -2470,6 +2608,7 @@ $('#queue').addEventListener('click', e => {
     const sec = group.dataset.sec
     if (act === 'stage-all') stage(groupPaths(sec))
     else if (act === 'unstage-all') unstage(groupPaths(sec))
+    else if (act === 'discard-all') discardAll()
     else { state.qClosed.has(sec) ? state.qClosed.delete(sec) : state.qClosed.add(sec); renderQueue() }
     return
   }
@@ -2693,7 +2832,7 @@ $('#branch-list').addEventListener('click', e => {
 })
 $('#bp-new').onclick = async () => {
   toggleBranchPop(false)
-  const name = prompt('New branch from the current commit', '')?.trim()
+  const name = await ask({ title: 'New branch', icon: 'branch', ok: 'Create', html: '<p class="note">Starts from the current commit.</p>', input: { label: 'Branch name', placeholder: 'feature/name' } })
   if (name) await gitAction({ action: 'branch:create', from: name })
 }
 $('#ref-menu').addEventListener('click', e => { const b = e.target.closest('.menu-item'); if (b && menuFor) runRefAction(+b.dataset.i) })
@@ -2849,9 +2988,21 @@ for (const side of ['tree', 'git']) {
     scheduleWidthSave()
   }
 }
-$('#commit').onclick = () => gitAction({ action: 'commit', message: $('#commit-message').value })
-$('#amend').onclick = () => gitAction({ action: 'amend', message: $('#commit-message').value })
-$('#stage-all').onclick = () => { const paths = [...state.changes.keys()]; if (paths.length) gitAction({ action: 'add', paths }) }
+$('#commit').onclick = () => doCommit(!!state.config.commitAll)
+$('#commit-more').onclick = e => { e.stopPropagation(); toggleCommitMenu($('#commit-menu').hidden) }
+$('#commit-menu').addEventListener('click', e => {
+  const act = e.target.closest('[data-c]')?.dataset.c
+  toggleCommitMenu(false)
+  if (act === 'staged') doCommit(false)
+  else if (act === 'all') doCommit(true)
+  else if (act === 'amend') amend()
+})
+document.addEventListener('click', e => { if (!e.target.closest('#commit-menu, #commit-more')) toggleCommitMenu(false) })
+$('#commit-all').onchange = async () => {
+  state.config.commitAll = $('#commit-all').checked
+  renderCommit()
+  try { await post('/api/config', { commitAll: state.config.commitAll }); setStatus('Settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
+}
 $('#switch-branch').onclick = () => gitAction({ action: 'branch:switch', from: $('#branch-select').value })
 $('#create-branch').onclick = () => gitAction({ action: 'branch:create', from: $('#new-branch').value.trim() }).then(() => { $('#new-branch').value = '' })
 const upstream = () => { const t = state.status?.tracking; return !!(t && t.upstream && !t.gone) }
@@ -2894,6 +3045,8 @@ $('#palette-input').addEventListener('keydown', e => {
 })
 
 document.addEventListener('keydown', e => {
+  if (dlg) { if (e.key === 'Escape') { e.preventDefault(); dlg.done(null) } return }
+  if (e.key === 'Escape' && !$('#commit-menu').hidden) { e.preventDefault(); toggleCommitMenu(false); $('#commit-more').focus(); return }
   if (!$('#palette').hidden) return
   if (mod(e)) {
     const k = e.key.toLowerCase()
@@ -2944,7 +3097,7 @@ document.addEventListener('keydown', e => {
 window.addEventListener('beforeunload', e => { if (state.tabs.some(t => t.content !== t.saved)) e.preventDefault() })
 
 async function loadConfig() {
-  try { state.config = await api('/api/config'); $('#vim-mode').checked = !!state.config.vim } catch {}
+  try { state.config = await api('/api/config'); $('#vim-mode').checked = !!state.config.vim; $('#commit-all').checked = !!state.config.commitAll; renderCommit() } catch {}
   if (state.config.diffMode !== 'split') state.config.diffMode = 'unified'
   // A hand-edited or older config can hold a width that no longer fits the range; keep the default.
   for (const side of ['tree', 'git']) {

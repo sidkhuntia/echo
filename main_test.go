@@ -1006,3 +1006,22 @@ func TestMermaidServedFromZip(t *testing.T) {
 		t.Errorf("license missing: %d", w.Code)
 	}
 }
+
+// Stage-all-and-commit takes staged, unstaged and untracked work in one commit.
+func TestCommitAllTakesEverything(t *testing.T) {
+	a := testRepo(t)
+	if _, err := a.commitAll("  "); err == nil {
+		t.Error("empty message accepted")
+	}
+	for _, kv := range [][2]string{{"commit.gpgsign", "false"}, {"user.name", "t"}, {"user.email", "t@t"}} {
+		if _, err := a.gitCombined("config", kv[0], kv[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := a.commitAll("everything"); err != nil {
+		t.Fatal(err)
+	}
+	if s := a.gitStatus(); len(s.Changes) != 0 {
+		t.Errorf("changes left after commit-all: %+v", s.Changes)
+	}
+}
