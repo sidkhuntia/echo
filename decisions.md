@@ -239,7 +239,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** each tab stores `path`, current content, last-saved content, and editor mode.
 - **Default:** the active tab is the only tab rendered in the editor surface.
 - **Default:** a dirty tab is indicated visually.
-- **Deferred:** tab restore.
+- **Accepted (2026-10-01):** the session is restored when a page loads (§19b). Closed tabs are still not reopened.
 - **Deferred:** split tab groups.
 - **Deferred:** recent-repository list.
 
@@ -491,6 +491,17 @@ These are not rejected. They are waiting until the basic review loop is proven:
 - Changes rows select like a file manager (click, ⌘/Ctrl-click, Shift-click), one group at a time; bulk actions are Stage and Unstage only. Bulk discard stays behind the existing Discard all dialog.
 - A branch without an upstream offers Publish Branch instead of Pull. The pull request link comes from the host's own push output, with a built GitHub link as the only fallback; other hosts get no link rather than a guessed one.
 - Stopping the current repository navigates to another open echo, else tries `window.close()`.
+
+## 19b. Session restore (2026-10-01)
+
+- **Accepted:** switching repositories navigates the tab to another port and the page reloads, so echo saves what was on screen and puts it back. Each repository is its own origin, so `localStorage` (`echo:session`) is already one store per repository; no server state, no new endpoint.
+- **Accepted:** restored: mode (Review, Files, Log), sidebar rail, Git drawer tab and open state, diff scope with its ref inputs and whitespace toggle, the diff position (a file and an offset inside it, so edits above do not shift it), open tabs with caret, scroll and preview mode, **unsaved editor buffers**, the commit message draft, the Changes/Files/Branches filter and folded groups, the content-search query and options, and the Log's filters and selected commit.
+- **Accepted:** the saved root must equal the running repository's root, so a port later given to another repository starts fresh.
+- **Accepted:** an unsaved buffer keeps the disk hash it was edited from. If the file changed on disk meanwhile, the tab comes back with the usual conflict banner and saving asks before overwriting; a file deleted meanwhile comes back with the deleted banner.
+- **Accepted:** because edits are kept, the browser's "Leave site?" prompt and the stale-build reload refusal apply only when the buffers could not be stored (storage blocked or over the 1 MB draft budget).
+- **Default:** saved on `pagehide`, when the tab is hidden, and 400 ms after input, clicks, keys or scrolling. Status updates that arrive while restoring wait until it finishes.
+- **Accepted:** two browser tabs on the same repository share one session; the last to save wins.
+- **Accepted:** the editor remembers each tab's caret and scroll when switching tabs within a session, using the same fields.
 
 ## 20. Implementation rules
 

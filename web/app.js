@@ -142,7 +142,8 @@ function applyStatus(s) {
 }
 
 function staleBuild() {
-  if (state.tabs.some(t => t.content !== t.saved)) {
+  persistSession()
+  if (!sessionSaved && state.tabs.some(t => t.content !== t.saved)) {
     setStatus('echo was updated. Save your edits, then reload the page.', 'err')
     return
   }
@@ -976,6 +977,7 @@ function renderTabs() {
   $('#tabs').innerHTML = state.tabs.map((t, i) => `<div class="tab ${i === state.active && state.mode === 'file' ? 'active' : ''} ${t.content !== t.saved ? 'dirty' : ''}" data-i="${i}" title="${esc(t.path)}"><span>${esc(basename(t.path))}</span><button class="x" data-close="${i}" title="Close"><span>×</span></button></div>`).join('')
 }
 
+let shownTab = null
 function renderEditor() {
   const file = state.mode === 'file'
   const tab = activeTab()
@@ -1000,7 +1002,16 @@ function renderEditor() {
   $('#editor').classList.toggle('active', editing)
   $('#gutter').classList.toggle('active', editing)
   $('#save').disabled = !tab || tab.content === tab.saved
-  if (editing && $('#editor').value !== tab.content) $('#editor').value = tab.content
+  if (editing && shownTab !== tab) {
+    // The textarea is shared by every tab: keep where the outgoing one was, and put the incoming one back.
+    const ed = $('#editor')
+    if (shownTab) Object.assign(shownTab, { caret: ed.selectionStart, scroll: ed.scrollTop })
+    shownTab = tab
+    if (ed.value !== tab.content) ed.value = tab.content
+    const at = Math.min(tab.caret || 0, ed.value.length)
+    ed.setSelectionRange(at, at)
+    ed.scrollTop = tab.scroll || 0
+  } else if (editing && $('#editor').value !== tab.content) $('#editor').value = tab.content
   if (file && !text) {
     $('#highlight').innerHTML = !tab
       ? `<div class="empty"><b>No file open</b>Press <kbd>⌘K</kbd> or pick a file from the sidebar.</div>`
@@ -1723,7 +1734,7 @@ async function fileAction(action, dir = '') {
 // setMode returns a promise that settles once the diff is current, so callers can scroll within it.
 function setMode(m) {
   const was = state.mode
-  if (was === 'diff' && m !== 'diff') state.diffScroll = $('#diff').scrollTop
+  if (was === 'diff' && m !== 'diff') { state.diffScroll = $('#diff').scrollTop; state.diffPos = diffPos() }
   state.mode = m
   document.querySelectorAll('.mode-switch button').forEach(b => b.classList.toggle('on', b.dataset.mode === m))
   $('#diff-bar').hidden = m !== 'diff'
@@ -3358,7 +3369,9 @@ document.addEventListener('keydown', e => {
   }
   e.preventDefault()
 })
-window.addEventListener('beforeunload', e => { if (state.tabs.some(t => t.content !== t.saved)) e.preventDefault() })
+// Unsaved edits are kept with the session and come back on the next visit, so the browser only needs
+// to ask when they could not be kept.
+window.addEventListener('beforeunload', e => { persistSession(); if (!sessionSaved && state.tabs.some(t => t.content !== t.saved)) e.preventDefault() })
 
 async function loadConfig() {
   try { state.config = await api('/api/config'); $('#vim-mode').checked = !!state.config.vim; $('#commit-all').checked = !!state.config.commitAll; renderCommit() } catch {}
@@ -3377,9 +3390,154 @@ async function loadConfig() {
   applyTheme()
 }
 
+// ---------- session ----------
+// Every repository has its own origin (its own port), so localStorage is already one store per repository.
+// Switching away navigates the tab and the page reloads, so what was on screen is saved on the way out and
+// put back on the way in: the mode, rails and diff scope, open tabs with unsaved edits, caret and scroll,
+// the diff position, and the commit message draft. The saved root guards against a port that later serves
+// another repository; a file that changed on disk meanwhile comes back with the usual conflict banner.
+const SESSION_KEY = 'echo:session', DRAFT_MAX = 1 << 20
+let sessionReady = false, sessionSaved = true, sessionTimer = 0
+
+// Where the review is, as a file and an offset inside it, so edits above it do not shift the place.
+function diffPos() {
+  const view = $('#diff'), f = state.diffFiles[state.current]
+  const el = f && view.querySelector(`.dfile[data-i="${state.current}"]`)
+  return el ? { path: f.path, off: Math.round(view.scrollTop - offsetIn(el, view)) } : null
+}
+
+function snapshotSession() {
+  const ed = $('#editor'), editing = state.mode === 'file' && !!activeTab()
+  let room = DRAFT_MAX, kept = true
+  const tabs = state.tabs.map((t, i) => {
+    const live = editing && i === state.active
+    const content = live ? ed.value : t.content
+    const o = { path: t.path, preview: !!t.preview, mdScroll: t.mdScroll || 0, caret: live ? ed.selectionStart : t.caret || 0, scroll: live ? ed.scrollTop : t.scroll || 0 }
+    if (!t.binary && content !== t.saved) {
+      if (content.length <= room) { room -= content.length; o.draft = { content, hash: t.hash } } else kept = false
+    }
+    return o
+  })
+  const L = state.log, sec = state.mode === 'log' && state.railBeforeLog ? state.railBeforeLog : state.rail
+  return [kept, {
+    v: 1, root: state.status?.root || '',
+    mode: state.mode, rail: sec, insp: $('#insp').dataset.insp, drawer: gitOpen() && !gitPinned(),
+    scope: scope(), from: $('#diff-from').value, to: $('#diff-to').value, commit: $('#diff-commit').value, full: state.commit,
+    ws: $('#ignore-ws').checked, dots: state.rangeDots,
+    tabs, active: editing ? activeTab().path : state.tabs[state.active]?.path || '', selected: state.selected,
+    diffPos: state.mode === 'diff' ? diffPos() : state.diffPos || null,
+    filter: $('#file-filter').value, message: $('#commit-message').value,
+    search: { q: $('#search-input').value, opts: state.search.opts },
+    log: { ref: $('#log-ref').value, q: $('#log-q').value, author: $('#log-author').value, path: $('#log-path').value, sel: L.sel },
+    folded: [...state.folded], dirOpen: [...state.dirOpen], qClosed: [...state.qClosed], bClosed: [...state.bClosed],
+  }]
+}
+
+function persistSession() {
+  clearTimeout(sessionTimer)
+  if (!sessionReady) return
+  try {
+    const [kept, snap] = snapshotSession()
+    localStorage.setItem(SESSION_KEY, JSON.stringify(snap))
+    sessionSaved = kept
+  } catch { sessionSaved = false }
+}
+const scheduleSession = () => { if (sessionReady) { clearTimeout(sessionTimer); sessionTimer = setTimeout(persistSession, 400) } }
+for (const ev of ['input', 'change', 'click', 'keyup', 'scroll']) document.addEventListener(ev, scheduleSession, true)
+window.addEventListener('pagehide', persistSession)
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistSession() })
+
+function readSession(root) {
+  try {
+    const s = JSON.parse(localStorage.getItem(SESSION_KEY))
+    return s?.v === 1 && s.root === root ? s : null
+  } catch { return null }
+}
+
+// The inputs that the first render and the first diff read, put back before either runs.
+function restoreInputs(s) {
+  const pick = (id, v) => { if (typeof v === 'string') $(id).value = v }
+  if ([...$('#diff-scope').options].some(o => o.value === s.scope)) $('#diff-scope').value = s.scope
+  pick('#diff-from', s.from); pick('#diff-to', s.to); pick('#diff-commit', s.commit)
+  $('#ignore-ws').checked = !!s.ws
+  if (s.dots === '...') setRangeDots('...')
+  syncScopeInputs()
+  if (s.scope === 'commit' && typeof s.full === 'string') { state.commit = s.full; renderHistoryCurrent() }
+  pick('#file-filter', s.filter); pick('#commit-message', s.message)
+  state.folded = new Map(s.folded || []); state.dirOpen = new Map(s.dirOpen || [])
+  state.qClosed = new Set(s.qClosed || []); state.bClosed = new Set(s.bClosed || [])
+  const q = s.search || {}
+  pick('#search-input', q.q)
+  for (const k of Object.keys(state.search.opts)) state.search.opts[k] = !!q.opts?.[k]
+  document.querySelectorAll('.search-opts button').forEach(b => b.setAttribute('aria-pressed', state.search.opts[b.dataset.opt]))
+}
+
+async function restoreTabs(s) {
+  const got = await Promise.all((s.tabs || []).map(async t => { try { return [t, await fetchFile(t.path)] } catch { return [t, null] } }))
+  for (const [t, data] of got) {
+    const d = t.draft
+    if (!data && !d) continue
+    const tab = { path: t.path, seen: state.changes.get(t.path)?.hash ?? null, preview: isMarkdown(t.path) && !!t.preview, mdScroll: t.mdScroll, caret: t.caret, scroll: t.scroll }
+    if (data) Object.assign(tab, fromDisk(data))
+    else Object.assign(tab, { content: '', saved: null, eol: '\n', hash: d.hash, binary: false, conflict: 'deleted' })
+    if (d && !tab.binary) {
+      tab.content = d.content
+      // The file moved on while away: keep the base the edit was made on, so saving asks before overwriting.
+      if (data && data.hash !== d.hash) Object.assign(tab, { hash: d.hash, conflict: 'changed' })
+    }
+    state.tabs.push(tab)
+  }
+  state.active = state.tabs.findIndex(t => t.path === s.active)
+  if (state.active < 0 && state.tabs.length) state.active = 0
+  if (state.tabs.some(t => t.conflict)) setStatus('Restored your session — some files changed on disk while you were away', 'err')
+}
+
+async function restoreView(s) {
+  const L = s.log || {}
+  $('#log-q').value = L.q || ''; $('#log-author').value = L.author || ''; $('#log-path').value = L.path || ''
+  const ref = $('#log-ref')
+  if (L.ref) { if (![...ref.options].some(o => o.value === L.ref)) ref.add(new Option(L.ref, L.ref)); ref.value = L.ref }
+  state.log.sel = L.sel || ''
+  await restoreTabs(s)
+  state.selected = s.selected || ''
+  // The review is still the visible mode here, so its scroll position can be set before it is left.
+  const at = s.diffPos, i = at ? state.diffFiles.findIndex(f => f.path === at.path) : -1
+  if (i >= 0) {
+    state.current = -1
+    const view = $('#diff'), el = view.querySelector(`.dfile[data-i="${i}"]`)
+    if (el) { view.scrollTop = offsetIn(el, view) + at.off; updateCurrent() }
+  }
+  setRail(document.querySelector(`.rail-switch [data-rail="${s.rail}"]`) ? s.rail : state.rail)
+  if (document.querySelector(`.insp-switch [data-insp="${s.insp}"]`)) setInspector(s.insp)
+  // Applied after the config, which decides whether the drawer is pinned open.
+  if (s.drawer && !gitPinned()) { $('.desk').classList.add('git-open'); markRail() }
+  const mode = s.mode === 'file' && !activeTab() ? 'diff' : s.mode
+  if (['file', 'log'].includes(mode)) await setMode(mode)
+  renderTabs(); renderTree(); renderQueue()
+  if ((s.search?.q || '').length >= 2) scheduleSearch(0)
+}
+
+// Status messages that arrive while booting wait, so they cannot render over a half-restored page.
+let booting = true, pendingStatus = null
+async function boot() {
+  try {
+    const [, status] = await Promise.all([loadConfig(), api('/api/git/status')])
+    const saved = readSession(status.root)
+    if (saved) restoreInputs(saved)
+    state.treeStale = true
+    applyStatus(status)
+    await ensureTree()
+    renderTree()
+    await loadDiff()
+    if (saved) await restoreView(saved)
+  } catch (e) { setStatus(e.message, 'err') }
+  booting = false
+  sessionReady = true
+  if (pendingStatus) applyStatus(pendingStatus)
+  persistSession()
+}
 syncScopeInputs()
-loadConfig()
-refreshAll()
+boot()
 // Geist Mono can arrive after the first paint; the editor's measured character width and wrap
 // heights belong to whichever font was showing, so they are measured again once it is in.
 document.fonts?.ready.then(() => { charWidth = 0; wrap.tab = null; if (state.mode === 'file') renderEditor() })
@@ -3390,5 +3548,5 @@ events.onopen = () => {
   $('.live').classList.remove('off')
   if (state.disconnected) { state.disconnected = false; state.refsKey = '' }
 }
-events.onmessage = e => applyStatus(JSON.parse(e.data))
+events.onmessage = e => { const st = JSON.parse(e.data); if (booting) pendingStatus = st; else applyStatus(st) }
 events.onerror = () => { state.disconnected = true; $('.live').classList.add('off'); setStatus('Lost the echo server — retrying…', 'err') }

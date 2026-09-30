@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Switching repositories keeps your place**: coming back to a repository now restores what you left: Review, Files or Log, the sidebar tab, the Git drawer, the diff scope and your position in the diff, open tabs with caret and scroll, **unsaved edits**, the commit message you were writing, filters, the content-search query and the Log's filters. If a file changed on disk while you were away, its tab comes back with the conflict banner instead of overwriting anything. A port reused by another repository starts fresh. The browser no longer asks "Leave site?" about unsaved edits when they were stored; it still does if storage is blocked.
+- Switching between editor tabs now keeps each tab's caret and scroll position.
 - **Multi-select in Changes**: click picks a row, ⌘/Ctrl-click toggles, Shift-click extends a range within the group, Esc clears. With two or more picked, a bar offers Stage (or Unstage in the Staged group), and a row's own +/− acts on the whole pick.
 - **Publish Branch**: a branch with no upstream shows Publish Branch in the Git panel in place of Pull (and hides Push, which would do the same). Publishing shows a 12-second card with the pull request URL, a Copy button and an open-in-new-tab button. The URL is the one the host prints in the push output, or a built link for GitHub remotes.
 - The Log view opens a commit's diff in Review on a single click (Esc returns); the History tab already did.
