@@ -399,7 +399,7 @@ async function discardAll() {
     title: `Discard ${plural(rows.length, 'unstaged change')}`, kicker: 'no undo', tone: 'danger', ok: 'Discard all',
     html: `${fileListHTML(rows, 'work', 6, true)}<div class="slip-total"><span>${rows.length - fresh} edited · ${fresh} untracked</span><span>staged work is kept</span></div>`,
   })
-  if (ok) discard(rows.map(c => c.path), true)
+  if (ok) gitAction({ action: 'discard', paths: rows.map(c => c.path), worktree: true })
 }
 
 // Build a folder tree from the flat, sorted path list. Folders open by default when they hold a change or the open file.
@@ -486,10 +486,43 @@ $('#tree-collapse').onclick = () => {
   renderTree()
 }
 
-const stage = paths => paths.length && gitAction({ action: 'add', paths })
-const unstage = paths => paths.length && gitAction({ action: 'unstage', paths })
+// Staging shows its result at once: the lists and the commit button move to the new side before Git
+// answers, and the real status replaces this guess a moment later (or undoes it if Git refused).
+const sumStat = (a, b) => a && b ? { ...a, added: a.added + b.added, deleted: a.deleted + b.deleted } : a || b || null
+function guessStaged(paths, to) {
+  for (const path of paths) {
+    const c = state.changes.get(path)
+    if (!c || conflicted(c)) continue
+    if (to === 'staged' && c.work) {
+      state.changes.set(path, { ...c, code: (c.code === '??' ? 'A' : c.code[0] !== ' ' ? c.code[0] : c.code[1]) + ' ', index: sumStat(c.index, c.work), work: null, staged: true })
+    } else if (to === 'work' && c.index) {
+      state.changes.set(path, { ...c, code: c.code[0] === 'A' ? '??' : ' ' + c.code[0], work: sumStat(c.work, c.index), index: null, staged: false })
+    }
+  }
+  renderQueue(); renderGit()
+  state.diffFiles.forEach((f, i) => { if (paths.includes(f.path)) rerenderFile(i) })
+}
+const stage = paths => { if (!paths.length) return; guessStaged(paths, 'staged'); return gitAction({ action: 'add', paths }) }
+const unstage = paths => { if (!paths.length) return; guessStaged(paths, 'work'); return gitAction({ action: 'unstage', paths }) }
+// In the review, staging a file is a decision made, so the view moves on to the next file with work left.
+function advanceFrom(i) {
+  if (scope() !== 'head') return
+  const j = state.diffFiles.findIndex((f, k) => k > i && state.changes.get(f.path)?.work)
+  if (j >= 0) goFile(j)
+}
 // From the unstaged list or view only the working tree goes back to the index; elsewhere the file returns to HEAD.
-const discard = (paths, worktree) => paths.length && gitAction({ action: 'discard', paths, worktree })
+// Nothing brings a discarded change back, so one file asks too, not just "Discard all".
+async function discard(paths, worktree) {
+  if (!paths.length) return
+  const rows = paths.map(p => state.changes.get(p)).filter(Boolean)
+  const fresh = rows.filter(c => c.code === '??').length
+  const ok = await ask({
+    title: paths.length === 1 ? `Discard changes to ${basename(paths[0])}` : `Discard changes to ${plural(paths.length, 'file')}`,
+    kicker: 'no undo', tone: 'danger', ok: 'Discard',
+    html: `<p class="say">${worktree ? 'Unstaged changes go back to the index.' : 'Staged and unstaged changes go back to HEAD.'}${fresh ? ` ${plural(fresh, 'untracked file')} will be deleted.` : ''}</p>${fileListHTML(rows, worktree ? 'work' : 'staged', 6, true)}`,
+  })
+  if (ok) gitAction({ action: 'discard', paths, worktree })
+}
 
 // ---------- diff ----------
 function unquote(p) {
@@ -549,6 +582,7 @@ function scheduleDiff() { clearTimeout(diffTimer); diffTimer = setTimeout(loadDi
 
 async function loadDiff() {
   state.diffStale = false
+  state.cleanShown = false
   const sc = scope()
   const params = new URLSearchParams({ scope: sc, ignoreWhitespace: $('#ignore-ws').checked ? '1' : '0' })
   if (sc === 'range') {
@@ -567,20 +601,35 @@ async function loadDiff() {
     const data = await api('/api/diff?' + params)
     if (seq !== state.diffSeq) return
     state.diffFiles = parseDiff(data.text)
+    // Git lists untracked files last; the sidebar runs in path order, so the review does too.
+    if (LIVE.includes(sc)) state.diffFiles.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
     renderDiff()
   } catch (e) {
     if (seq === state.diffSeq) diffMessage('Can’t diff that', e.message)
   }
 }
 
-function diffMessage(title, body) {
+// A clean tree is the screen you see most while an agent works, so it says where the branch stands and
+// that echo is watching, instead of only saying nothing changed.
+function cleanHTML() {
+  const last = state.hist.commits[0], t = state.status?.tracking
+  const tracked = !!(t && t.upstream && !t.gone)
+  const line = (k, v) => `<div class="quiet-row"><span>${k}</span><b>${v}</b></div>`
+  return `<div class="quiet-card"><div class="quiet-watch"><span class="live"></span>Watching for changes</div>`
+    + (last ? line('Last commit', `<span class="mono">${esc(last.short)}</span> ${esc(last.subject)} <span class="faint">${ago(last.time)}</span>`) : '')
+    + (tracked ? line('Branch', t.ahead || t.behind ? `${t.behind ? `<span class="in">↓${t.behind}</span> ` : ''}${t.ahead ? `<span class="out">↑${t.ahead}</span> ` : ''}vs ${esc(t.upstream)}` : `up to date with ${esc(t.upstream)}`) : '')
+    + (tracked && t.ahead ? `<button class="btn sm" data-empty="sync">Push ${plural(t.ahead, 'commit')}</button>` : '')
+    + `</div>`
+}
+
+function diffMessage(title, body, extra = '') {
   state.diffFiles = []
   state.current = -1
   state.hunk = -1
   $('#diff-summary').textContent = ''
   renderTrace()
   renderPos()
-  $('#diff').innerHTML = `<div class="diff-empty"><div class="empty"><b>${esc(title)}</b>${esc(body)}</div></div>`
+  $('#diff').innerHTML = `<div class="diff-empty"><div class="empty"><b>${esc(title)}</b>${esc(body)}</div>${extra}</div>`
 }
 
 function isFolded(f) {
@@ -594,7 +643,8 @@ function renderDiff() {
   $('#diff-summary').innerHTML = files.length ? `${files.length} file${files.length === 1 ? '' : 's'}  <span class="add">+${added}</span> <span class="del">−${deleted}</span>` : ''
   if (!files.length) {
     const why = { head: ['Nothing to review', 'The working tree matches HEAD. When an agent writes something, it shows up here.'], worktree: ['No unstaged changes', 'Everything is staged or clean.'], staged: ['Nothing staged', 'Stage files from the sidebar to build a commit.'] }[scope()] || ['No differences', 'These refs point at the same content.']
-    return diffMessage(...why)
+    state.cleanShown = scope() === 'head'
+    return diffMessage(...why, state.cleanShown ? cleanHTML() : '')
   }
   const view = $('#diff'), top = view.scrollTop
   view.innerHTML = files.map(fileHTML).join('')
@@ -682,12 +732,13 @@ function fileHTML(f, i) {
   const letter = f.isNew ? 'A' : f.isDeleted ? 'D' : 'M'
   const canStage = c && (c.work || conflicted(c)) && sc !== 'staged'
   const canUnstage = c && c.index && !conflicted(c) && sc !== 'worktree'
+  // Discard sits alone at the far left, away from Stage, and is an icon that only turns red on hover.
   const acts = [
-    !f.isDeleted ? '<button class="btn quiet sm" data-act="open" title="o">Open</button>' : '',
+    c ? `<button class="btn quiet icon xs danger" data-act="discard" aria-label="Discard" title="${sc === 'worktree' ? 'Discard unstaged changes' : 'Discard every change since HEAD, staged or not'}">${ICON.discard}</button><span class="vr"></span>` : '',
+    !f.isDeleted ? '<button class="btn quiet sm" data-act="open" title="Open the file (o)">Open</button>' : '',
     state.status?.git ? '<button class="btn quiet sm" data-act="history" title="Commits that changed this file">History</button>' : '',
-    c ? `<button class="btn quiet sm" data-act="discard" title="${sc === 'worktree' ? 'Discard unstaged changes' : 'Discard every change since HEAD, staged or not'}">Discard</button>` : '',
-    canUnstage ? `<button class="btn quiet sm" data-act="unstage" title="Unstage">${ICON.minus}Unstage</button>` : '',
-    canStage ? `<button class="btn quiet sm" data-act="stage" title="Stage">${ICON.plus}Stage</button>` : '',
+    canUnstage ? `<button class="btn quiet sm" data-act="unstage" title="Unstage (u)">${ICON.minus}Unstage</button>` : '',
+    canStage ? `<button class="btn sm stage" data-act="stage" title="Stage and go to the next file (s)">${ICON.plus}Stage</button>` : '',
   ].join('')
   let body = ''
   if (!folded) {
@@ -909,6 +960,8 @@ function syncScopeInputs() {
   $('#ignore-ws').closest('label').hidden = false
   if (scope() !== 'commit') state.commit = ''
   renderHistoryCurrent()
+  // The clean-tree screen quotes the last commit, which may arrive after the diff.
+  if (state.cleanShown && !state.diffFiles.length) renderDiff()
 }
 
 // ---------- files and tabs ----------
@@ -1767,19 +1820,27 @@ function changeTally() {
 // The tally says what a commit would take; the button and hint say which commit the default is.
 function renderCommit() {
   const t = changeTally(), all = !!state.config.commitAll
+  const ns = t.staged.length, nu = t.unstaged.length
   const bit = (cls, n, word) => n ? `<span class="${cls}"><i></i>${n} ${word}</span>` : ''
-  $('#commit-tally').innerHTML = bit('s', t.staged.length, 'staged') + bit('u', t.unstaged.length, 'unstaged') || 'Clean'
-  $('#commit-label').textContent = all ? 'Stage all & Commit' : 'Commit'
+  $('#commit-tally').innerHTML = bit('s', ns, 'staged') + bit('u', nu, 'unstaged') || 'Clean'
+  // The button names exactly what it will commit. With something staged that is the staged files; with
+  // nothing staged it either takes everything (Commit stages everything) or waits for a file to be staged.
+  const takeAll = all && !ns
+  const label = takeAll ? (nu ? `Stage ${plural(nu, 'file')} & Commit` : 'Commit') : ns ? `Commit ${plural(ns, 'staged file')}` : 'Commit'
+  $('#commit-label').textContent = label
+  $('#commit').disabled = takeAll ? !nu : !ns
   // The rail and the title bar's Git button carry the same staged badge; one of them is on screen.
-  for (const id of ['#rail-staged', '#tb-staged']) { $(id).hidden = !t.staged.length; $(id).textContent = t.staged.length }
-  $('#git-toggle').title = t.staged.length ? `Git panel (⌘J) · ${plural(t.staged.length, 'file')} staged` : 'Git panel (⌘J)'
+  for (const id of ['#rail-staged', '#tb-staged']) { $(id).hidden = !ns; $(id).textContent = ns }
+  $('#git-toggle').title = ns ? `Git panel (⌘J) · ${plural(ns, 'file')} staged` : 'Git panel (⌘J)'
   const hint = $('#commit-hint')
-  hint.hidden = !(all && t.unstaged.length)
-  hint.textContent = `Stages ${plural(t.unstaged.length, 'unstaged change')} first, after you confirm.`
+  const words = takeAll && nu ? `Nothing is staged, so this commits all ${plural(nu, 'change')}, after you confirm.`
+    : !takeAll && !ns ? (nu ? 'Nothing staged yet. Stage files in Changes, or press s in the review.' : '')
+    : nu ? `${plural(nu, 'unstaged change')} stay out of this commit.` : ''
+  hint.hidden = !words
+  hint.textContent = words
   $('#revert-bar').hidden = !state.status?.reverting
-  $('#commit-menu').innerHTML = (all
-    ? '<button class="menu-item" data-c="staged" role="menuitem">Commit staged only</button>'
-    : '<button class="menu-item" data-c="all" role="menuitem">Stage all & Commit</button>')
+  $('#commit-menu').innerHTML = (nu && (ns || !all)
+    ? `<button class="menu-item" data-c="all" role="menuitem">${ns ? `Stage ${plural(nu, 'more file')} & Commit` : 'Stage all & Commit'}</button>` : '')
     + '<button class="menu-item" data-c="amend" role="menuitem">Amend last commit</button>'
 }
 
@@ -1840,6 +1901,9 @@ function renderGit() {
   const staged = [...state.changes.values()].filter(c => c.staged).length
   $('#staged-count').textContent = staged ? `${staged} staged` : 'Nothing staged'
   renderCommit()
+  const tr = s.tracking
+  $('#sum-branch').innerHTML = `${esc(s.branch || '')}${tr && !tr.gone && (tr.ahead || tr.behind) ? ` <span class="track">${tr.behind ? `<span class="in">↓${tr.behind}</span>` : ''}${tr.ahead ? `<span class="out">↑${tr.ahead}</span>` : ''}</span>` : ''}`
+  $('#sum-stash').textContent = (s.stashes || []).length || ''
   $('#stashes').innerHTML = (s.stashes || []).map(x => `<div class="list-row"><span title="${esc(x.subject)}"><b>${esc(x.ref)}</b> ${esc(x.subject)}</span><button class="btn sm" data-act="apply" data-ref="${esc(x.ref)}">Apply</button><button class="btn sm quiet" data-act="drop" data-ref="${esc(x.ref)}" title="Drop this stash; its changes are only in the reflog afterwards">Drop</button></div>`).join('') || '<div class="list-row muted"><span>No stashes</span></div>'
   // History and the log reload only when HEAD or a ref moved; "contains" answers go stale at the same moment.
   const key = `${s.head || ''}:${s.refsSig || ''}`
@@ -2839,12 +2903,13 @@ $('#diff').addEventListener('click', e => {
   const i = +sec.dataset.i, f = state.diffFiles[i]
   const act = e.target.closest('[data-act]')?.dataset.act
   if (act === 'open') openFile(f.path, { fromReview: true })
-  else if (act === 'stage') stage([f.path])
+  else if (act === 'stage') { stage([f.path]); advanceFrom(i) }
   else if (act === 'unstage') unstage([f.path])
   else if (act === 'discard') discard([f.path], scope() === 'worktree')
   else if (act === 'history') openFileHistory(f.path)
   else if (e.target.closest('.dfile-head')) toggleFold(i)
 })
+$('#diff').addEventListener('click', e => { if (e.target.closest('[data-empty="sync"]')) $('#sync').click() })
 $('#diff').addEventListener('dblclick', e => {
   const cell = e.target.closest('.tx[data-n]')
   const f = cell && state.diffFiles[+cell.closest('.dfile').dataset.i]
@@ -3215,7 +3280,7 @@ for (const side of ['tree', 'git']) {
     scheduleWidthSave()
   }
 }
-$('#commit').onclick = () => doCommit(!!state.config.commitAll)
+$('#commit').onclick = () => doCommit(!!state.config.commitAll && !changeTally().staged.length)
 $('#commit-more').onclick = e => { e.stopPropagation(); toggleCommitMenu($('#commit-menu').hidden) }
 $('#commit-menu').addEventListener('click', e => {
   const act = e.target.closest('[data-c]')?.dataset.c
@@ -3335,7 +3400,7 @@ document.addEventListener('keydown', e => {
     else if (k === 'd') { e.preventDefault(); setMode(state.mode === 'diff' ? 'file' : 'diff') }
     else if (k === 's') { e.preventDefault(); saveFile() }
     else if (k === 'v' && e.shiftKey && state.mode === 'file' && isMarkdown(activeTab()?.path || '')) { e.preventDefault(); setPreview(!activeTab().preview) }
-    else if (e.key === 'Enter' && e.target.id === 'commit-message') { e.preventDefault(); $('#commit').click() }
+    else if (e.key === 'Enter' && e.target.id === 'commit-message') { e.preventDefault(); $('#commit').disabled ? setStatus('Nothing is staged yet', 'err') : $('#commit').click() }
     return
   }
   if (e.key === 'Escape' && find.open && e.target.id === 'editor') { e.preventDefault(); closeFind(false); return }
@@ -3364,6 +3429,13 @@ document.addEventListener('keydown', e => {
     case 'j': state.mode === 'diff' ? stepHunk(1) : vimStep(1); break
     case 'k': state.mode === 'diff' ? stepHunk(-1) : vimStep(-1); break
     case 'e': if (state.mode === 'diff') openCurrentHunk(); break
+    case 's': case 'u': {
+      const f = state.mode === 'diff' ? state.diffFiles[state.current] : null, c = f && state.changes.get(f.path)
+      if (!c) break
+      if (e.key === 's' && c.work) { stage([f.path]); advanceFrom(state.current) }
+      else if (e.key === 'u' && c.index) unstage([f.path])
+      break
+    }
     case 'o': { const p = currentPath(); if (p && state.mode === 'diff' && !state.diffFiles[state.current]?.isDeleted) openFile(p, { fromReview: true }); break }
     default: return
   }

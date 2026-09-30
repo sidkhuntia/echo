@@ -437,9 +437,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 .srow .stext { overflow: hidden; text-overflow: ellipsis; }
 .srow mark { background: var(--accent-soft); color: var(--fg); border-radius: 2px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
 .tree-acts { display: flex; gap: 2px; padding: 6px 8px; border-top: 1px solid var(--line); flex: none; }
-.side-foot { border-top: 1px solid var(--line); padding: 8px 12px; display: flex; gap: 12px; color: var(--faint); font-size: 11px; flex: none; }
-.side-foot span { display: inline-flex; gap: 3px; align-items: center; }
-.rail-files .side-foot { display: none; }
 
 .empty { padding: 36px 20px; text-align: center; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 .empty b { display: block; font-size: 14px; font-weight: 600; color: var(--fg); margin-bottom: 4px; }
@@ -1011,3 +1008,38 @@ label.set-row { cursor: pointer; }
 .toast-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
 .toast-url { color: var(--accent); font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
 .toast-url:hover { text-decoration: underline; }
+
+/* ---------- UX pass: staging, commit panel, clean tree ---------- */
+.dacts { align-items: center; }
+.dacts .vr { height: 14px; margin: 0 4px; }
+/* Discard is a quiet icon that only turns red when you aim at it; Stage is the one filled action. */
+.btn.danger:hover, .btn.danger:focus-visible { color: var(--del); background: color-mix(in srgb, var(--del) 14%, transparent); }
+.dacts .btn.stage { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.dacts .btn.stage:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+#commit:disabled { opacity: .45; cursor: default; }
+#commit-hint { line-height: 1.4; }
+/* Branch & sync and Stash stay folded until needed, so the commit box owns the panel. */
+.fold-sec { gap: 0; padding: 0; }
+.fold-sec > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 11px 14px; font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.fold-sec > summary::-webkit-details-marker { display: none; }
+.fold-sec > summary::before { content: '▸'; width: 10px; font-size: 10px; color: var(--faint); transition: transform .12s; }
+.fold-sec[open] > summary::before { transform: rotate(90deg); }
+.fold-sec > summary:hover { color: var(--fg); }
+.fold-sec > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.fold-sec > summary .sum { margin-left: auto; letter-spacing: 0; text-transform: none; font-weight: 400; color: var(--faint); display: inline-flex; gap: 6px; }
+.fold-sec[open] { gap: 8px; padding-bottom: 14px; }
+.fold-sec[open] > summary { padding-bottom: 3px; }
+.fold-sec > :not(summary) { margin-inline: 14px; }
+.fold-sec[open] > :not(summary) { margin-top: 8px; }
+.fold-sec[open] > summary + * { margin-top: 0; }
+/* A clean tree says where the branch stands. */
+.quiet-card { margin: 18px auto 0; width: min(420px, 90%); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; text-align: left; font-size: 12.5px; color: var(--muted); }
+.quiet-watch { display: flex; align-items: center; gap: 8px; color: var(--fg); font-weight: 500; }
+.quiet-row { display: flex; gap: 12px; align-items: baseline; }
+.quiet-row > span { flex: none; width: 82px; font: 10.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.quiet-row > b { font-weight: 400; color: var(--fg-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quiet-card .btn { align-self: flex-start; }
+@media (prefers-reduced-motion: reduce) { .fold-sec > summary::before { transition: none; } }
+.diff-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.quiet-row .in, .sum .in { color: var(--warn); }
+.quiet-row .out, .sum .out { color: var(--accent); }

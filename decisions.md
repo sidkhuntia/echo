@@ -512,6 +512,16 @@ These are not rejected. They are waiting until the basic review loop is proven:
 - **Accepted:** two browser tabs on the same repository share one session; the last to save wins.
 - **Accepted:** the editor remembers each tab's caret and scroll when switching tabs within a session, using the same fields.
 
+## 19c. Review-loop UX pass (2026-10-01)
+
+- **Accepted:** a stage or unstage shows its result before Git answers. The client moves the file between groups, updates the commit button and re-renders its diff section from a guess; the next status replaces the guess, so a refused `git add` corrects itself.
+- **Accepted:** staging a file from the review (the Stage button or `s`) jumps to the next file that still has unstaged work, in All changes only. Staging from the sidebar never moves the view, because that is often a batch. `u` unstages the current file.
+- **Accepted:** the commit button names its contents. Staged files present: it commits them, and the menu offers "Stage n more & Commit". Nothing staged: it stages everything if "Commit stages everything" is on (after the usual confirmation), otherwise it is disabled with a hint. This corrects the earlier rule that the setting always staged everything.
+- **Accepted:** discarding one file asks, as Discard all does. The file header's Discard is an icon, away from Stage.
+- **Default:** the Git panel's Commit tab shows the commit box; Branch & sync (switch, create, pull, push, merge, rebase) and Stash are folded `<details>` sections with a one-line summary.
+- **Default:** the review sorts files by path, matching the sidebar; Git lists untracked files last.
+- **Default:** the clean-tree message also shows the last commit, tracking state and, when commits are waiting, a Push button that presses the title bar's Sync.
+
 ## 20. Implementation rules
 
 - Keep the Go server small and explicit.

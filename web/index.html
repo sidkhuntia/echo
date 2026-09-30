@@ -90,7 +90,6 @@
       <div id="search-meta" class="search-meta"></div>
       <div id="search-results" class="list"></div>
     </div>
-    <div class="side-foot"><span><kbd>n</kbd><kbd>p</kbd> file</span><span><kbd>j</kbd><kbd>k</kbd> hunk</span><span><kbd>e</kbd> edit</span></div>
   </aside>
 
   <section class="pane review">
@@ -196,8 +195,8 @@
           <span class="btn-split"><button class="btn sm" data-revert="revert:continue">Continue</button><button class="btn sm" data-revert="revert:abort">Abort</button></span>
         </div>
       </section>
-      <section class="sec" data-for="commit">
-        <h4>Branch</h4>
+      <details class="sec fold-sec" data-for="commit">
+        <summary><span>Branch &amp; sync</span><span id="sum-branch" class="sum"></span></summary>
         <div class="hrow join"><select id="branch-select" class="field"></select><button id="switch-branch" class="btn">Switch</button></div>
         <div class="hrow join"><input id="new-branch" class="field" placeholder="New branch name" autocomplete="off" spellcheck="false"><button id="create-branch" class="btn">Create</button></div>
         <div class="sync">
@@ -210,12 +209,12 @@
           <button id="merge" class="btn quiet" title="Merge the selected branch">Merge</button>
           <button id="rebase" class="btn quiet" title="Rebase onto the selected branch">Rebase</button>
         </div>
-      </section>
-      <section class="sec" data-for="commit">
-        <h4>Stash</h4>
+      </details>
+      <details class="sec fold-sec" data-for="commit">
+        <summary><span>Stash</span><span id="sum-stash" class="sum"></span></summary>
         <div class="hrow join"><input id="stash-message" class="field" placeholder="Message (optional)" autocomplete="off"><button id="stash-create" class="btn">Stash</button></div>
         <div id="stashes"></div>
-      </section>
+      </details>
       <section class="sec" data-for="history">
         <h4>Recent commits <span class="dim">click for details and diff</span></h4>
         <div id="history"></div>
@@ -233,7 +232,7 @@
   <span class="live"></span>
   <span id="status">Ready</span>
   <span id="pos" class="pos"></span>
-  <span class="console-help"><span><kbd>j</kbd><kbd>k</kbd> hunk</span><span><kbd>n</kbd><kbd>p</kbd> file</span><span><kbd>e</kbd> edit</span><span><kbd>⌘J</kbd> Git</span><span><kbd>?</kbd> keys</span></span>
+  <span class="console-help"><span><kbd>j</kbd><kbd>k</kbd> hunk</span><span><kbd>n</kbd><kbd>p</kbd> file</span><span><kbd>s</kbd> stage</span><span><kbd>e</kbd> edit</span><span><kbd>⌘J</kbd> Git</span><span><kbd>?</kbd> keys</span></span>
 </footer>
 
 <div id="ref-menu" class="menu" role="menu" hidden></div>
@@ -294,6 +293,7 @@
       <dt><kbd>⌘↵</kbd></dt><dd>Commit (in the message box)</dd>
       <dt><kbd>n</kbd> <kbd>p</kbd></dt><dd>Next / previous changed file</dd>
       <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next / previous hunk</dd>
+      <dt><kbd>s</kbd> <kbd>u</kbd></dt><dd>Stage (and go to the next file) / unstage the current file</dd>
       <dt><kbd>e</kbd></dt><dd>Edit the current hunk in the file (or double-click a line)</dd>
       <dt><kbd>o</kbd></dt><dd>Open current file</dd>
       <dt><kbd>Esc</kbd></dt><dd>In the editor: back to the review line you came from</dd>
@@ -347,7 +347,7 @@
       </section>
       <section class="set-sec" data-pane="commit" hidden>
         <h4>Commit</h4>
-        <label class="set-row"><span class="set-text"><b>Commit stages everything</b><small>Commit also takes unstaged changes, after it asks.</small></span><span class="toggle"><input id="commit-all" type="checkbox"><span class="sw"></span></span></label>
+        <label class="set-row"><span class="set-text"><b>Commit stages everything</b><small>With nothing staged, Commit takes every change, after it asks. Once you stage a file, it commits only the staged files.</small></span><span class="toggle"><input id="commit-all" type="checkbox"><span class="sw"></span></span></label>
       </section>
     </div>
     </div>

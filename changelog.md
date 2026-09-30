@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **UX pass on the review loop**:
+  - Staging shows its result at once: the lists, the trace and the commit button move before Git answers, and the real status replaces the guess a moment later.
+  - Staging a file from the review (its **Stage** button, or `s`) moves on to the next file with work left. `u` unstages the current file.
+  - The Commit button says what it will commit ("Commit 2 staged files", "Stage 4 files & Commit"). With something staged it commits only the staged files, even with "Commit stages everything" on. That setting now means "when nothing is staged". With nothing to commit the button is disabled and a line says why.
+  - A single-file Discard now asks first, like Discard all. In a file header it is a quiet icon at the far left, away from Stage, and only turns red on hover. Stage is the one filled action.
+  - The Git panel leads with the commit box. Branch & sync and Stash are folded sections that show the branch (with ↑/↓) and the stash count.
+  - The review lists files in the same path order as the sidebar; untracked files no longer come last.
+  - A clean tree shows "Watching for changes", the last commit, and where the branch stands, with a Push button when commits are waiting.
+  - The key hints under the sidebar are gone; the status bar has them (now including `s` stage).
 - **Install channels**: prebuilt macOS binaries (arm64, amd64) named `echo-desk`, released by pushing a `v*` tag. Install with Homebrew (`brew install sidkhuntia/tap/echo-desk`), `install.sh` (verifies the SHA-256 from `checksums.txt`), or a release tarball. New `-version` flag. Release builds are stripped and `-trimpath`: 8.9 MB, down from 11.9 MB. See `PUBLISHING.md`.
 - **Security hardening**: symlinks inside a repository can no longer be followed to files outside it; the page can no longer write into `.git`; all responses now carry a CSP, `nosniff`, frame and referrer headers; request bodies are capped and the server has header/idle timeouts; Git runs with `core.fsmonitor=false`; the config directory is private (0700). The theme bootstrap moved from an inline script to `web/theme-init.js` so the CSP can forbid inline script. CI now runs `govulncheck`.
 - **Switching repositories keeps your place**: coming back to a repository now restores what you left: Review, Files or Log, the sidebar tab, the Git drawer, the diff scope and your position in the diff, open tabs with caret and scroll, **unsaved edits**, the commit message you were writing, filters, the content-search query and the Log's filters. If a file changed on disk while you were away, its tab comes back with the conflict banner instead of overwriting anything. A port reused by another repository starts fresh. The browser no longer asks "Leave site?" about unsaved edits when they were stored; it still does if storage is blocked.
