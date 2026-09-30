@@ -1025,3 +1025,127 @@ func TestCommitAllTakesEverything(t *testing.T) {
 		t.Errorf("changes left after commit-all: %+v", s.Changes)
 	}
 }
+
+// Soft reset backs the branch up and leaves the undone work staged; it refuses anything that is not
+// an earlier commit on the current branch.
+func TestResetSoft(t *testing.T) {
+	a := testRepo(t)
+	run := func(args ...string) string {
+		cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		cmd.Dir = a.root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	act := func(body string, want int) string {
+		t.Helper()
+		w := request(a, http.MethodPost, "/api/git", body)
+		if w.Code != want {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body)
+		}
+		return w.Body.String()
+	}
+	run("config", "commit.gpgsign", "false")
+	run("config", "user.name", "t")
+	run("config", "user.email", "t@t")
+	main := run("branch", "--show-current")
+	run("stash", "-u")
+	base := run("rev-parse", "HEAD")
+	for _, f := range []string{"one.txt", "two.txt"} {
+		if err := os.WriteFile(filepath.Join(a.root, f), []byte(f+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run("add", f)
+		run("commit", "-q", "-m", "add "+f)
+	}
+	head := run("rev-parse", "HEAD")
+	act(`{"action":"reset:soft","from":"`+head+`"}`, http.StatusBadGateway)
+	act(`{"action":"reset:soft","from":"--hard"}`, http.StatusBadGateway)
+	if w := request(a, http.MethodGet, "/api/reset/preview?hash="+base, ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"count":2`) {
+		t.Fatalf("preview: %d %s", w.Code, w.Body)
+	}
+	act(`{"action":"reset:soft","from":"`+base+`"}`, http.StatusOK)
+	if got := run("rev-parse", "HEAD"); got != base {
+		t.Errorf("HEAD = %s, want %s", got, base)
+	}
+	if got := run("diff", "--cached", "--name-only"); got != "one.txt\ntwo.txt" {
+		t.Errorf("staged after reset = %q", got)
+	}
+	// A commit that is not an ancestor (a side branch) is refused.
+	run("switch", "-q", "-c", "side", head)
+	run("switch", "-q", main)
+	act(`{"action":"reset:soft","from":"side"}`, http.StatusBadGateway)
+}
+
+// Revert makes a new commit; a merge commit needs a mainline parent.
+func TestRevert(t *testing.T) {
+	a := testRepo(t)
+	run := func(args ...string) string {
+		cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		cmd.Dir = a.root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	act := func(body string, want int) {
+		t.Helper()
+		if w := request(a, http.MethodPost, "/api/git", body); w.Code != want {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	write := func(name, text string) {
+		if err := os.WriteFile(filepath.Join(a.root, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("config", "commit.gpgsign", "false")
+	run("config", "user.name", "t")
+	run("config", "user.email", "t@t")
+	main := run("branch", "--show-current")
+	run("stash", "-u")
+	write("a.txt", "a\n")
+	run("add", "a.txt")
+	run("commit", "-q", "-m", "add a")
+	added := run("rev-parse", "HEAD")
+	act(`{"action":"revert","from":"`+added+`"}`, http.StatusOK)
+	if _, err := os.Stat(filepath.Join(a.root, "a.txt")); !os.IsNotExist(err) {
+		t.Error("revert left a.txt behind")
+	}
+	if !strings.HasPrefix(run("log", "-1", "--format=%s"), "Revert") {
+		t.Error("revert did not create a Revert commit")
+	}
+	// merge commit
+	run("switch", "-q", "-c", "topic")
+	write("b.txt", "b\n")
+	run("add", "b.txt")
+	run("commit", "-q", "-m", "add b")
+	run("switch", "-q", main)
+	run("merge", "-q", "--no-ff", "-m", "merge topic", "topic")
+	merge := run("rev-parse", "HEAD")
+	act(`{"action":"revert","from":"`+merge+`"}`, http.StatusBadGateway)
+	act(`{"action":"revert","from":"`+merge+`","parent":3}`, http.StatusBadGateway)
+	act(`{"action":"revert","from":"`+merge+`","parent":1}`, http.StatusOK)
+	if _, err := os.Stat(filepath.Join(a.root, "b.txt")); !os.IsNotExist(err) {
+		t.Error("reverting the merge kept b.txt")
+	}
+	// A conflicting revert stops in the reverting state and can be aborted.
+	write("c.txt", "one\n")
+	run("add", "c.txt")
+	run("commit", "-q", "-m", "add c")
+	first := run("rev-parse", "HEAD")
+	write("c.txt", "two\n")
+	run("commit", "-q", "-am", "edit c")
+	act(`{"action":"revert","from":"`+first+`"}`, http.StatusBadGateway)
+	if !a.gitStatus().Reverting {
+		t.Fatal("status does not report the revert in progress")
+	}
+	act(`{"action":"reset:soft","from":"HEAD~1"}`, http.StatusBadGateway)
+	act(`{"action":"revert:abort"}`, http.StatusOK)
+	if a.gitStatus().Reverting {
+		t.Error("abort left the revert in progress")
+	}
+}

@@ -315,6 +315,14 @@ The following Git capabilities were accepted as part of the product direction:
 - Setting `commitAll` (off by default) makes Commit mean "stage everything, then commit". Any stage-all commit, whether from the setting or the split-button menu, asks first with a warning that staged and unstaged changes will both be committed. Committing staged only never asks.
 - `commit:all` runs `git add -A -- .` then `git commit`, and refuses while `git ls-files -u` shows conflicts, so a conflict cannot be marked resolved by accident.
 
+## 12c. Reset and Revert
+
+- **Accepted:** Reset branch here (soft only) and Revert are actions on a commit, shown in the commit details of the History tab and the Log. Mixed and hard reset are not offered: hard fits badly with the rule that echo's destructive actions are immediate, and soft loses no work.
+- **Default:** `reset:soft` asks first (unlike discard, it rewrites history), listing up to ten commits it will undo and counting those already on the upstream. It only warns about pushed commits; echo has no force push. Recovery is the reflog, and the success message names the old tip.
+- **Default:** the server allows a soft reset only to a strict ancestor of HEAD on a checked-out branch, with no merge, revert, cherry-pick, or rebase in progress (`/api/reset/preview` runs the same check for the dialog).
+- **Default:** `revert` runs `git revert --no-edit` with no confirmation, since it only adds a commit that can be reverted in turn. A merge commit needs a mainline `parent` (1-based, `-m`); the dialog asks, defaulting to 1, and the server rejects a missing or out-of-range parent.
+- **Default:** a revert that stops on conflicts leaves Git's `REVERT_HEAD`; the status reports `reverting` and the Commit card shows Continue (`revert --continue`, editor disabled) and Abort (`revert --abort`). This is the one exception to §10's "no continue/abort UI", because a stuck revert has no other exit in the app.
+
 ## 12a. Git window (IntelliJ / GitLens direction)
 
 - **Accepted:** the Git experience follows IntelliJ IDEA's Git tool window, with GitLens-style extras.

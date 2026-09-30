@@ -184,6 +184,10 @@ try {
           <button id="commit-more" class="btn primary caret" title="Other ways to commit" aria-haspopup="menu"><svg class="i" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
         </div>
         <div id="commit-hint" class="hint" hidden></div>
+        <div id="revert-bar" class="revert-bar" hidden>
+          <span>A revert stopped on conflicts. Fix and stage the files, then continue.</span>
+          <span class="split"><button class="btn sm" data-revert="revert:continue">Continue</button><button class="btn sm" data-revert="revert:abort">Abort</button></span>
+        </div>
       </section>
       <section class="sec" data-for="commit">
         <h4>Branch</h4>

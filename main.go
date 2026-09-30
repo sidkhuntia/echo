@@ -206,11 +206,13 @@ type GitStatus struct {
 	FetchedAt int64    `json:"fetchedAt"`
 	Changes   []Change `json:"changes"`
 	// Head and RefsSig change whenever history or any ref moves, so the browser knows when to reload the log.
-	Head     string   `json:"head"`
-	RefsSig  string   `json:"refsSig"`
-	Branches []string `json:"branches"`
-	Stashes  []Stash  `json:"stashes"`
-	Error    string   `json:"error,omitempty"`
+	Head    string `json:"head"`
+	RefsSig string `json:"refsSig"`
+	// Reverting is true while a revert stopped on conflicts and waits for Continue or Abort.
+	Reverting bool     `json:"reverting,omitempty"`
+	Branches  []string `json:"branches"`
+	Stashes   []Stash  `json:"stashes"`
+	Error     string   `json:"error,omitempty"`
 }
 
 type TreeNode struct {
@@ -227,6 +229,8 @@ type gitRequest struct {
 	From     string   `json:"from"`
 	To       string   `json:"to"`
 	StashRef string   `json:"stashRef"`
+	// Parent is the mainline (1-based) when reverting a merge commit.
+	Parent int `json:"parent"`
 	// Worktree limits discard to unstaged changes, so staged work survives.
 	Worktree bool `json:"worktree"`
 }
@@ -402,6 +406,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/blame", a.handleBlame)
 	mux.HandleFunc("/api/search", a.handleSearch)
 	mux.HandleFunc("/api/commit/contains", a.handleContains)
+	mux.HandleFunc("/api/reset/preview", a.handleResetPreview)
 	mux.HandleFunc("/api/stream", a.handleStream)
 	mux.HandleFunc("/api/config", a.handleConfig)
 	mux.HandleFunc("/api/instance", a.handleInstance)
@@ -803,6 +808,7 @@ func (a *App) gitStatus() GitStatus {
 	if out, err := a.git("rev-parse", "-q", "--verify", "HEAD"); err == nil {
 		status.Head = strings.TrimSpace(out)
 	}
+	status.Reverting = a.gitPathExists("REVERT_HEAD")
 	if out, err := a.git("for-each-ref", "--format=%(objectname) %(refname)"); err == nil {
 		status.RefsSig = hashBytes([]byte(out))[:12]
 	}
@@ -932,6 +938,10 @@ func (a *App) handleGit(w http.ResponseWriter, r *http.Request) {
 		out, err = a.discard(req.Paths, req.Worktree)
 	} else if req.Action == "commit:all" {
 		out, err = a.commitAll(req.Message)
+	} else if req.Action == "reset:soft" {
+		out, err = a.resetSoft(req.From)
+	} else if req.Action == "revert" {
+		out, err = a.revert(req.From, req.Parent)
 	} else if netActions[req.Action] {
 		if !a.net.TryLock() {
 			http.Error(w, "another fetch, pull, or push is still running", http.StatusConflict)
@@ -1002,6 +1012,11 @@ func (a *App) gitArgs(req gitRequest) ([]string, error) {
 			return []string{"branch", "-d", req.From}, nil
 		}
 		return []string{req.Action, req.From}, nil
+	case "revert:abort":
+		return []string{"revert", "--abort"}, nil
+	case "revert:continue":
+		// core.editor=true keeps Git from opening an editor for the revert message.
+		return []string{"-c", "core.editor=true", "revert", "--continue"}, nil
 	case "stash:create":
 		if strings.TrimSpace(req.Message) == "" {
 			req.Message = "echo stash"
@@ -1552,6 +1567,130 @@ func (a *App) handleCommit(w http.ResponseWriter, r *http.Request) {
 		d.Files[i].Added, d.Files[i].Deleted, d.Files[i].Binary = s.Added, s.Deleted, s.Binary
 	}
 	writeJSON(w, d)
+}
+
+// gitPathExists reports whether a file or directory exists inside the repository's git dir.
+func (a *App) gitPathExists(name string) bool {
+	out, err := a.git("rev-parse", "--git-path", name)
+	if err != nil {
+		return false
+	}
+	p := strings.TrimSpace(out)
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(a.root, p)
+	}
+	_, err = os.Stat(p)
+	return err == nil
+}
+
+// operationInProgress names a merge, revert, cherry-pick, or rebase that has not finished.
+func (a *App) operationInProgress() string {
+	for _, o := range [][2]string{{"MERGE_HEAD", "merge"}, {"REVERT_HEAD", "revert"}, {"CHERRY_PICK_HEAD", "cherry-pick"}, {"rebase-merge", "rebase"}, {"rebase-apply", "rebase"}} {
+		if a.gitPathExists(o[0]) {
+			return o[1]
+		}
+	}
+	return ""
+}
+
+// ResetPreview says what a soft reset to a commit would undo, or why it cannot run.
+type ResetPreview struct {
+	Branch string   `json:"branch"`
+	Target string   `json:"target"`
+	Count  int      `json:"count"`
+	Pushed int      `json:"pushed"`
+	Undone []string `json:"undone"`
+}
+
+// resetPreview validates a soft reset target. The target must be a strict ancestor of HEAD on a
+// checked-out branch, with no other operation half done; anything else is not a "back up" and is refused.
+func (a *App) resetPreview(ref string) (ResetPreview, error) {
+	var p ResetPreview
+	target, err := a.resolveCommit(ref)
+	if err != nil {
+		return p, err
+	}
+	if op := a.operationInProgress(); op != "" {
+		return p, fmt.Errorf("finish or abort the %s in progress first", op)
+	}
+	out, _ := a.git("branch", "--show-current")
+	if p.Branch = strings.TrimSpace(out); p.Branch == "" {
+		return p, errors.New("HEAD is detached; switch to a branch before resetting")
+	}
+	head, err := a.git("rev-parse", "HEAD")
+	if err != nil {
+		return p, err
+	}
+	if strings.TrimSpace(head) == target {
+		return p, errors.New("the branch is already at this commit")
+	}
+	if _, err := a.git("merge-base", "--is-ancestor", target, "HEAD"); err != nil {
+		return p, errors.New("this commit is not in the history of the current branch")
+	}
+	p.Target = target
+	log, err := a.git("log", "--format=%h %s", "--max-count=10", target+"..HEAD")
+	if err != nil {
+		return p, err
+	}
+	p.Undone = parseLines(log)
+	count, _ := a.git("rev-list", "--count", target+"..HEAD")
+	p.Count, _ = strconv.Atoi(strings.TrimSpace(count))
+	// Commits already on the upstream need a force push after the reset.
+	if unpushed, err := a.git("rev-list", "--count", target+"..HEAD", "^@{upstream}"); err == nil {
+		n, _ := strconv.Atoi(strings.TrimSpace(unpushed))
+		p.Pushed = p.Count - n
+	}
+	return p, nil
+}
+
+func (a *App) handleResetPreview(w http.ResponseWriter, r *http.Request) {
+	p, err := a.resetPreview(r.URL.Query().Get("hash"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, p)
+}
+
+// resetSoft moves the branch back to an earlier commit and keeps every change staged.
+func (a *App) resetSoft(ref string) (string, error) {
+	p, err := a.resetPreview(ref)
+	if err != nil {
+		return "", err
+	}
+	old, _ := a.git("rev-parse", "--short", "HEAD")
+	if out, err := a.gitCombined("reset", "--soft", p.Target); err != nil {
+		return out, err
+	}
+	s := "s"
+	if p.Count == 1 {
+		s = ""
+	}
+	return fmt.Sprintf("Moved %s back %d commit%s (was %s); the changes are staged", p.Branch, p.Count, s, strings.TrimSpace(old)), nil
+}
+
+// revert adds a commit that undoes another. A merge commit needs its mainline parent, since Git
+// cannot know which side to keep.
+func (a *App) revert(ref string, parent int) (string, error) {
+	hash, err := a.resolveCommit(ref)
+	if err != nil {
+		return "", err
+	}
+	out, err := a.git("rev-list", "--parents", "-n", "1", hash)
+	if err != nil {
+		return "", err
+	}
+	parents := len(strings.Fields(out)) - 1
+	args := []string{"revert", "--no-edit"}
+	if parents > 1 {
+		if parent < 1 || parent > parents {
+			return "", fmt.Errorf("this is a merge commit; choose a mainline parent from 1 to %d", parents)
+		}
+		args = append(args, "-m", strconv.Itoa(parent))
+	} else if parent > 1 {
+		return "", errors.New("only merge commits have a mainline parent")
+	}
+	return a.gitCombined(append(args, hash)...)
 }
 
 // handleContains is separate from handleCommit because --contains walks history and can be slow.

@@ -1753,6 +1753,7 @@ function renderCommit() {
   const hint = $('#commit-hint')
   hint.hidden = !(all && t.unstaged.length)
   hint.textContent = `Stages ${plural(t.unstaged.length, 'unstaged change')} first, after you confirm.`
+  $('#revert-bar').hidden = !state.status?.reverting
   $('#commit-menu').innerHTML = (all
     ? '<button class="menu-item" data-c="staged" role="menuitem">Commit staged only</button>'
     : '<button class="menu-item" data-c="all" role="menuitem">Stage all & Commit</button>')
@@ -2230,6 +2231,10 @@ function detailHTML(hash) {
     <div class="c-line"><span title="${esc(d.authorEmail)}">${esc(d.author)}</span> ${when(d.authorTime)}${by}</div>
     <div class="c-line mono"><span class="c-hash">${esc(d.hash)}</span><button class="btn quiet sm c-copy" data-copy="${esc(d.hash)}" title="Copy the full commit id">Copy</button></div>
     ${parents ? `<div class="c-line">${d.parents.length > 1 ? 'Parents' : 'Parent'} ${parents}</div>` : '<div class="c-line faint">Root commit</div>'}
+    <div class="c-line c-acts">
+      <button class="btn sm" data-act="reset" ${d.hash === state.status?.head ? 'disabled' : ''} title="${d.hash === state.status?.head ? 'The branch is already at this commit; pick an older one to reset to' : 'Move the current branch back to this commit; the undone changes stay staged'}">Reset branch here</button>
+      <button class="btn sm" data-act="revert" title="Add a new commit that undoes this one">Revert</button>
+    </div>
     <div class="c-line c-refs">${containsHTML(hash)}</div>
     <div class="c-files-head">${d.files.length} file${d.files.length === 1 ? '' : 's'} changed${d.parents.length > 1 ? ' <span class="faint">vs first parent</span>' : ''}</div>
     <div class="c-files">${commitTreeHTML(d)}</div>`
@@ -2732,9 +2737,44 @@ $('#theme-list').onclick = e => { const t = e.target.closest('[data-theme-id]');
 document.addEventListener('click', e => { if (!$('#theme-pop').hidden && e.target.isConnected && !e.target.closest('#theme-pop')) toggleThemes(false) })
 osLight.addEventListener('change', () => { applyTheme(); swatches.clear(); if (!$('#theme-pop').hidden) renderThemes() })
 // Clicks inside commit details, shared by the History tab and the Log view. Returns false if unhandled.
+// Soft reset backs the branch up and keeps the undone work staged, but it rewrites history, so it asks.
+async function resetHere(hash) {
+  let p
+  try { p = await api('/api/reset/preview?hash=' + encodeURIComponent(hash)) } catch (e) { return setStatus(e.message, 'err') }
+  const list = p.undone.map(l => `<li class="mono">${esc(l)}</li>`).join('') + (p.count > p.undone.length ? `<li class="faint">and ${p.count - p.undone.length} more</li>` : '')
+  const pushed = p.pushed ? `<p class="note">${plural(p.pushed, 'of these commit')} already on the remote, so pushing the branch afterwards needs a force push.</p>` : ''
+  const ok = await ask({
+    title: `Move ${p.branch} back to ${hash.slice(0, 7)}?`, kicker: 'Soft reset', tone: 'warn', ok: 'Reset',
+    html: `<p>${plural(p.count, 'commit')} will be undone. ${p.count === 1 ? 'Its' : 'Their'} changes stay staged, and the reflog keeps the old tip.</p><ul class="undone">${list}</ul>${pushed}`,
+  })
+  if (ok) await gitAction({ action: 'reset:soft', from: hash })
+}
+
+// A merge commit has no single "before", so ask which parent is the mainline to keep.
+async function revertCommit(hash) {
+  const body = { action: 'revert', from: hash }
+  let d = state.details.get(hash)
+  if (!d || d.error) {
+    try { d = await api('/api/commit?hash=' + encodeURIComponent(hash)) } catch (e) { return setStatus(e.message, 'err') }
+  }
+  if (d.parents.length > 1) {
+    const n = await ask({
+      title: 'Revert a merge commit', kicker: 'Revert', ok: 'Revert',
+      html: `<p>Choose the parent to keep as the mainline; the changes the merge brought in from the others are undone.</p><ul class="undone">${d.parents.map((p, i) => `<li class="mono">${i + 1} · ${esc(p.slice(0, 7))}${i === 0 ? ' <span class="faint">usually the branch you merged into</span>' : ''}</li>`).join('')}</ul>`,
+      input: { label: 'Mainline parent', value: '1' },
+    })
+    if (!n) return
+    body.parent = +n
+  }
+  await gitAction(body)
+}
+
 function detailClick(e, hash, inLog) {
   const t = e.target, hit = sel => t.closest(sel)
-  if (hit('[data-copy]')) {
+  if (hit('[data-act]')) {
+    const b = hit('[data-act]')
+    if (!b.disabled) (b.dataset.act === 'reset' ? resetHere : revertCommit)(hash)
+  } else if (hit('[data-copy]')) {
     const b = hit('[data-copy]')
     copyText(b.dataset.copy).then(() => {
       b.textContent = 'Copied'
@@ -2764,6 +2804,10 @@ $('#history').addEventListener('click', e => {
   if (hash && detailClick(e, hash, false)) return
   const row = e.target.closest('.commit-row')
   if (row) selectCommit(row.dataset.hash, row.dataset.short)
+})
+$('#revert-bar').addEventListener('click', e => {
+  const b = e.target.closest('[data-revert]')
+  if (b) gitAction({ action: b.dataset.revert })
 })
 $('#log-detail').addEventListener('click', e => detailClick(e, state.log.sel, true))
 $('#log-rows').addEventListener('click', e => { const r = e.target.closest('.lrow'); if (r) selectLog(r.dataset.hash) })
