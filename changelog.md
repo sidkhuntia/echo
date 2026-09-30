@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Find in file (`⌘F`)**: a VS Code-style bar over the editor with match case, whole word and regex, `n of m` count, `↵`/`⇧↵` (or `⌘G`/`⇧⌘G`) to step, and `Esc` to close, leaving the current match selected. Every occurrence is tinted and the current one is stronger. Selecting one line of text first seeds the query. Outside the editor (diff, Log, Markdown preview) `⌘F` stays the browser's own find.
+- **`⌘⇧F` uses the selection**: with text selected in the editor it opens Search with that text as the query and runs it.
+- **Search hits are marked in the file**: clicking a content-search result opens the file with every match of the query tinted (the find bar opens without taking focus; `Esc` in the editor dismisses it).
+- Fixed word wrap throwing on `tabLines`, which was called but never defined.
 - **File tree context menu**: right-click a file or folder for **New file here** (a folder creates inside itself; the path is prefilled), **Copy name**, **Copy relative path** and **Copy absolute path** (the repository root plus the path). `⌘⌥N` creates a file beside the selected one from anywhere (`⌘N` belongs to the browser).
 - **Syntax highlighting everywhere, without language servers**: the editor, the stacked diff, the split diff and Markdown fences are colored by a vendored copy of highlight.js (`web/vendor/hljs.js`, common build: Go, JS/TS, Python, Rust, Java, Kotlin, Swift, C/C++/C#, Ruby, PHP, Lua, shell, SQL, JSON, YAML/TOML/ini, CSS/SCSS/Less, HTML/XML, Markdown, Makefile and more). It works offline with nothing to install. Diff hunks are colored as old and new streams, so a multi-line comment or string colors correctly inside a hunk. `.properties`, `.env` and `.conf` use the ini grammar, and Gradle files the Java one. Dockerfiles stay plain.
 - **Removed language servers**: the LSP client (`lsp.go`), the `/api/lsp/*` endpoints, the status-bar chip and popover, the install banner, and the `lspDismissed` setting are gone. Only highlighting used them.

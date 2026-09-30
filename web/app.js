@@ -792,7 +792,7 @@ function fromDisk(data) {
   return { content, saved: content, eol: crlf ? '\r\n' : '\n', hash: data.hash, binary: data.binary, conflict: '' }
 }
 
-async function openFile(path, { line = 0, fromReview = false } = {}) {
+async function openFile(path, { line = 0, fromReview = false, find: hit = null } = {}) {
   let i = state.tabs.findIndex(t => t.path === path)
   if (i < 0) {
     try {
@@ -809,6 +809,8 @@ async function openFile(path, { line = 0, fromReview = false } = {}) {
   renderTabs()
   renderTree()
   if (line && !activeTab().binary) placeCaret(line)
+  if (hit) showFind(hit.q, hit, false)
+  else if (find.open) paintFind()
   setStatus(fromReview ? `${path} — Esc returns to review` : path)
 }
 
@@ -876,6 +878,7 @@ function renderEditor() {
   renderBanner()
   refreshGutter()
   paintSyntax()
+  paintFind()
 }
 
 // ---------- syntax highlighting ----------
@@ -1130,6 +1133,137 @@ function lineCount(tab) {
   if (tab.countFor !== tab.content) { tab.countFor = tab.content; tab.count = tab.content.split('\n').length }
   return tab.count
 }
+
+function tabLines(tab) {
+  if (tab.linesFor !== tab.content) { tab.linesFor = tab.content; tab.lines = tab.content.split('\n') }
+  return tab.lines
+}
+
+// ---------- find in file ----------
+// ⌘F opens a bar over the editor; matches are tinted by a transparent-text layer above the textarea, so
+// they show on top of the syntax colors and selection without touching either.
+// ponytail: matches are per line (no multi-line regex), capped at FIND_MAX; a match scrolled off to the right is not revealed.
+const FIND_MAX = 5000
+const find = { open: false, q: '', opts: { case: false, word: false, regex: false }, idx: 0, list: [], byLine: new Map(), sig: '', text: null, bad: false }
+const inEditor = () => state.mode === 'file' && $('#editor').classList.contains('active') && !!activeTab()
+// What is selected in the editor, when it is focused and sits on one line: the seed for a search.
+function editorSelection() {
+  const ed = $('#editor')
+  if (document.activeElement !== ed) return ''
+  const t = ed.value.slice(ed.selectionStart, ed.selectionEnd)
+  return t.includes('\n') ? '' : t
+}
+
+function computeFind(tab) {
+  const sig = tab.path + '\0' + find.q + JSON.stringify(find.opts)
+  if (find.sig === sig && find.text === tab.content) return
+  find.sig = sig
+  find.text = tab.content
+  find.list = []
+  find.byLine = new Map()
+  const re = find.q ? searchRegex({ q: find.q, ...find.opts }) : null
+  find.bad = !!find.q && !re
+  if (re) {
+    const lines = tabLines(tab)
+    let off = 0
+    for (let i = 0; i < lines.length && find.list.length < FIND_MAX; i++) {
+      for (const m of lines[i].matchAll(re)) {
+        if (!m[0]) break
+        const x = { line: i, s: m.index, e: m.index + m[0].length, off: off + m.index }
+        find.list.push(x)
+        find.byLine.has(i) ? find.byLine.get(i).push(x) : find.byLine.set(i, [x])
+      }
+      off += lines[i].length + 1
+    }
+  }
+  // the current match is the first one at or after the caret
+  const at = find.list.findIndex(m => m.off >= $('#editor').selectionStart)
+  find.idx = at < 0 ? 0 : at
+}
+
+function paintFind() {
+  const layer = $('#findmarks'), ed = $('#editor'), tab = activeTab()
+  const on = find.open && inEditor()
+  $('#findbar').hidden = !on
+  if (on) computeFind(tab)
+  const n = find.list.length
+  layer.classList.toggle('active', on && n > 0)
+  if (!on) { layer.innerHTML = ''; return }
+  const c = $('#find-count')
+  c.textContent = !find.q ? '' : find.bad ? 'Invalid' : n ? `${find.idx + 1} of ${n.toLocaleString()}${n >= FIND_MAX ? '+' : ''}` : 'No results'
+  c.classList.toggle('none', !!find.q && !n)
+  if (!n) { layer.innerHTML = ''; return }
+  const [first, last] = visibleRange(tab), lines = tabLines(tab), cur = find.list[find.idx]
+  let h = ''
+  for (let i = first; i < last; i++) {
+    const ms = find.byLine.get(i)
+    if (!ms) continue
+    let at = 0, row = ''
+    for (const m of ms) {
+      row += esc(lines[i].slice(at, m.s)) + `<mark${m === cur ? ' class="cur"' : ''}>${esc(lines[i].slice(m.s, m.e))}</mark>`
+      at = m.e
+    }
+    h += `<div class="sl" style="top:${lineTop(i) - ed.scrollTop}px">${row + esc(lines[i].slice(at))}</div>`
+  }
+  layer.innerHTML = `<div style="transform:translateX(${-ed.scrollLeft}px)">${h}</div>`
+}
+
+function revealMatch() {
+  const m = find.list[find.idx]
+  if (m) {
+    const ed = $('#editor'), top = lineTopAt(activeTab(), m.line)
+    if (top < ed.scrollTop || top + LINE > ed.scrollTop + ed.clientHeight) ed.scrollTop = Math.max(0, top - ed.clientHeight / 3)
+  }
+  paintFind()
+}
+
+// showFind turns the layer on for a query. Without `focus` the editor keeps it, which is how a hit
+// from the content search arrives: the file opens with every occurrence marked.
+function showFind(q, opts, focus = true) {
+  if (!inEditor()) return false
+  find.open = true
+  find.sig = ''
+  if (q != null) { find.q = q; if (opts) find.opts = { case: !!opts.case, word: !!opts.word, regex: !!opts.regex } }
+  const box = $('#find-input')
+  box.value = find.q
+  document.querySelectorAll('#findbar [data-fopt]').forEach(b => b.setAttribute('aria-pressed', find.opts[b.dataset.fopt]))
+  if (focus) { box.focus(); box.select() }
+  revealMatch()
+  return true
+}
+
+function closeFind(refocus = true) {
+  if (!find.open) return
+  find.open = false
+  paintFind()
+  const m = find.list[find.idx], ed = $('#editor')
+  if (!refocus || !inEditor()) return
+  ed.focus({ preventScroll: true })
+  if (m) ed.setSelectionRange(m.off, m.off + m.e - m.s)
+}
+
+function stepFind(dir) {
+  if (!find.list.length) return
+  find.idx = (find.idx + dir + find.list.length) % find.list.length
+  revealMatch()
+}
+
+$('#find-input').addEventListener('input', e => { find.q = e.target.value; paintFind(); revealMatch() })
+$('#find-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1) }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFind() }
+})
+$('#find-prev').onclick = () => stepFind(-1)
+$('#find-next').onclick = () => stepFind(1)
+$('#find-close').onclick = () => closeFind()
+document.querySelectorAll('#findbar [data-fopt]').forEach(b => b.onclick = () => {
+  const o = b.dataset.fopt
+  find.opts[o] = !find.opts[o]
+  b.setAttribute('aria-pressed', find.opts[o])
+  paintFind()
+  revealMatch()
+  $('#find-input').focus()
+})
 
 // ---------- word wrap ----------
 // With wrap on, a line is as tall as it needs to be, so the gutter and the syntax layer can no longer
@@ -2388,7 +2522,7 @@ $('#search-results').addEventListener('click', e => {
     return renderSearch()
   }
   const row = e.target.closest('.srow')
-  if (row) openFile(row.dataset.path, { line: Number(row.dataset.line) })
+  if (row) openFile(row.dataset.path, { line: Number(row.dataset.line), find: state.search.ran })
 })
 // ---------- file menu ----------
 // Right-click a tree row: copy its name or path, or start a new file beside it. A folder creates inside itself.
@@ -2672,14 +2806,15 @@ $('#editor').addEventListener('input', () => {
   $('#stage-count').textContent = `${lineCount(t)} lines${dirty ? ' · unsaved' : ''}`
   paintGutter()
   paintSyntax()
+  paintFind()
   clearTimeout(marksTimer)
   marksTimer = setTimeout(() => { if (t === activeTab()) { computeMarks(t); paintGutter() } }, 120)
 })
 let marksTimer, gutterFrame
 // Repaint the gutter and colors when the editor changes size (window resize, panels, a first paint
 // made before layout settled); both draw only the rows that fit.
-new ResizeObserver(() => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(() => { paintGutter(); paintSyntax() }) }).observe($('#editor'))
-$('#editor').addEventListener('scroll', () => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(() => { paintGutter(); paintSyntax(); paintBlameGhost() }) })
+new ResizeObserver(() => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(() => { paintGutter(); paintSyntax(); paintFind() }) }).observe($('#editor'))
+$('#editor').addEventListener('scroll', () => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(() => { paintGutter(); paintSyntax(); paintFind(); paintBlameGhost() }) })
 let ghostFrame, blameTimer
 for (const ev of ['keyup', 'mouseup', 'focus']) $('#editor').addEventListener(ev, () => { cancelAnimationFrame(ghostFrame); ghostFrame = requestAnimationFrame(paintBlameGhost) })
 $('#editor').addEventListener('input', () => {
@@ -2896,9 +3031,13 @@ document.addEventListener('keydown', e => {
     else if (k === 'f' && e.shiftKey) {
       e.preventDefault()
       $('.desk').classList.remove('no-tree')
+      const sel = editorSelection()
       setRail('search')
+      if (sel) { $('#search-input').value = sel; scheduleSearch(0) }
       $('#search-input').select()
     }
+    else if (k === 'f' && !e.altKey) { if (inEditor()) { e.preventDefault(); const sel = editorSelection(); showFind(sel || null) } }
+    else if (k === 'g' && find.open && inEditor()) { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1) }
     else if (k === 'k' || k === 'p') { e.preventDefault(); openPalette() }
     else if (k === 'b') { e.preventDefault(); toggleTree() }
     else if (k === 'j') { e.preventDefault(); toggleLedger() }
@@ -2908,6 +3047,7 @@ document.addEventListener('keydown', e => {
     else if (e.key === 'Enter' && e.target.id === 'commit-message') { e.preventDefault(); $('#commit').click() }
     return
   }
+  if (e.key === 'Escape' && find.open && e.target.id === 'editor') { e.preventDefault(); closeFind(false); return }
   if (e.key === 'Escape' && e.target.id === 'editor' && state.returnTo && state.returnTo === activeTab()?.path) { e.preventDefault(); backToReview(); return }
   // Keys inside the branch popup and menu belong to their buttons (Enter activates the focused item).
   if (e.key !== 'Escape' && e.target.closest?.('#ref-menu, #branch-pop')) return

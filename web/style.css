@@ -462,6 +462,17 @@ body.resizing { cursor: col-resize; user-select: none; }
 .stage.blame-on .syntax .sl { left: 242px; }
 .editor.hl { background: transparent; color: transparent; caret-color: var(--fg); }
 .editor.hl::selection { color: transparent; background: color-mix(in srgb, var(--accent) 28%, transparent); }
+.findmarks { background: transparent; color: transparent; z-index: 1; }
+.findmarks mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: transparent; border-radius: 2px; }
+.findmarks mark.cur { background: color-mix(in srgb, var(--accent) 65%, transparent); box-shadow: 0 0 0 1px var(--accent); }
+.findbar { position: absolute; z-index: 3; top: 8px; right: 22px; display: flex; align-items: center; gap: 2px; padding: 4px; background: var(--surface); border: 1px solid var(--line-2); border-radius: 9px; box-shadow: var(--shadow); animation: drop .12s ease-out both; }
+.findbar[hidden] { display: none; }
+.findbar .field { width: 190px; height: 26px; margin-right: 2px; }
+.findbar .btn { font: 600 10.5px var(--mono); color: var(--faint); }
+.findbar .btn:hover { color: var(--fg); }
+.findbar .btn[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.find-count { min-width: 70px; padding: 0 6px; text-align: center; font: 11px var(--mono); color: var(--muted); white-space: nowrap; }
+.find-count.none { color: var(--del); }
 .hljs-keyword, .hljs-literal, .hljs-selector-tag, .hljs-doctag, .hljs-section { color: var(--accent); }
 .hljs-comment, .hljs-quote { color: var(--muted); font-style: italic; }
 .hljs-string, .hljs-regexp, .hljs-symbol, .hljs-bullet, .hljs-addition, .hljs-meta .hljs-string { color: var(--add); }

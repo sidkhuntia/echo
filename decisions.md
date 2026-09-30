@@ -430,6 +430,7 @@ The following Git capabilities were accepted as part of the product direction:
 
 These are YAGNI decisions for v1:
 
+- Find in file matches within a line only (no multi-line regex), stops at 5,000 matches, has no replace, and does not scroll sideways to a match off-screen to the right. Its marks are a transparent-text layer above the textarea, not part of the syntax layer.
 - The file tree's context menu (new file, copy name/relative/absolute path) is client-only: the absolute path is the status `root` plus the path, and there is no new endpoint. New-file shortcut is `⌘⌥N` because browsers reserve `⌘N`.
 - No database.
 - No Git library.

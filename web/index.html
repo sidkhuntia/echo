@@ -162,6 +162,17 @@ try {
       <div id="wrap-mirror" class="wrap-mirror" aria-hidden="true"></div>
       <div id="gutter" class="gutter" aria-hidden="true"></div>
       <textarea id="editor" class="editor" spellcheck="false" wrap="off"></textarea>
+      <div id="findmarks" class="syntax findmarks" aria-hidden="true"></div>
+      <div id="findbar" class="findbar" role="search" hidden>
+        <input id="find-input" class="field" placeholder="Find" autocomplete="off" spellcheck="false" aria-label="Find in file">
+        <button class="btn quiet icon xs" data-fopt="case" title="Match case" aria-pressed="false">Aa</button>
+        <button class="btn quiet icon xs" data-fopt="word" title="Match whole word" aria-pressed="false"><u>ab</u></button>
+        <button class="btn quiet icon xs" data-fopt="regex" title="Use regular expression" aria-pressed="false">.*</button>
+        <span id="find-count" class="find-count" aria-live="polite"></span>
+        <button id="find-prev" class="btn quiet icon xs" title="Previous match (⇧↵)" aria-label="Previous match">↑</button>
+        <button id="find-next" class="btn quiet icon xs" title="Next match (↵)" aria-label="Next match">↓</button>
+        <button id="find-close" class="btn quiet icon xs" title="Close (Esc)" aria-label="Close find">✕</button>
+      </div>
     </div>
   </section>
 
@@ -269,7 +280,8 @@ try {
       <dt><kbd>⌘K</kbd> <kbd>⌘P</kbd></dt><dd>Go to file</dd>
       <dt><kbd>⌘D</kbd></dt><dd>Switch Review / Files</dd>
       <dt><kbd>⌘⇧O</kbd></dt><dd>Switch repository</dd>
-      <dt><kbd>⌘⇧F</kbd></dt><dd>Search file contents</dd>
+      <dt><kbd>⌘F</kbd></dt><dd>Find in the open file (<kbd>↵</kbd> next, <kbd>⇧↵</kbd> previous, <kbd>Esc</kbd> close)</dd>
+      <dt><kbd>⌘⇧F</kbd></dt><dd>Search file contents (a selection in the editor is the query)</dd>
       <dt><kbd>⌘B</kbd></dt><dd>Toggle sidebar</dd>
       <dt><kbd>⌘J</kbd></dt><dd>Toggle Git panel</dd>
       <dt><kbd>⌘⌥N</kbd></dt><dd>New file (beside the selected one)</dd>
