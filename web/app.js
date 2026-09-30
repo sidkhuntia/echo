@@ -24,6 +24,8 @@ const state = {
   wrap: false,
   // Changes rail groups (merge, staged, work) folded by the user.
   qClosed: new Set(),
+  // qsel: rows picked in the Changes rail, as "sec\tpath" keys (one group at a time); qanchor is where Shift-click ranges start.
+  qsel: new Set(), qanchor: '',
   // widths: the side panels' dragged widths, written to the desk grid as --tree-w and --git-w.
   widths: { tree: 272, git: 300 },
   // search: the Search rail. ran is the query and options the shown results came from; ctl aborts the one in flight.
@@ -310,6 +312,8 @@ function renderQueue() {
   }
   const filter = $('#file-filter').value.toLowerCase()
   const list = all.filter(c => !filter || c.path.toLowerCase().includes(filter))
+  const shown = new Set(GROUPS.flatMap(g => list.filter(g.has).map(c => qkey(g.sec, c.path))))
+  for (const k of state.qsel) if (!shown.has(k)) state.qsel.delete(k)
   const size = st => st && !st.binary ? st.added + st.deleted : 0
   const most = Math.max(1, ...list.flatMap(c => [size(c.index), size(c.work)]))
   const row = (c, sec) => {
@@ -319,14 +323,14 @@ function renderQueue() {
       sec === 'staged' ? iconBtn('unstage', ICON.minus, 'Unstage') : iconBtn('stage', ICON.plus, sec === 'merge' ? 'Mark resolved (stage)' : 'Stage'),
     ].join('')
     const st = sec === 'staged' ? c.index : sec === 'work' ? c.work : null
-    return `<div class="qrow" data-path="${esc(c.path)}" data-sec="${sec}" title="${esc(c.path)}${st && !st.binary ? `  +${st.added} −${st.deleted}` : ''}">
+    return `<div class="qrow${state.qsel.has(qkey(sec, c.path)) ? ' picked' : ''}" data-path="${esc(c.path)}" data-sec="${sec}" title="${esc(c.path)}${st && !st.binary ? `  +${st.added} −${st.deleted}` : ''}">
       ${sideTag(c, sec)}<span class="qpath">${nameFirst(c.path)}</span>
       <span class="qacts">${acts}</span>
       <span class="qmeta">${churnBar(st, most)}</span>
     </div>`
   }
   const bulk = { staged: iconBtn('unstage-all', ICON.minus, 'Unstage all'), work: iconBtn('discard-all', ICON.discard, 'Discard all unstaged changes') + iconBtn('stage-all', ICON.plus, 'Stage all changes'), merge: iconBtn('stage-all', ICON.plus, 'Mark all resolved (stage)') }
-  let h = ''
+  let h = pickBar()
   for (const g of GROUPS) {
     const rows = list.filter(g.has)
     if (!rows.length) continue
@@ -336,6 +340,36 @@ function renderQueue() {
   }
   q.innerHTML = h || `<div class="empty">No changed path matches “${esc(filter)}”.</div>`
   markQueueCurrent()
+}
+
+// Multi-select in the Changes rail: click picks one, Cmd/Ctrl-click toggles, Shift-click extends from the
+// anchor. A pick lives in one group, since Stage and Unstage only make sense for one side at a time.
+const qkey = (sec, path) => sec + '\t' + path
+const pickedIn = sec => [...state.qsel].filter(k => k.startsWith(sec + '\t')).map(k => k.slice(sec.length + 1))
+const pickedSec = () => state.qsel.size ? [...state.qsel][0].split('\t')[0] : ''
+
+function pickBar() {
+  const sec = pickedSec()
+  if (state.qsel.size < 2 || sec === 'merge') return ''
+  const staged = sec === 'staged'
+  return `<div class="pickbar"><b>${state.qsel.size} selected</b><span class="grow"></span>`
+    + `<button class="btn sm" data-pick="${staged ? 'unstage' : 'stage'}">${staged ? ICON.minus + 'Unstage' : ICON.plus + 'Stage'}</button>`
+    + `<button class="btn quiet sm" data-pick="clear" title="Clear the selection (Esc)">✕</button></div>`
+}
+
+// Returns true when the click only changed the selection, so the caller skips opening the diff.
+function pick(e, sec, path) {
+  const k = qkey(sec, path), rows = [...document.querySelectorAll(`.qrow[data-sec="${sec}"]`)].map(r => r.dataset.path)
+  if (e.shiftKey && state.qanchor && state.qanchor.startsWith(sec + '\t') && rows.includes(state.qanchor.slice(sec.length + 1))) {
+    const a = rows.indexOf(state.qanchor.slice(sec.length + 1)), b = rows.indexOf(path)
+    state.qsel = new Set(rows.slice(Math.min(a, b), Math.max(a, b) + 1).map(p => qkey(sec, p)))
+  } else if (mod(e)) {
+    if (pickedSec() !== sec) state.qsel.clear()
+    state.qsel.has(k) ? state.qsel.delete(k) : state.qsel.add(k)
+    state.qanchor = k
+  } else { state.qsel = new Set([k]); state.qanchor = k; return false }
+  renderQueue()
+  return true
 }
 
 // Bulk actions take the paths of one group as it is shown, so a filter narrows them too.
@@ -580,7 +614,7 @@ const fullyStaged = f => { const c = scope() === 'head' && state.changes.get(f.p
 
 function renderTrace() {
   const files = state.diffFiles, box = $('#trace')
-  box.classList.toggle('empty', !files.length)
+  box.classList.toggle('idle', !files.length)
   if (!files.length) { box.innerHTML = ''; return }
   const added = files.reduce((s, f) => s + f.added, 0), deleted = files.reduce((s, f) => s + f.deleted, 0)
   const done = files.map(fullyStaged), fade = done.some(d => !d)
@@ -1992,7 +2026,14 @@ async function stopRepo(port, all) {
   const ok = await ask({ title: all ? 'Stop every echo process' : `Stop ${what}`, kicker: 'stops echo', tone: 'danger', ok: 'Stop', html: `<p>${all ? 'Every repository open in echo will stop.' : `<b>${esc(what)}</b>’s echo process will stop.`}</p><p class="note">Running work is finished first. Reopen a repository with the <code>echo</code> command in its folder.</p>` })
   if (!ok) return
   try { await post('/api/shutdown', { port: all ? 0 : port, all }) } catch (e) { return setStatus(e.message, 'err') }
-  if (all || port === +location.port) return setStatus('echo is stopping.', 'ok')
+  if (all) return setStatus('echo is stopping.', 'ok')
+  if (port === +location.port) {
+    // This tab's own repository is gone: hop to another open one, or close the tab if none is left.
+    const next = repos.find(r => r.port !== port)
+    if (next) return void (location.href = `http://127.0.0.1:${next.port}/`)
+    window.close()
+    return setStatus('echo stopped. You can close this tab.', 'ok')
+  }
   setStatus(`stopped ${what}`, 'ok')
   repos = repos.filter(r => r.port !== port)
   renderRepoPop()
@@ -2312,6 +2353,12 @@ function renderTracking() {
       : (t.behind ? `<span class="in">↓${t.behind}</span>` : '') + (t.ahead ? `<span class="out">↑${t.ahead}</span>` : '')
     $('#track').title = t.gone ? `${t.upstream} was deleted on the remote` : `${t.behind} incoming, ${t.ahead} outgoing vs ${t.upstream} (as of the last fetch)`
   }
+  // A branch with no upstream has nothing to pull: the panel offers Publish Branch, which is also its push.
+  const fresh = remote && !tracked
+  $('#pull-label').textContent = fresh ? 'Publish Branch' : 'Pull'
+  $('#pull').title = fresh ? `Push ${t?.name || s.branch || 'this branch'} and set its upstream (git push -u)` : 'git pull'
+  $('#pull').classList.toggle('primary', fresh)
+  document.querySelector('.push-split').hidden = fresh
   $('#sync-label').textContent = tracked ? 'Sync' : 'Publish'
   $('#sync').title = tracked ? `Pull${t.behind ? ` ${t.behind}` : ''}, then push${t.ahead ? ` ${t.ahead}` : ' if ahead'} (${t.upstream})` : `Push ${t?.name || 'this branch'} and set its upstream (git push -u)`
   $('#sync').classList.toggle('attn', tracked && (t.ahead > 0 || t.behind > 0))
@@ -2442,6 +2489,29 @@ function renderHistoryCurrent() {
   document.querySelectorAll('.commit-row').forEach(r => r.classList.toggle('current', r.dataset.hash === state.commit))
 }
 
+// A short-lived card with a link: the link is shown, copyable, and opens in a new tab. Hovering keeps it.
+let toastTimer = 0
+function showToast(title, link) {
+  const t = $('#toast')
+  t.innerHTML = `<div class="toast-body"><b>${esc(title)}</b><a class="toast-url" href="${esc(link)}" target="_blank" rel="noopener" title="${esc(link)}">${esc(link)}</a></div>`
+    + `<button class="btn quiet sm" data-toast="copy" title="Copy the pull request URL">Copy</button>`
+    + `<button class="btn quiet icon" data-toast="open" title="Open in a new tab"><svg class="i" viewBox="0 0 16 16"><path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3"/></svg></button>`
+    + `<button class="btn quiet icon" data-toast="close" title="Dismiss">✕</button>`
+  t.dataset.link = link
+  t.hidden = false
+  const arm = () => { clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true }, 12000) }
+  t.onmouseenter = () => clearTimeout(toastTimer)
+  t.onmouseleave = arm
+  arm()
+}
+$('#toast').addEventListener('click', e => {
+  const b = e.target.closest('[data-toast]'), t = $('#toast')
+  if (!b) return
+  if (b.dataset.toast === 'copy') copyText(t.dataset.link).then(() => { b.textContent = 'Copied' }, err => setStatus('Could not copy: ' + err.message, 'err'))
+  else if (b.dataset.toast === 'open') window.open(t.dataset.link, '_blank', 'noopener')
+  else { clearTimeout(toastTimer); t.hidden = true }
+})
+
 const NET = new Set(['fetch', 'pull', 'push', 'push:lease', 'push:force', 'sync', 'publish'])
 
 async function gitAction(body, button) {
@@ -2453,6 +2523,7 @@ async function gitAction(body, button) {
     // Remote output leads with "To <url>" or progress lines; say what happened and keep Git's text in the tooltip.
     const done = { fetch: 'Fetched all remotes', pull: 'Pulled', push: 'Pushed', 'push:lease': 'Force pushed (with lease)', 'push:force': 'Force pushed', sync: 'Synced', publish: 'Published' }[body.action]
     setStatus(done ? `${done}\n${out.output || ''}` : out.output || `git ${body.action} done`, 'ok')
+    if (out.pr) showToast('Branch published', out.pr)
     if (['commit', 'commit:all', 'amend'].includes(body.action)) $('#commit-message').value = ''
   } catch (e) { setStatus(e.message, 'err') }
   finally { if (net) { document.body.classList.remove('net-busy'); button?.classList.remove('busy') } }
@@ -2652,6 +2723,15 @@ function markRail() {
 
 // ---------- wiring ----------
 $('#queue').addEventListener('click', e => {
+  const bar = e.target.closest('[data-pick]')?.dataset.pick
+  if (bar) {
+    const paths = pickedIn(pickedSec())
+    state.qsel.clear()
+    if (bar === 'stage') stage(paths)
+    else if (bar === 'unstage') unstage(paths)
+    else renderQueue()
+    return
+  }
   const act = e.target.closest('[data-act]')?.dataset.act
   const group = e.target.closest('.qgroup')
   if (group) {
@@ -2665,11 +2745,13 @@ $('#queue').addEventListener('click', e => {
   const row = e.target.closest('.qrow')
   if (!row) return
   const { path, sec } = row.dataset
-  if (act === 'stage') stage([path])
-  else if (act === 'unstage') unstage([path])
+  // A row's own button acts on the whole pick when the row is part of it.
+  const batch = () => state.qsel.size > 1 && state.qsel.has(qkey(sec, path)) ? pickedIn(sec) : [path]
+  if (act === 'stage') stage(batch())
+  else if (act === 'unstage') unstage(batch())
   else if (act === 'discard') discard([path], true)
   else if (act === 'open') openFile(path)
-  else goTo(path, sec)
+  else if (!pick(e, sec, path)) goTo(path, sec)
 })
 $('#queue').addEventListener('dblclick', e => {
   const row = e.target.closest('.qrow')
@@ -2878,8 +2960,8 @@ $('#revert-bar').addEventListener('click', e => {
   if (b) gitAction({ action: b.dataset.revert })
 })
 $('#log-detail').addEventListener('click', e => detailClick(e, state.log.sel, true))
-$('#log-rows').addEventListener('click', e => { const r = e.target.closest('.lrow'); if (r) selectLog(r.dataset.hash) })
-$('#log-rows').addEventListener('dblclick', e => { if (e.target.closest('.lrow')) openLogDiff() })
+// A click selects the commit and opens its diff in Review; Esc comes back to the Log.
+$('#log-rows').addEventListener('click', e => { const r = e.target.closest('.lrow'); if (r) { selectLog(r.dataset.hash); openLogDiff() } })
 $('#log-rows').addEventListener('scroll', () => {
   const v = $('#log-rows'), L = state.log
   if (L.more && !L.loading && v.scrollTop + v.clientHeight > v.scrollHeight - 600) loadLog(true)
@@ -3142,7 +3224,7 @@ $('#create-branch').onclick = () => gitAction({ action: 'branch:create', from: $
 const upstream = () => { const t = state.status?.tracking; return !!(t && t.upstream && !t.gone) }
 $('#fetch').onclick = () => gitAction({ action: 'fetch' }, $('#fetch'))
 $('#sync').onclick = () => gitAction({ action: upstream() ? 'sync' : 'publish' }, $('#sync'))
-$('#pull').onclick = () => gitAction({ action: 'pull' }, $('#pull'))
+$('#pull').onclick = () => gitAction({ action: upstream() || !(state.status?.remotes || []).length ? 'pull' : 'publish' }, $('#pull'))
 $('#push').onclick = () => gitAction({ action: upstream() ? 'push' : 'publish' }, $('#push'))
 
 // Force pushes rewrite the remote branch, so each asks first. The lease is the safer default: Git
@@ -3217,6 +3299,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !$('#file-menu').hidden) { e.preventDefault(); closeFileMenu(); return }
   // e.code, because ⌥N is a dead key on macOS. ⌘N itself belongs to the browser.
   if (mod(e) && e.altKey && e.code === 'KeyN') { e.preventDefault(); const d = state.selected || activeTab()?.path || ''; fileAction('create', d.includes('/') ? d.slice(0, d.lastIndexOf('/')) : ''); return }
+  if (e.key === 'Escape' && state.qsel.size && !typing(e)) { e.preventDefault(); state.qsel.clear(); renderQueue(); return }
   if (e.key === 'Escape' && !$('#push-menu').hidden) { e.preventDefault(); togglePushMenu(false); $('#push-more').focus(); return }
   if (e.key === 'Escape' && !$('#commit-menu').hidden) { e.preventDefault(); toggleCommitMenu(false); $('#commit-more').focus(); return }
   if (!$('#palette').hidden) return

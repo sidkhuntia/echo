@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Multi-select in Changes**: click picks a row, ⌘/Ctrl-click toggles, Shift-click extends a range within the group, Esc clears. With two or more picked, a bar offers Stage (or Unstage in the Staged group), and a row's own +/− acts on the whole pick.
+- **Publish Branch**: a branch with no upstream shows Publish Branch in the Git panel in place of Pull (and hides Push, which would do the same). Publishing shows a 12-second card with the pull request URL, a Copy button and an open-in-new-tab button. The URL is the one the host prints in the push output, or a built link for GitHub remotes.
+- The Log view opens a commit's diff in Review on a single click (Esc returns); the History tab already did.
+- Stopping the repository you are viewing hops to another open repository, or closes the tab when none is left.
+- Fixed the title bar breaking when there are no changes: the empty change trace reused the padded `.empty` block class, grew to 72px, and pushed the whole bar's contents down over the panels. The trace's empty state is now its own `idle` class, and the bar has one fixed row that nothing inside it can stretch.
 - **Hunk headings name the right place**: echo turns on Git's per-language heading rules for its own diffs (Go, CSS, HTML, Markdown, Python, Rust, Java, C/C++ and more, plus a JavaScript/TypeScript rule). The pill shows just the name, e.g. `(a *App) network`, `clampWidth`, `button.branch::after`, `16. Visual design`. JSON, YAML, lockfiles and other data files show no heading instead of the neighbouring line. Your repository's `.gitattributes` and your global attributes still take precedence.
 - **The Git rail is optional, and off by default**: open the Git panel from the title bar's Git button (which now carries the staged badge and shows when the panel is open) or with `⌘J`. Settings › Layout › Git rail › Shown brings the strip back.
 - **Settings page** (the gear in the title bar, or `⌘,`): categories for Appearance (a theme grid with swatches), Layout, Review, Editor and Commit, with a switch or segmented control and a one-line explanation for each option. Settings are no longer tucked under the shortcuts card.

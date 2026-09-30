@@ -486,6 +486,12 @@ These are not rejected. They are waiting until the basic review loop is proven:
 11. Native macOS filesystem events instead of polling.
 12. Better handling of Git rename/delete metadata in the file tree.
 
+## 19a. Changes multi-select, Publish Branch, stop hop (2026-09-30)
+
+- Changes rows select like a file manager (click, ⌘/Ctrl-click, Shift-click), one group at a time; bulk actions are Stage and Unstage only. Bulk discard stays behind the existing Discard all dialog.
+- A branch without an upstream offers Publish Branch instead of Pull. The pull request link comes from the host's own push output, with a built GitHub link as the only fallback; other hosts get no link rather than a guessed one.
+- Stopping the current repository navigates to another open echo, else tries `window.close()`.
+
 ## 20. Implementation rules
 
 - Keep the Go server small and explicit.

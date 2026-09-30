@@ -135,6 +135,8 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
   flex: none;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
+  /* One fixed row: the trace stretches into it, so nothing in the bar can make it taller. */
+  grid-template-rows: minmax(0, 1fr);
   align-items: center;
   gap: 20px;
   padding: 0 10px 0 14px;
@@ -179,8 +181,9 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 
 /* change trace: one segment per changed file, one tick per hunk; additions rise above the baseline,
    deletions drop below it. The playhead is the current hunk. */
-.trace { min-width: 0; height: 100%; display: flex; align-items: center; gap: 14px; }
-.trace.empty::before { content: "No changes"; margin: 0 auto; color: var(--faint); font-size: 12px; }
+.trace { min-width: 0; align-self: stretch; overflow: hidden; display: flex; align-items: center; gap: 14px; }
+/* "idle", not "empty": .empty is the padded empty-state block used elsewhere. */
+.trace.idle::before { content: "No changes"; margin: 0 auto; color: var(--faint); font-size: 12px; }
 .t-sum, .t-staged { flex: none; font: 11.5px var(--mono); color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .t-staged b { color: var(--fg-2); font-weight: 500; }
 .t-strip { flex: 1; min-width: 0; height: 40px; display: flex; gap: 3px; overflow: hidden; }
@@ -995,3 +998,16 @@ label.set-row { cursor: pointer; }
 .dialog[data-tone="danger"] .btn.primary { color: #fff; }
 .dialog[data-tone="warn"] .btn.primary { color: #1a1408; }
 @media (max-width: 520px) { .dialog-keys { display: none; } }
+
+/* multi-select in the Changes rail */
+.qrow { user-select: none; }
+.qrow.picked { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.pickbar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 4px 8px; margin-bottom: 4px; background: var(--surface); border-bottom: 1px solid var(--line); font-size: 12px; }
+.pickbar .grow { flex: 1; }
+
+/* short-lived notification */
+.toast { position: fixed; right: 16px; bottom: 40px; z-index: 50; max-width: min(460px, calc(100vw - 32px)); display: flex; align-items: center; gap: 6px; padding: 10px 10px 10px 14px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 8px 28px rgb(0 0 0 / .35); }
+.toast[hidden] { display: none; }
+.toast-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.toast-url { color: var(--accent); font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
+.toast-url:hover { text-decoration: underline; }

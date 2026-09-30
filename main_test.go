@@ -1277,3 +1277,17 @@ func TestHunkHeadings(t *testing.T) {
 		}
 	}
 }
+
+func TestGithubPRURL(t *testing.T) {
+	for remote, want := range map[string]string{
+		"git@github.com:o/r.git":       "https://github.com/o/r/pull/new/feat/x",
+		"https://github.com/o/r":       "https://github.com/o/r/pull/new/feat/x",
+		"ssh://git@github.com/o/r.git": "https://github.com/o/r/pull/new/feat/x",
+		"git@gitlab.com:o/r.git":       "",
+		"/tmp/bare.git":                "",
+	} {
+		if got := githubPRURL(remote, "feat/x"); got != want {
+			t.Errorf("%s: got %q, want %q", remote, got, want)
+		}
+	}
+}

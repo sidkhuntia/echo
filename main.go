@@ -963,7 +963,58 @@ func (a *App) handleGit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, strings.TrimSpace(out+"\n"+err.Error()), http.StatusBadGateway)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "output": out})
+	resp := map[string]any{"ok": true, "output": out}
+	if req.Action == "publish" {
+		if pr := a.prURL(out); pr != "" {
+			resp["pr"] = pr
+		}
+	}
+	writeJSON(w, resp)
+}
+
+// prURL finds where to open a pull request for the branch just published. Hosts print the link in
+// the push output ("Create a pull request ... https://host/o/r/pull/new/branch"); failing that,
+// a GitHub remote's link is built by hand. Anything else returns "" and no link is offered.
+func (a *App) prURL(pushOutput string) string {
+	for _, line := range strings.Split(pushOutput, "\n") {
+		l := strings.ToLower(line)
+		if !strings.HasPrefix(l, "remote:") {
+			continue
+		}
+		for _, f := range strings.Fields(line) {
+			if strings.HasPrefix(f, "https://") && (strings.Contains(f, "/pull/new/") || strings.Contains(f, "merge_request") || strings.Contains(f, "pull-requests/new") || strings.Contains(f, "/compare/")) {
+				return f
+			}
+		}
+	}
+	branch, _ := a.git("branch", "--show-current")
+	remotes, _ := a.git("remote")
+	remote, err := pickRemote(parseLines(remotes))
+	if err != nil {
+		return ""
+	}
+	raw, _ := a.git("remote", "get-url", remote)
+	return githubPRURL(strings.TrimSpace(raw), strings.TrimSpace(branch))
+}
+
+// githubPRURL turns git@github.com:o/r.git or https://github.com/o/r.git into the compare link.
+func githubPRURL(remote, branch string) string {
+	var repo string
+	switch {
+	case strings.HasPrefix(remote, "git@github.com:"):
+		repo = strings.TrimPrefix(remote, "git@github.com:")
+	case strings.HasPrefix(remote, "ssh://git@github.com/"):
+		repo = strings.TrimPrefix(remote, "ssh://git@github.com/")
+	case strings.HasPrefix(remote, "https://github.com/"):
+		repo = strings.TrimPrefix(remote, "https://github.com/")
+	default:
+		return ""
+	}
+	repo = strings.TrimSuffix(strings.TrimSuffix(repo, "/"), ".git")
+	if branch == "" || strings.Count(repo, "/") != 1 {
+		return ""
+	}
+	return "https://github.com/" + repo + "/pull/new/" + branch
 }
 
 func (a *App) gitArgs(req gitRequest) ([]string, error) {

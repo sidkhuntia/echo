@@ -207,7 +207,7 @@ try {
         <div class="hrow join"><select id="branch-select" class="field"></select><button id="switch-branch" class="btn">Switch</button></div>
         <div class="hrow join"><input id="new-branch" class="field" placeholder="New branch name" autocomplete="off" spellcheck="false"><button id="create-branch" class="btn">Create</button></div>
         <div class="sync">
-          <button id="pull" class="btn net"><svg class="i" viewBox="0 0 16 16"><path d="M8 2.5v9M4.5 8 8 11.5 11.5 8M3.5 13.5h9"/></svg>Pull</button>
+          <button id="pull" class="btn net"><svg class="i" viewBox="0 0 16 16"><path d="M8 2.5v9M4.5 8 8 11.5 11.5 8M3.5 13.5h9"/></svg><span id="pull-label">Pull</span></button>
           <div class="btn-split push-split">
             <button id="push" class="btn net"><svg class="i" viewBox="0 0 16 16"><path d="M8 13.5v-9M4.5 8 8 4.5 11.5 8M3.5 2.5h9"/></svg>Push</button>
             <button id="push-more" class="btn net caret" title="Force push" aria-haspopup="menu"><svg class="i" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
@@ -247,6 +247,7 @@ try {
 <div id="file-menu" class="menu" role="menu" hidden></div>
 <div id="push-menu" class="menu" role="menu" hidden></div>
 
+<div id="toast" class="toast" role="status" hidden></div>
 <div id="dialog" class="modal dialog" hidden>
   <form class="modal-card dialog-card" role="alertdialog" aria-modal="true" aria-labelledby="dialog-title" method="dialog">
     <div class="dialog-head"><h3 id="dialog-title"></h3><span id="dialog-kicker" class="dialog-tag"></span></div>
