@@ -70,7 +70,6 @@ Terminal
       -> embedded vanilla JavaScript UI
         -> system git CLI
         -> local filesystem
-        -> installed language servers (highlighting)
 ```
 
 ## 4. Core Git scope
@@ -209,7 +208,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** the Markdown renderer is a small vanilla module (`web/markdown.js`) covering GitHub-flavored Markdown: headings, emphasis, code, fenced blocks, nested and task lists, quotes, `[!NOTE]`-style alerts, tables, reference links, autolinks, and front matter.
 - **Default:** raw HTML in Markdown is allowed for layout (centered logos, `<details>`), but everything is parsed inertly and passed through an allowlist of tags and attributes; scripts, event handlers, frames, SVG, and non-web URL schemes are removed, and ids and classes survive only with an `md-` prefix so a document cannot clobber echo's own elements.
 - **Default:** relative images load through `/api/raw`, which serves repository files with a `sandbox` Content-Security-Policy and `nosniff`. Remote `https` images (badges) load as in any Markdown preview. Relative links open the file in echo, `#anchors` scroll, and web links open a new browser tab.
-- **Default:** a fenced code block in the preview is colored by the language named in the fence, by a small tokenizer in `web/highlight.js`: one linear scan per language family with keyword tables instead of grammars, about twenty languages. It emits the editor's own `.tk-*` classes, so a block in the preview looks like the same code in the editor and every theme applies to both at once. A language it does not know stays plain text, and a block over 200,000 characters is left alone rather than building a large DOM for a document scroll past.
+- **Default:** a fenced code block in the preview is colored by the language named in the fence, using the same highlighter as the editor and diffs (§8), so a block looks like the same code in the editor. A language it does not know stays plain text, and a block over 200,000 characters is left alone rather than building a large DOM for a document to scroll past.
 - **Rejected:** chroma (or goldmark) for the preview, which is the usual choice. It is the better answer for a full renderer — ~250 lexers and complete GFM — but it adds 5.7 MB of Go dependency to a binary that currently has none, and its token types are a second vocabulary that has to be mapped onto the editor's semantic tokens anyway. What it buys is breadth; what it costs is the standard-library-only rule and the shared token colors. Reconsider if the preview's languages become a complaint.
 - **Default:** a ` ```mermaid ` fence renders as a diagram. mermaid's own ESM build (v12) ships in the binary as one 1.6 MB zip, `vendor/mermaid.zip`, served straight out of the archive at `/vendor/mermaid/`, and is imported only when a document actually has a diagram: 5.4 MB of loose module files compress to 1.6 MB, and the zip lives outside `web/` so it is embedded once rather than twice. The page keeps working with no network, and mermaid draws in `securityLevel: 'strict'`, which is what stops a label in a diagram from becoming markup. A fence mermaid cannot parse keeps its source, and diagrams are redrawn when the theme changes because their colors are baked into the SVG.
 - **Default:** to move to another mermaid release, replace `vendor/mermaid.zip` with the new `dist` (`mermaid.esm.min.mjs` and `chunks/mermaid.esm.min/`, plus `LICENSE` and `package.json`) zipped with `zip -X -9 -r ../../vendor/mermaid.zip mermaid.esm.min.mjs chunks LICENSE package.json`. `TestMermaidServedFromZip` fails if the entry's imports are not all in the archive.
@@ -222,31 +221,14 @@ The following Git capabilities were accepted as part of the product direction:
 - **Deferred:** split editor panes.
 - **Deferred:** editor undo/redo features beyond native textarea behavior.
 
-## 8. Language servers
+## 8. Syntax highlighting
 
-- **Accepted:** use installed language servers for syntax awareness.
-- **Accepted:** do not maintain a hard-coded list of supported languages.
-- **Accepted:** discover installed language servers automatically.
-- **Accepted:** syntax highlighting is the only LSP feature required in the first direction.
-- **Deferred:** diagnostics.
-- **Deferred:** completion.
-- **Deferred:** hover information.
-- **Deferred:** go-to-definition.
-- **Deferred:** references and call hierarchy.
-- **Accepted:** missing language servers must not block opening or editing a file.
-- **Default:** fall back to plain text when a language server is unavailable.
-- **Default:** do not warn loudly or prevent editing because a server is missing.
-- **Corrected decision:** servers cannot be discovered without knowing their command names, so echo keeps a small catalog (`lspServers` in `lsp.go`) mapping file extensions to server commands and install commands: gopls, typescript-language-server, basedpyright, rust-analyzer, clangd, sourcekit-lsp, jdtls, ruby-lsp, lua-language-server, zls, and bash-language-server. A file uses the first installed server for its extension.
-- **Default:** servers are looked up on `PATH` plus the folders installers use that a Terminal `PATH` often lacks (`~/go/bin`, `~/.cargo/bin`, `~/.local/bin`, Homebrew, Homebrew's keg-only LLVM, and the Xcode command line tools).
-- **Accepted:** when a file's server is not installed, a one-line note above the editor offers Install, Copy command, and Not now. Install runs that catalog entry's command on the server (never a command sent by the page), one at a time, with a ten-minute limit. Not now is remembered per server in the config (`lspDismissed`).
-- **Default:** echo is a minimal LSP client over stdio using only the standard library: `initialize`, full-text `didOpen`/`didChange`, and `textDocument/semanticTokens/full`. It answers the server's own requests with empty results. One server process runs per catalog entry per echo process, started on first use, rooted at the repository, and it exits with echo when its stdin closes. On a stop, echo sends the protocol's own `shutdown` request and then `exit`, and kills a server that ignores them, so a server that is mid-index or writing a cache is not cut off, and none is left running.
-- **Default:** jdtls needs Java 21 or newer, but shells often pin `JAVA_HOME` to a project's older JDK. When the inherited `JAVA_HOME` is older, echo gives the jdtls process (only) a newer JDK from `/usr/libexec/java_home -v 21+` or Homebrew's `openjdk`; the project still builds against the JDK it configures.
-- **Default:** a server that fails to start reports the last line of its stderr as the reason, with the rest in the status list.
-- **Default:** a server that fails to start is not retried until echo restarts, the server is installed from the prompt, or Restart is pressed. A slow answer (a server still importing the project, like jdtls on a Maven or Gradle build) is asked again every 3 seconds, for up to 3 minutes.
-- **Accepted:** the status bar names the current file's language server and its state: starting, indexing (with the server's own progress text, such as jdtls's project import), ready, no highlighting, failed, or not installed. Clicking it lists every server in the catalog with its path or install command, the error (the tail of the server's stderr) when it failed, and Install or Restart.
-- **Default:** state comes from `/api/lsp/status`, which the page polls every 1.5 s only while a server is starting or busy, or while the list is open. Progress comes from `$/progress` (echo advertises `window.workDoneProgress`) and jdtls's `language/status`.
-- **Default:** servers that classify only names (jdtls, TypeScript, Pyright, clangd) leave comments, strings, numbers, and keywords uncolored, so the editor finds comments, strings, and numbers lexically and colors keywords from short per-language lists (Java, JavaScript/TypeScript, Python, C-family). Server tokens always win, then strings and comments, then keywords. This runs only when a server is answering; without one the editor stays plain text.
-- **Default:** token colors come from the theme's existing tokens (accent for keywords, add for strings, warn for numbers and constants, info for types), so every theme highlights without new palette entries.
+- **Accepted (supersedes language servers):** highlighting runs in the browser on a vendored copy of highlight.js (`web/vendor/hljs.js`, v11.11.1 "common" build, BSD-3, byte-identical to `@highlightjs/cdn-assets` on npm; license beside it). `web/highlight.js` is a thin wrapper. It colors the editor, both diff layouts (stacked and split) and Markdown fences the same way, using `.hljs-*` rules in `style.css` built from theme colors.
+- **Why not language servers:** the only LSP feature echo used was semantic tokens. That needed per-language installs, a background process each, a status chip and a popover. Go-to-definition, hover and diagnostics were never built.
+- **Why not chroma/goldmark:** goldmark is a Markdown parser, not a highlighter. Chroma runs server-side, so the editor would pay a round trip per keystroke, and it is a Go dependency. A vendored browser library keeps highlighting local and instant, with the precedent of the vendored mermaid.
+- **Default:** the language comes from the file name (extension or `Makefile`). An unknown language or a buffer over 200 KB stays plain text. The common build has no Dockerfile grammar; Dockerfiles stay plain. To add a language, re-vendor a build that includes it.
+- **Default:** a diff hunk is colored as two streams, old (context + deleted) and new (context + added), so multi-line comments and strings color correctly inside a hunk. A token opened above the hunk is not seen.
+- **Deferred:** anything semantic (diagnostics, completion, hover, go-to-definition, references). It would mean bringing a language server back.
 
 ## 9. Tabs and workspace model
 
@@ -448,6 +430,7 @@ The following Git capabilities were accepted as part of the product direction:
 
 These are YAGNI decisions for v1:
 
+- The file tree's context menu (new file, copy name/relative/absolute path) is client-only: the absolute path is the status `root` plus the path, and there is no new endpoint. New-file shortcut is `⌘⌥N` because browsers reserve `⌘N`.
 - No database.
 - No Git library.
 - No Electron.
@@ -463,7 +446,7 @@ These are YAGNI decisions for v1:
 - No native file-picker dependency.
 - No conflict-resolution workflow UI.
 - No virtualized editor.
-- No full LSP feature set.
+- No language servers; highlighting is lexical.
 - No per-repository configuration.
 - No closed-tab restore.
 - No custom keybinding editor.

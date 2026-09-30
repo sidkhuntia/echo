@@ -77,7 +77,7 @@ try {
     <div id="files-pane" class="files-pane" hidden>
       <div id="tree" class="list"></div>
       <div class="tree-acts">
-        <button id="new-file" class="btn quiet sm">＋ New</button>
+        <button id="new-file" class="btn quiet sm" title="New file (⌘⌥N)">＋ New</button>
         <button id="rename-file" class="btn quiet sm">Rename</button>
         <button id="delete-file" class="btn quiet sm">Delete</button>
       </div>
@@ -148,7 +148,6 @@ try {
     </div>
     <div id="file-crumb" class="crumb" hidden><span id="file-path" class="file-path"></span></div>
     <div id="banner" class="banner" hidden></div>
-    <div id="lsp-banner" class="banner note" hidden></div>
     <div class="stage">
       <div id="diff" class="diff-view active"></div>
       <div id="blame-ghost" class="blame-ghost" hidden></div>
@@ -220,17 +219,12 @@ try {
 <footer class="statusbar">
   <span class="live"></span>
   <span id="status">Ready</span>
-  <button id="lsp-status" class="lsp-chip" data-state="none" title="Language servers used for highlighting"><i class="dot"></i><span id="lsp-label">Language servers</span></button>
   <span class="console-help">⌘K files · ⌘D review/files · ⌘B sidebar · ⌘J Git · ? shortcuts</span>
 </footer>
 
-<div id="lsp-pop" class="pop lsp-pop" hidden>
-  <h5>Language servers <span class="faint">— highlighting in the editor</span></h5>
-  <div id="lsp-list"></div>
-</div>
-
 <div id="ref-menu" class="menu" role="menu" hidden></div>
 <div id="commit-menu" class="menu" role="menu" hidden></div>
+<div id="file-menu" class="menu" role="menu" hidden></div>
 <div id="push-menu" class="menu" role="menu" hidden></div>
 
 <div id="dialog" class="modal dialog" hidden>
@@ -278,6 +272,7 @@ try {
       <dt><kbd>⌘⇧F</kbd></dt><dd>Search file contents</dd>
       <dt><kbd>⌘B</kbd></dt><dd>Toggle sidebar</dd>
       <dt><kbd>⌘J</kbd></dt><dd>Toggle Git panel</dd>
+      <dt><kbd>⌘⌥N</kbd></dt><dd>New file (beside the selected one)</dd>
       <dt><kbd>⌘S</kbd></dt><dd>Save current file</dd>
       <dt><kbd>⌘⇧V</kbd></dt><dd>Markdown: switch Preview / Edit</dd>
       <dt><kbd>⌘↵</kbd></dt><dd>Commit (in the message box)</dd>

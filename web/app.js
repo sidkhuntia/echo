@@ -1,5 +1,5 @@
 import { renderMarkdown, sanitize } from './markdown.js'
-import { highlight } from './highlight.js'
+import { highlight, highlightLines } from './highlight.js'
 
 const $ = s => document.querySelector(s)
 const state = {
@@ -26,8 +26,6 @@ const state = {
   qClosed: new Set(),
   // widths: the side panels' dragged widths, written to the desk grid as --tree-w and --git-w.
   widths: { tree: 272, git: 300 },
-  // lspExt: file extensions whose language server is missing, unsupported, or failed, so they are not asked again.
-  lspExt: new Map(), installing: '', lsp: [],
   // search: the Search rail. ran is the query and options the shown results came from; ctl aborts the one in flight.
   search: { opts: { case: false, word: false, regex: false }, ran: null, res: null, err: '', ctl: null, timer: 0, closed: new Set() },
 }
@@ -94,7 +92,7 @@ function ask({ title, kicker = '', html = '', tone = '', ok = 'OK', input = null
       if (prev?.isConnected) prev.focus?.()
     }
     dlg = { done, input: !!input }
-    if (input) field.select()
+    if (input) { field.focus(); input.end ? field.setSelectionRange(field.value.length, field.value.length) : field.select() }
     else (tone ? $('#dialog-cancel') : $('#dialog-ok')).focus()
   })
 }
@@ -597,7 +595,7 @@ function fileHTML(f, i) {
     if (f.note) body = `<div class="dnote">${esc(f.note)}</div>`
     else if (f.binary) body = `<div class="dnote">Binary file — not shown.</div>`
     else if (!f.hunks.length) body = `<div class="dnote">${f.isNew ? 'Empty new file.' : 'Mode or metadata change only.'}</div>`
-    else body = f.hunks.map(hunkHTML).join('')
+    else body = f.hunks.map((h, hi) => hunkHTML(h, hi, f.path)).join('')
   }
   const unsaved = state.tabs.some(t => t.path === f.path && t.content !== t.saved)
   const why = folded && !state.folded.has(f.path) ? (GENERATED.test(f.path) ? 'generated' : f.lines > 1500 ? 'large' : '') : ''
@@ -610,9 +608,22 @@ function fileHTML(f, i) {
 
 const rowClass = l => l.t === 'add' ? 'r-add' : l.t === 'del' ? 'r-del' : l.t === 'meta' ? 'r-meta' : ''
 // data-n is the line in the new version; double-clicking any line opens the editor there.
-const textCell = (l, cls) => `<span class="tx ${cls}" data-n="${l.n ?? l.at}">${esc(l.text) || ' '}</span>`
+const textCell = (l, cls) => `<span class="tx ${cls}" data-n="${l.n ?? l.at}">${l.html || esc(l.text) || ' '}</span>`
 
-function hunkHTML(h, hi) {
+// Each hunk is colored as two streams, old (context + deleted) and new (context + added), so a
+// comment or string that opens above a line still colors it. Context rows take the new stream's color.
+// Only what the hunk shows is seen: a token opened above the hunk is invisible to it.
+function colorHunk(h, path) {
+  h.colored = true
+  const old = h.lines.filter(l => l.t === 'ctx' || l.t === 'del'), cur = h.lines.filter(l => l.t === 'ctx' || l.t === 'add')
+  for (const side of [old, cur]) {
+    const rows = highlightLines(side.map(l => l.text).join('\n'), path)
+    if (rows) side.forEach((l, i) => { if (side === cur || l.t === 'del') l.html = rows[i] })
+  }
+}
+
+function hunkHTML(h, hi, path) {
+  if (!h.colored) colorHunk(h, path)
   const split = state.config.diffMode === 'split'
   return `<div class="hunk ${split ? 'split' : ''}" data-h="${hi}"><div class="hunk-head"><span>${esc(h.range)}</span><b>${esc(h.context)}</b></div>${split ? splitRows(h) : stackedRows(h)}</div>`
 }
@@ -865,291 +876,24 @@ function renderEditor() {
   renderBanner()
   refreshGutter()
   paintSyntax()
-  paintLspStatus()
-  if (editing) requestTokens(tab)
-  else renderLspBanner()
 }
 
 // ---------- syntax highlighting ----------
-// Colors come from an installed language server's semantic tokens. The textarea's text turns
-// transparent and a layer behind it draws the visible lines in color. Without a server the
-// editor stays plain text, and a missing server gets a one-line offer to install it.
-const extOf = p => (p.match(/\.[^./]+$/)?.[0] || '').toLowerCase()
-let tokensTimer
-
-async function requestTokens(tab, retry = 0) {
-  if (!tab || tab.binary || isMarkdown(tab.path)) return
-  if (state.lspExt.has(extOf(tab.path))) return renderLspBanner()
-  if (tab.hl?.text === tab.content || tab.hlAsked === tab.content) return
-  const text = tab.content
-  tab.hlAsked = text
-  let res
-  // A request that starts a server can take a while; show "starting" meanwhile.
-  const cur = serverFor(tab.path)
-  if (cur?.state !== 'ready') setTimeout(refreshLsp, 400)
-  try { res = await post('/api/lsp/tokens', { path: tab.path, content: text }) } catch { tab.hlAsked = null; return }
-  if (res.status !== 'ok' || cur?.state !== 'ready') refreshLsp()
-  if (res.status === 'error') {
-    tab.hlAsked = null
-    // A server that would not start stays down until Restart; a slow answer (a server still
-    // importing the project, like jdtls on a Maven build) is asked again every few seconds.
-    if (!/deadline|cancel/i.test(res.message || '')) {
-      state.lspExt.set(extOf(tab.path), res)
-      if (tab === activeTab()) setStatus(`No highlighting from ${res.server?.name}: ${res.message.split('\n')[0]}`, 'err')
-    } else if (retry < 60) setTimeout(() => { if (tab === activeTab() && tab.hlAsked !== tab.content) requestTokens(tab, retry + 1) }, 3000)
-    return
-  }
-  if (res.status !== 'ok') { state.lspExt.set(extOf(tab.path), res); return renderLspBanner() }
-  // A server still loading the workspace can answer with nothing at first.
-  if (!res.tokens?.length && text.trim() && retry < 3) {
-    setTimeout(() => { tab.hlAsked = null; if (tab === activeTab()) requestTokens(tab, retry + 1) }, 1500 * (retry + 1))
-    return
-  }
-  tab.hl = { text, src: text.split('\n'), lines: tokenLines(res) }
-  if (tab === activeTab() && state.mode === 'file') paintSyntax()
-}
-
-function tokenLines(res) {
-  const bit = name => { const k = (res.modifiers || []).indexOf(name); return k < 0 ? 0 : 1 << k }
-  const ro = bit('readonly'), lib = bit('defaultLibrary'), dep = bit('deprecated')
-  const lines = [], t = res.tokens || []
-  for (let i = 0; i + 4 < t.length; i += 5) {
-    let cls = 'tk-' + String(res.legend[t[i + 3]] || 'x').replace(/[^\w-]/g, '')
-    if (t[i + 4] & ro) cls += ' tk-readonly'
-    if (t[i + 4] & lib) cls += ' tk-lib'
-    if (t[i + 4] & dep) cls += ' tk-deprecated'
-    ;(lines[t[i]] ||= []).push([t[i + 1], t[i + 2], cls])
-  }
-  return lines
-}
-
-// While typing, tokens describe the last text sent. Lines above and below the edit keep theirs
-// (shifted by the lines added or removed); the edited lines stay plain until the next answer.
-function tokenRow(tab) {
-  const hl = tab.hl
-  if (hl.text === tab.content) return i => i
-  if (hl.mapFor !== tab.content) {
-    const a = hl.src, b = tabLines(tab)
-    let p = 0, q = 0
-    while (p < a.length && p < b.length && a[p] === b[p]) p++
-    while (q < a.length - p && q < b.length - p && a[a.length - 1 - q] === b[b.length - 1 - q]) q++
-    hl.map = { p, q, na: a.length, nb: b.length }
-    hl.mapFor = tab.content
-  }
-  const { p, q, na, nb } = hl.map
-  return i => i < p ? i : i >= nb - q ? i - nb + na : -1
-}
-
-function tabLines(tab) {
-  if (tab.linesFor !== tab.content) { tab.linesFor = tab.content; tab.lines = tab.content.split('\n') }
-  return tab.lines
-}
-
-// Some servers (TypeScript, Pyright, clangd) only classify names, so comments, strings, and numbers
-// are found lexically underneath; a server token always wins where both cover the same text.
-const LEX_NUM = String.raw`\b(?:0[xXbBoO][\da-fA-F_]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)\b`
-const LEX_STR = String.raw`"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'`
-const LEX = {
-  c: new RegExp(String.raw`(\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$))|(${LEX_STR}|` + '`' + String.raw`(?:[^` + '`' + String.raw`\\]|\\[\s\S])*` + '`' + `)|(${LEX_NUM})`, 'g'),
-  hash: new RegExp(String.raw`(#[^\n]*)|("""[\s\S]*?"""|'''[\s\S]*?'''|${LEX_STR})|(${LEX_NUM})`, 'g'),
-  lua: new RegExp(String.raw`(--\[\[[\s\S]*?\]\]|--[^\n]*)|(${LEX_STR})|(${LEX_NUM})`, 'g'),
-}
-const lexFamily = p => /\.(py|pyi|rb|sh|bash|zsh)$/i.test(p) ? 'hash' : /\.lua$/i.test(p) ? 'lua' : 'c'
-
-// Keywords for languages whose servers classify names but not keywords (jdtls, TypeScript, Pyright,
-// clangd). They only fill gaps: strings, comments, and server tokens always win.
-const KEYWORDS = Object.fromEntries(Object.entries({
-  java: 'abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public record return sealed permits short static strictfp super switch synchronized this throw throws transient try var void volatile while yield true false null',
-  js: 'as async await break case catch class const continue debugger declare default delete do else enum export extends false finally for from function get if implements import in instanceof interface keyof let namespace new null of private protected public readonly return satisfies set static super switch this throw true try type typeof undefined var void while with yield',
-  py: 'False None True and as assert async await break case class continue def del elif else except finally for from global if import in is lambda match nonlocal not or pass raise return self try while with yield',
-  c: 'auto bool break case catch char class const constexpr continue default delete do double else enum explicit extern false float for friend goto if inline int long namespace new noexcept nullptr operator override private protected public register return short signed sizeof static struct switch template this throw true try typedef typename union unsigned using virtual void volatile while',
-}).map(([k, v]) => [k, new Set(v.split(' '))]))
-const kwFamily = p => /\.java$/i.test(p) ? 'java' : /\.[mc]?[jt]sx?$/i.test(p) ? 'js' : /\.pyi?$/i.test(p) ? 'py' : /\.(c|h|cc|cpp|cxx|hpp|hh|m|mm)$/i.test(p) ? 'c' : ''
-
-function keywordSpans(text, words) {
-  if (!words) return null
-  const out = []
-  for (const m of text.matchAll(/[A-Za-z_]\w*/g)) if (words.has(m[0])) out.push([m.index, m[0].length, 'tk-keyword'])
-  return out.length ? out : null
-}
-
-function lexLines(tab) {
-  if (tab.lexFor === tab.content) return tab.lex
-  const out = [], text = tab.content, re = LEX[lexFamily(tab.path)]
-  let line = 0, start = 0, m
-  re.lastIndex = 0
-  while ((m = re.exec(text))) {
-    if (!m[0]) { re.lastIndex++; continue }
-    const cls = m[1] ? 'tk-comment' : m[2] ? 'tk-string' : 'tk-number'
-    for (let nl = text.indexOf('\n', start); nl >= 0 && nl < m.index; nl = text.indexOf('\n', start)) { line++; start = nl + 1 }
-    // A token spanning lines (block comment, template string) becomes one span per line.
-    let at = m.index
-    const end = m.index + m[0].length
-    while (at < end) {
-      const nl = text.indexOf('\n', at)
-      const stop = nl < 0 || nl >= end ? end : nl
-      if (stop > at) (out[line] ||= []).push([at - start, stop - at, cls])
-      if (stop === end) break
-      line++; start = stop + 1; at = start
-    }
-  }
-  tab.lexFor = tab.content
-  tab.lex = out
-  return out
-}
-
-// lineSpans lays server tokens over lexical ones: a lexical span keeps only the parts no server
-// token covers, so `"crypto/sha256"` stays a string around gopls's package-name token.
-function lineSpans(server, lexical) {
-  if (!lexical) return server
-  if (!server) return lexical
-  const out = [...server]
-  for (const [c, n, cls] of lexical) {
-    let at = c
-    for (const [sc, sn] of server) {
-      if (sc + sn <= at || sc >= c + n) continue
-      if (sc > at) out.push([at, sc - at, cls])
-      at = Math.max(at, sc + sn)
-    }
-    if (at < c + n) out.push([at, c + n - at, cls])
-  }
-  return out.sort((a, b) => a[0] - b[0])
-}
-
-function colorLine(text, spans) {
-  if (!spans) return esc(text)
-  let h = '', at = 0
-  for (const [c, n, cls] of spans) {
-    if (c < at || c >= text.length) continue
-    const end = Math.min(text.length, c + n)
-    h += esc(text.slice(at, c)) + `<span class="${cls}">${esc(text.slice(c, end))}</span>`
-    at = end
-  }
-  return h + esc(text.slice(at))
-}
-
-// Only the visible rows are drawn, like the gutter.
+// highlight.js colors the whole buffer; the textarea's text turns transparent and a layer behind it
+// draws the visible rows. An unknown language or a huge file stays plain text.
+// ponytail: re-tokenizes the buffer on each change (linear, capped at 200 KB); chunk it if it ever lags.
 function paintSyntax() {
   const layer = $('#syntax'), ed = $('#editor'), tab = activeTab()
-  const on = state.mode === 'file' && ed.classList.contains('active') && !!tab?.hl
-  ed.classList.toggle('hl', on)
-  layer.classList.toggle('active', on)
-  if (!on) { layer.innerHTML = ''; return }
-  const lines = tabLines(tab), row = tokenRow(tab), lex = lexLines(tab), words = KEYWORDS[kwFamily(tab.path)]
+  const editing = state.mode === 'file' && ed.classList.contains('active') && !!tab
+  if (editing && tab.hl?.text !== tab.content) tab.hl = { text: tab.content, rows: highlightLines(tab.content, tab.path) }
+  const rows = editing && tab.hl.rows
+  ed.classList.toggle('hl', !!rows)
+  layer.classList.toggle('active', !!rows)
+  if (!rows) { layer.innerHTML = ''; return }
   const [first, last] = visibleRange(tab)
   let h = ''
-  for (let i = first; i < last; i++) {
-    const r = row(i)
-    h += `<div class="sl" style="top:${lineTop(i) - ed.scrollTop}px">${colorLine(lines[i], lineSpans(lineSpans(r < 0 ? null : tab.hl.lines[r], lex[i]), keywordSpans(lines[i], words)))}</div>`
-  }
+  for (let i = first; i < last; i++) h += `<div class="sl" style="top:${lineTop(i) - ed.scrollTop}px">${rows[i] ?? ''}</div>`
   layer.innerHTML = `<div style="transform:translateX(${-ed.scrollLeft}px)">${h}</div>`
-}
-
-function renderLspBanner() {
-  const b = $('#lsp-banner'), tab = activeTab()
-  const info = state.mode === 'file' && tab && !tab.binary && !tab.preview && state.lspExt.get(extOf(tab.path))
-  if (!info || info.status !== 'missing' || (state.config.lspDismissed || []).includes(info.server.id)) { b.hidden = true; return }
-  const s = info.server, busy = state.installing === s.id
-  b.innerHTML = `<span class="grow">Highlighting for <b>${esc(extOf(tab.path))}</b> files uses <b>${esc(s.name)}</b>, which isn't installed. <code>${esc(s.install.join(' '))}</code></span>
-    <button class="btn sm quiet" data-lsp="dismiss" ${busy ? 'disabled' : ''}>Not now</button>
-    <button class="btn sm" data-lsp="copy">Copy command</button>
-    <button class="btn sm primary" data-lsp="install" ${state.installing ? 'disabled' : ''}>${busy ? 'Installing…' : 'Install'}</button>`
-  b.hidden = false
-}
-
-async function installServer(s) {
-  state.installing = s.id
-  renderLspBanner()
-  setStatus(`Installing ${s.name}: ${s.install.join(' ')}`)
-  paintLspStatus()
-  try {
-    await post('/api/lsp/install', { id: s.id })
-    forgetServer(s.id)
-    setStatus(`Installed ${s.name}`, 'ok')
-  } catch (e) { setStatus(e.message, 'err') }
-  state.installing = ''
-  renderLspBanner()
-  refreshLsp()
-  if (state.mode === 'file') requestTokens(activeTab())
-}
-
-// ---------- language server status ----------
-// The status bar names the current file's server and what it is doing; the popover lists every
-// server echo knows, with Install for missing ones and Restart for running or failed ones.
-const LSP_WORD = { missing: 'not installed', stopped: 'not started', starting: 'starting…', busy: 'indexing…', ready: 'ready', unsupported: 'no highlighting', failed: 'failed to start', exited: 'stopped unexpectedly' }
-const lspLive = s => ['starting', 'busy', 'ready', 'unsupported'].includes(s.state)
-let lspPoll
-
-async function refreshLsp() {
-  clearTimeout(lspPoll)
-  try { state.lsp = await api('/api/lsp/status') } catch { return }
-  paintLspStatus()
-  // Poll only while something is changing or the popover is open.
-  if (state.lsp.some(s => s.state === 'starting' || s.state === 'busy') || !$('#lsp-pop').hidden) lspPoll = setTimeout(refreshLsp, 1500)
-}
-
-// serverFor mirrors the server's choice: the first installed server for the extension, else the first one.
-function serverFor(path) {
-  const list = (state.lsp || []).filter(s => s.exts.includes(extOf(path)))
-  return list.find(s => s.state !== 'missing') || list[0]
-}
-
-const codeTab = () => { const t = activeTab(); return state.mode === 'file' && t && !t.binary && !isMarkdown(t.path) ? t : null }
-
-function paintLspStatus() {
-  const chip = $('#lsp-status'), tab = codeTab(), cur = tab && serverFor(tab.path)
-  const live = (state.lsp || []).filter(lspLive)
-  let label, kind
-  if (cur) {
-    label = `${cur.name} · ${cur.state === 'busy' && cur.progress?.length ? cur.progress[0] : LSP_WORD[cur.state]}`
-    kind = cur.state
-  } else if (tab) {
-    label = `No language server for ${extOf(tab.path) || 'this file'}`
-    kind = 'none'
-  } else {
-    label = live.length ? `${live.length} language server${live.length > 1 ? 's' : ''}` : 'Language servers'
-    kind = live.some(s => s.state !== 'ready') ? 'busy' : live.length ? 'ready' : 'none'
-  }
-  chip.dataset.state = kind
-  $('#lsp-label').textContent = label
-  chip.title = cur?.message || cur?.progress?.join('\n') || 'Language servers used for highlighting'
-  if (!$('#lsp-pop').hidden) renderLspPop()
-}
-
-function renderLspPop() {
-  const tab = codeTab(), cur = tab && serverFor(tab.path)
-  const rank = s => s === cur ? 0 : lspLive(s) || s.state === 'failed' || s.state === 'exited' ? 1 : s.state === 'stopped' ? 2 : 3
-  $('#lsp-list').innerHTML = [...(state.lsp || [])].sort((a, b) => rank(a) - rank(b)).map(s => {
-    const act = s.state === 'missing'
-      ? `<button class="btn sm" data-lsp-install="${esc(s.id)}" ${state.installing ? 'disabled' : ''}>${state.installing === s.id ? 'Installing…' : 'Install'}</button>`
-      : s.state !== 'stopped' ? `<button class="btn sm quiet" data-lsp-restart="${esc(s.id)}">Restart</button>` : ''
-    return `<div class="lsp-row${s === cur ? ' cur' : ''}" data-state="${s.state}">
-      <div class="lsp-top"><i class="dot"></i><b>${esc(s.name)}</b><span class="lsp-state">${esc(LSP_WORD[s.state])}${lspLive(s) && s.since ? ` · ${ago(s.since).replace(' ago', '')}` : ''}</span>${act}</div>
-      <div class="lsp-sub">${esc(s.exts.join(' '))} · ${s.path ? esc(s.path) : `<code>${esc(s.install.join(' '))}</code>`}</div>
-      ${s.progress?.length ? `<div class="lsp-msg">${s.progress.map(esc).join('<br>')}</div>` : ''}
-      ${s.message ? `<pre class="lsp-err">${esc(s.message)}</pre>` : ''}
-    </div>`
-  }).join('')
-}
-
-function toggleLspPop(open = $('#lsp-pop').hidden) {
-  $('#lsp-pop').hidden = !open
-  if (open) { renderLspPop(); refreshLsp() }
-}
-
-// forgetServer drops what the page remembered about a server, so the next request starts fresh.
-function forgetServer(id) {
-  for (const [ext, info] of state.lspExt) if (info.server?.id === id) state.lspExt.delete(ext)
-  // Marking tokens stale makes the next request ask again; the old colors stay until the answer.
-  for (const t of state.tabs) { t.hlAsked = null; if (t.hl) t.hl.text = null }
-}
-
-async function restartServer(id) {
-  try { await post('/api/lsp/restart', { id }) } catch (e) { return setStatus(e.message, 'err') }
-  forgetServer(id)
-  setStatus(`Restarting ${state.lsp.find(s => s.id === id)?.name || id}`)
-  if (codeTab()) requestTokens(codeTab())
-  setTimeout(refreshLsp, 300)
 }
 
 // ---------- markdown preview ----------
@@ -1691,10 +1435,10 @@ async function saveFile(force = false) {
   }
 }
 
-async function fileAction(action) {
+async function fileAction(action, dir = '') {
   const current = state.selected || activeTab()?.path
   if (action !== 'create' && !current) return setStatus('Select a file first')
-  const path = action === 'create' ? await ask({ title: 'Name the new file', ok: 'Create', input: { label: 'Path, relative to the repository', placeholder: 'src/name.ext' } }) : current
+  const path = action === 'create' ? await ask({ title: 'Name the new file', ok: 'Create', input: { label: 'Path, relative to the repository', placeholder: 'src/name.ext', value: dir && dir + '/', end: true } }) : current
   if (!path) return
   const newPath = action === 'rename' ? await ask({ title: 'Rename this file', ok: 'Rename', input: { label: 'New path', value: path } }) : ''
   if (action === 'rename' && !newPath) return
@@ -2646,6 +2390,47 @@ $('#search-results').addEventListener('click', e => {
   const row = e.target.closest('.srow')
   if (row) openFile(row.dataset.path, { line: Number(row.dataset.line) })
 })
+// ---------- file menu ----------
+// Right-click a tree row: copy its name or path, or start a new file beside it. A folder creates inside itself.
+let fileMenuFor = null
+function closeFileMenu() { $('#file-menu').hidden = true; fileMenuFor = null }
+function openFileMenu(row, x, y) {
+  const isDir = row.classList.contains('dir'), path = isDir ? row.dataset.dir : row.dataset.path
+  const dir = isDir ? path : path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+  fileMenuFor = { path, dir }
+  const m = $('#file-menu')
+  m.innerHTML = `<div class="menu-head" title="${esc(path)}"><span>${esc(basename(path))}</span></div>`
+    + `<button class="menu-item" data-a="new" role="menuitem">New file${isDir ? ' in folder' : ' here'}…<kbd>⌘⌥N</kbd></button>`
+    + '<div class="menu-sep"></div>'
+    + '<button class="menu-item" data-a="name" role="menuitem">Copy name</button>'
+    + '<button class="menu-item" data-a="rel" role="menuitem">Copy relative path</button>'
+    + '<button class="menu-item" data-a="abs" role="menuitem">Copy absolute path</button>'
+  m.hidden = false
+  m.style.left = Math.max(8, Math.min(x, innerWidth - m.offsetWidth - 8)) + 'px'
+  m.style.top = Math.max(8, Math.min(y, innerHeight - m.offsetHeight - 8)) + 'px'
+  m.querySelector('.menu-item').focus()
+}
+async function runFileMenu(a) {
+  const { path, dir } = fileMenuFor
+  closeFileMenu()
+  if (a === 'new') return fileAction('create', dir)
+  const text = a === 'name' ? basename(path) : a === 'rel' ? path : (state.status?.root || '').replace(/\/$/, '') + '/' + path
+  try { await copyText(text); setStatus('Copied ' + text) } catch (e) { setStatus(e.message, 'err') }
+}
+$('#tree').addEventListener('contextmenu', e => {
+  const row = e.target.closest('.tnode')
+  if (!row) return
+  e.preventDefault()
+  openFileMenu(row, e.clientX, e.clientY)
+})
+$('#file-menu').addEventListener('click', e => { const b = e.target.closest('.menu-item'); if (b) runFileMenu(b.dataset.a) })
+$('#file-menu').addEventListener('keydown', e => {
+  const items = [...document.querySelectorAll('#file-menu .menu-item')], i = items.indexOf(document.activeElement)
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus() }
+})
+document.addEventListener('mousedown', e => { if (!$('#file-menu').hidden && !e.target.closest('#file-menu')) closeFileMenu() })
+window.addEventListener('blur', closeFileMenu)
+
 $('#tree').addEventListener('click', e => {
   const dir = e.target.closest('.tnode.dir')
   if (dir) return toggleDir(dir.dataset.dir)
@@ -2678,26 +2463,6 @@ $('#tabs').addEventListener('click', e => {
   if (close) return closeTab(+close.dataset.close)
   const tab = e.target.closest('.tab')
   if (tab) { state.active = +tab.dataset.i; state.returnTo = ''; setMode('file'); renderTree() }
-})
-$('#lsp-banner').addEventListener('click', async e => {
-  const act = e.target.closest('[data-lsp]')?.dataset.lsp
-  const tab = activeTab(), info = tab && state.lspExt.get(extOf(tab.path))
-  if (!act || !info?.server) return
-  const s = info.server
-  if (act === 'install') installServer(s)
-  if (act === 'copy') { await copyText(s.install.join(' ')); setStatus('Copied: ' + s.install.join(' '), 'ok') }
-  if (act === 'dismiss') {
-    state.config.lspDismissed = [...new Set([...(state.config.lspDismissed || []), s.id])]
-    renderLspBanner()
-    post('/api/config', { lspDismissed: state.config.lspDismissed }).catch(err => setStatus(err.message, 'err'))
-  }
-})
-$('#lsp-status').onclick = e => { e.stopPropagation(); toggleLspPop() }
-$('#lsp-pop').addEventListener('click', e => {
-  const install = e.target.closest('[data-lsp-install]')?.dataset.lspInstall
-  const restart = e.target.closest('[data-lsp-restart]')?.dataset.lspRestart
-  if (install) installServer(state.lsp.find(s => s.id === install))
-  if (restart) restartServer(restart)
 })
 document.querySelectorAll('#md-switch button').forEach(b => b.onclick = () => setPreview(b.dataset.md === 'preview'))
 $('#md').addEventListener('click', e => {
@@ -2887,8 +2652,7 @@ document.addEventListener('click', e => {
   if (!$('#ref-menu').hidden && !e.target.closest('[data-more], .bp-row')) closeRefMenu()
   if (!$('#branch-pop').hidden && !e.target.closest('#branch-pop')) toggleBranchPop(false)
   if (!$('#repo-pop').hidden && !e.target.closest('#repo-pop')) toggleRepoPop(false)
-  if (!$('#lsp-pop').hidden && !e.target.closest('#lsp-pop')) toggleLspPop(false)
-})
+  })
 // Only these two stash verbs are reachable from a row, whatever data-act the markup carries.
 // A Map, not an object, so a key like "constructor" cannot reach the prototype.
 const STASH_ACT = new Map([['apply', 'stash:apply'], ['drop', 'stash:drop']])
@@ -2908,8 +2672,6 @@ $('#editor').addEventListener('input', () => {
   $('#stage-count').textContent = `${lineCount(t)} lines${dirty ? ' · unsaved' : ''}`
   paintGutter()
   paintSyntax()
-  clearTimeout(tokensTimer)
-  tokensTimer = setTimeout(() => { if (t === activeTab()) requestTokens(t) }, 250)
   clearTimeout(marksTimer)
   marksTimer = setTimeout(() => { if (t === activeTab()) { computeMarks(t); paintGutter() } }, 120)
 })
@@ -3122,6 +2884,9 @@ $('#palette-input').addEventListener('keydown', e => {
 
 document.addEventListener('keydown', e => {
   if (dlg) { if (e.key === 'Escape') { e.preventDefault(); dlg.done(null) } return }
+  if (e.key === 'Escape' && !$('#file-menu').hidden) { e.preventDefault(); closeFileMenu(); return }
+  // e.code, because ⌥N is a dead key on macOS. ⌘N itself belongs to the browser.
+  if (mod(e) && e.altKey && e.code === 'KeyN') { e.preventDefault(); const d = state.selected || activeTab()?.path || ''; fileAction('create', d.includes('/') ? d.slice(0, d.lastIndexOf('/')) : ''); return }
   if (e.key === 'Escape' && !$('#push-menu').hidden) { e.preventDefault(); togglePushMenu(false); $('#push-more').focus(); return }
   if (e.key === 'Escape' && !$('#commit-menu').hidden) { e.preventDefault(); toggleCommitMenu(false); $('#commit-more').focus(); return }
   if (!$('#palette').hidden) return
@@ -3149,7 +2914,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && (!$('#ref-menu').hidden || !$('#branch-pop').hidden)) { e.preventDefault(); if (!$('#ref-menu').hidden) closeRefMenu(); else toggleBranchPop(false); return }
   if (e.key === 'Escape' && state.mode === 'diff' && state.fromLog && !typing(e) && $('#help').hidden) { e.preventDefault(); setMode('log'); return }
   if (e.key === 'Escape' && !$('#diagram').hidden) { e.preventDefault(); closeDiagram(); return }
-  if (e.key === 'Escape') { $('#help').hidden = true; toggleThemes(false); toggleRepoPop(false); toggleLspPop(false); if (typing(e)) e.target.blur(); return }
+  if (e.key === 'Escape') { $('#help').hidden = true; toggleThemes(false); toggleRepoPop(false); if (typing(e)) e.target.blur(); return }
   if (typing(e) || e.altKey) return
   if (state.mode === 'log') {
     const k = { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[e.key]
@@ -3192,7 +2957,6 @@ async function loadConfig() {
 syncScopeInputs()
 loadConfig()
 refreshAll()
-refreshLsp()
 const events = new EventSource('/api/stream')
 // After a lost connection the server may have restarted with new history; forget the refs key so the
 // first status after reconnecting reloads History and the Log.

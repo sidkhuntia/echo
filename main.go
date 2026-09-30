@@ -79,8 +79,6 @@ type Config struct {
 	CommitAll  bool           `json:"commitAll"`
 	Panels     []string       `json:"panels"`
 	PanelSizes map[string]int `json:"panelSizes"`
-	// LSPDismissed lists language servers whose install prompt was answered "Not now".
-	LSPDismissed []string `json:"lspDismissed"`
 }
 
 type App struct {
@@ -91,7 +89,6 @@ type App struct {
 	sigs  map[string]fileSig
 	// net serializes network actions; a second fetch/pull/push while one runs is refused, not queued.
 	net sync.Mutex
-	lsp *lspManager
 	// srv is the running server, so the page can ask for a graceful stop. It is nil in tests,
 	// which drive routes() over their own listener; stopping then just closes the app.
 	srv *http.Server
@@ -380,7 +377,6 @@ func newApp(root string, port int) *App {
 		root:  root,
 		port:  port,
 		sigs:  map[string]fileSig{},
-		lsp:   newLSPManager(root),
 		hosts: map[string]bool{"127.0.0.1:" + p: true, "localhost:" + p: true},
 		done:  make(chan struct{}),
 	}
@@ -393,10 +389,6 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/tree", a.handleTree)
 	mux.HandleFunc("/api/file", a.handleFile)
 	mux.HandleFunc("/api/raw", a.handleRaw)
-	mux.HandleFunc("/api/lsp/tokens", a.handleLSPTokens)
-	mux.HandleFunc("/api/lsp/install", a.handleLSPInstall)
-	mux.HandleFunc("/api/lsp/status", a.handleLSPStatus)
-	mux.HandleFunc("/api/lsp/restart", a.handleLSPRestart)
 	mux.HandleFunc("/api/git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/git", a.handleGit)
 	mux.HandleFunc("/api/diff", a.handleDiff)
@@ -1898,14 +1890,12 @@ func stopInstance(port int) bool {
 
 // shutdown asks the server to stop, once. It ends the status stream first, because that handler
 // waits for a tick and would otherwise hold the drain open; then it gives in-flight requests the
-// grace period, and closes what is left. The language servers are stopped either way, so a
-// Ctrl-C does not leave gopls and friends behind.
+// grace period, and closes what is left.
 func (a *App) shutdown(why string) {
 	a.stop.Do(func() {
 		if a.done != nil {
 			close(a.done)
 		}
-		a.lsp.stopAll()
 		if a.srv == nil {
 			return
 		}
