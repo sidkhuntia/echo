@@ -834,31 +834,47 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 
 /* ---------- dialog: replaces the browser's alert, confirm and prompt ---------- */
-.dialog { z-index: 60; }
-.dialog-card { width: min(440px, calc(100vw - 32px)); padding: 0; }
-.dialog-body { display: flex; gap: 14px; padding: 18px 18px 14px; }
-.dialog-icon { flex: none; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft); }
-.dialog-icon svg.i { width: 17px; height: 17px; }
-.dialog[data-tone="danger"] .dialog-icon { color: var(--del); background: var(--del-soft); }
-.dialog[data-tone="warn"] .dialog-icon { color: var(--warn); background: var(--warn-soft); }
-.dialog-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-.dialog-text h3 { margin: 4px 0 0; font-size: 14px; font-weight: 600; color: var(--fg); overflow-wrap: anywhere; }
-.dialog-msg { display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; line-height: 1.5; color: var(--fg-2); overflow-wrap: anywhere; }
+/* Occasional, so it animates: a short fade and a 0.96 → 1 settle from the centre (a modal is not
+   anchored to a trigger). Leaving is faster than arriving. */
+.dialog { --tone: var(--accent); --ease-out: cubic-bezier(.23, 1, .32, 1); z-index: 60; animation: veil .16s ease-out both; }
+.dialog[data-tone="danger"] { --tone: var(--del); }
+.dialog[data-tone="warn"] { --tone: var(--warn); }
+.dialog.out { animation: veil .1s ease-in reverse both; }
+.dialog.out .dialog-card { width: min(452px, calc(100vw - 32px)); padding: 0; overflow: hidden; border-radius: 6px; border-color: var(--line-2); animation: settle .2s var(--ease-out) both; }
+/* a ledger slip: title and a one-word tag, dashed rules between the parts, files itemised, a totals line */
+.dialog-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 16px 20px 12px; border-bottom: 1px dashed var(--line-2); }
+.dialog-head h3 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.01em; line-height: 1.3; color: var(--fg); text-wrap: balance; overflow-wrap: anywhere; }
+.dialog-tag { flex: none; font: 11px var(--mono); color: var(--tone); }
+.dialog-tag:empty { display: none; }
+.dialog-msg { display: flex; flex-direction: column; gap: 10px; padding-top: 12px; font-size: 12.5px; line-height: 1.55; color: var(--fg-2); overflow-wrap: anywhere; text-wrap: pretty; }
 .dialog-msg:empty { display: none; }
-.dialog-msg p { margin: 0; }
-.dialog-msg .note { color: var(--muted); font-size: 12px; }
-.dialog-msg .alert { padding: 7px 10px; border-radius: var(--r); font-size: 12px; color: var(--fg); background: var(--warn-soft); box-shadow: inset 2px 0 0 var(--warn); }
-.dialog[data-tone="danger"] .dialog-msg .alert { background: var(--del-soft); box-shadow: inset 2px 0 0 var(--del); }
-.dialog-files { max-height: 172px; overflow: auto; margin: 0; padding: 4px; list-style: none; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); }
-.dialog-files li { display: flex; align-items: center; gap: 8px; height: 24px; padding: 0 6px; font: 11.5px var(--mono); color: var(--fg-2); }
-.dialog-files li span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.dialog-msg > * { margin: 0 20px; }
+.dialog-msg > :last-child:not(.slip-total) { margin-bottom: 16px; }
+.dialog-msg p { margin: 0 20px; }
+.dialog-msg b { color: var(--fg); font-weight: 600; }
+.dialog-msg code { font: 11.5px var(--mono); color: var(--fg); }
+.dialog-msg .note { color: var(--muted); font-size: 11.5px; }
+.dialog-msg .say { color: var(--fg); }
+.dialog-files { max-height: 176px; overflow: auto; padding: 0; list-style: none; }
+.dialog-files li { display: flex; align-items: center; gap: 10px; height: 28px; font: 12px var(--mono); color: var(--fg-2); }
+.dialog-files li + li { border-top: 1px dashed var(--line); }
+.dialog-files li .p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dialog-files li .o { flex: none; display: flex; gap: 6px; }
+.dialog-files li .o.hit { color: var(--tone); }
 .dialog-files li.more { color: var(--faint); font-family: var(--sans); }
-.dialog-quote { padding: 6px 10px; border-left: 2px solid var(--line-2); color: var(--fg); white-space: pre-wrap; max-height: 80px; overflow: auto; font-size: 12px; }
-.dialog-field { display: flex; flex-direction: column; gap: 5px; font-size: 11.5px; color: var(--muted); }
-.dialog-field .field { width: 100%; }
-.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); background: var(--bg); }
-.dialog-actions .btn { height: 28px; padding: 0 14px; }
-.dialog[data-tone="danger"] .btn.primary { background: var(--del); color: #fff; }
-.dialog[data-tone="warn"] .btn.primary { background: var(--warn); color: #1a1408; }
-.qacts .icon[data-act="discard"]:hover, .gacts .icon[data-act="discard-all"]:hover { color: var(--del); }
-#commit-menu { min-width: 190px; }
+.dialog-quote { padding: 2px 0 2px 10px; border-left: 2px solid var(--line-2); color: var(--fg); white-space: pre-wrap; max-height: 84px; overflow: auto; font: 12px/1.5 var(--mono); }
+.slip-total { display: flex; justify-content: space-between; gap: 12px; margin: 0; padding: 10px 20px; border-top: 1px dashed var(--line-2); font-size: 12px; color: var(--muted); }
+.dialog-field { display: flex; flex-direction: column; gap: 6px; margin: 14px 20px 18px; }
+.dialog-msg:not(:empty) + .dialog-field { margin-top: 0; }
+.dialog-field span { font: 600 10.5px/1 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.dialog-field .field { width: 100%; height: 32px; font-size: 13px; }
+.dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 14px 10px 20px; border-top: 1px solid var(--line); background: var(--bg); }
+.dialog-keys { margin-right: auto; display: flex; align-items: center; gap: 5px; font: 11px var(--mono); color: var(--faint); }
+.dialog-keys kbd { margin-left: 6px; }
+.dialog-keys kbd:first-child { margin-left: 0; }
+.dialog-actions .btn { height: 28px; padding: 0 14px; transition: background .12s, border-color .12s, color .12s, transform .12s var(--ease-out); }
+.dialog-actions .btn:active { transform: scale(.97); }
+.dialog .btn.primary { background: var(--tone); }
+.dialog[data-tone="danger"] .btn.primary { color: #fff; }
+.dialog[data-tone="warn"] .btn.primary { color: #1a1408; }
+@media (max-width: 520px) { .dialog-keys { display: none; } }

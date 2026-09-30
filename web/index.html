@@ -227,15 +227,13 @@ try {
 
 <div id="dialog" class="modal dialog" hidden>
   <form class="modal-card dialog-card" role="alertdialog" aria-modal="true" aria-labelledby="dialog-title" method="dialog">
+    <div class="dialog-head"><h3 id="dialog-title"></h3><span id="dialog-kicker" class="dialog-tag"></span></div>
     <div class="dialog-body">
-      <div id="dialog-icon" class="dialog-icon"></div>
-      <div class="dialog-text">
-        <h3 id="dialog-title"></h3>
-        <div id="dialog-msg" class="dialog-msg"></div>
-        <label id="dialog-field" class="dialog-field" hidden><span id="dialog-label"></span><input id="dialog-input" class="field" autocomplete="off" spellcheck="false"></label>
-      </div>
+      <div id="dialog-msg" class="dialog-msg"></div>
+      <label id="dialog-field" class="dialog-field" hidden><span id="dialog-label"></span><input id="dialog-input" class="field" autocomplete="off" spellcheck="false"></label>
     </div>
     <div class="dialog-actions">
+      <span class="dialog-keys"><kbd>esc</kbd> cancel <kbd>↵</kbd> confirm</span>
       <button type="button" id="dialog-cancel" class="btn">Cancel</button>
       <button type="submit" id="dialog-ok" class="btn primary">OK</button>
     </div>

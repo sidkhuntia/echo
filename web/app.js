@@ -70,21 +70,15 @@ const ICON_UNDO = '<svg class="i" viewBox="0 0 16 16"><path d="M5.5 3.5 3 6l2.5 
 // ask() replaces the browser's confirm and prompt: it resolves true (or the typed text, with `input`)
 // when confirmed and null when cancelled by the button, Escape, or a click outside. `html` is trusted
 // markup, so callers escape whatever they put in it. Destructive or sweeping dialogs focus Cancel.
-const DIALOG_ICON = {
-  warn: '<svg class="i" viewBox="0 0 16 16"><path d="M8 2.5 14 13H2z"/><path d="M8 6.5v3M8 11.3v.2"/></svg>',
-  undo: ICON_UNDO,
-  branch: '<svg class="i" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="6" r="1.5"/><path d="M4.5 5v6M11.5 7.5c0 2.5-3 2-7 3.5"/></svg>',
-  file: '<svg class="i" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg>',
-  stop: '<svg class="i" viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="2"/></svg>',
-}
 let dlg = null
-function ask({ title, html = '', tone = '', icon = 'file', ok = 'OK', input = null }) {
+function ask({ title, kicker = '', html = '', tone = '', ok = 'OK', input = null }) {
   dlg?.done(null)
   const el = $('#dialog'), field = $('#dialog-input'), prev = document.activeElement
+  el.classList.remove('out')
   el.dataset.tone = tone
+  $('#dialog-kicker').textContent = kicker
   $('#dialog-title').textContent = title
   $('#dialog-msg').innerHTML = html
-  $('#dialog-icon').innerHTML = DIALOG_ICON[icon] || ''
   $('#dialog-ok').textContent = ok
   $('#dialog-field').hidden = !input
   if (input) { $('#dialog-label').textContent = input.label; field.value = input.value || ''; field.placeholder = input.placeholder || '' }
@@ -93,7 +87,9 @@ function ask({ title, html = '', tone = '', icon = 'file', ok = 'OK', input = nu
     const done = v => {
       if (dlg?.done !== done) return
       dlg = null
-      el.hidden = true
+      // the exit is quicker than the entrance; the answer does not wait for it
+      el.classList.add('out')
+      setTimeout(() => { if (!dlg) el.hidden = true; el.classList.remove('out') }, 100)
       resolve(v)
       if (prev?.isConnected) prev.focus?.()
     }
@@ -341,8 +337,9 @@ function groupRows(sec) {
 const groupPaths = sec => groupRows(sec).map(c => c.path)
 
 // A list of changed files for a dialog: the first few, then how many more.
-function fileListHTML(rows, sec, max = 6) {
-  const items = rows.slice(0, max).map(c => `<li title="${esc(c.path)}">${sideTag(c, sec)}<span>${esc(c.path)}</span></li>`)
+function fileListHTML(rows, sec, max = 6, verb = false) {
+  const outcome = c => verb && c.code === '??' ? '<span class="o hit">delete file</span>' : `<span class="o">${sideStat(c[sec === 'staged' ? 'index' : 'work'])}</span>`
+  const items = rows.slice(0, max).map(c => `<li title="${esc(c.path)}">${sideTag(c, sec)}<span class="p">${esc(c.path)}</span>${outcome(c)}</li>`)
   if (rows.length > max) items.push(`<li class="more">…and ${rows.length - max} more</li>`)
   return `<ul class="dialog-files">${items.join('')}</ul>`
 }
@@ -354,8 +351,8 @@ async function discardAll() {
   if (!rows.length) return
   const fresh = rows.filter(c => c.code === '??').length
   const ok = await ask({
-    title: `Discard ${plural(rows.length, 'unstaged change')}?`, tone: 'danger', icon: 'undo', ok: 'Discard all',
-    html: `<p class="alert">This can’t be undone.${fresh ? ` ${plural(fresh, 'untracked file')} will be deleted from disk.` : ''}</p>${fileListHTML(rows, 'work')}<p class="note">Staged changes are kept.</p>`,
+    title: `Discard ${plural(rows.length, 'unstaged change')}`, kicker: 'no undo', tone: 'danger', ok: 'Discard all',
+    html: `${fileListHTML(rows, 'work', 6, true)}<div class="slip-total"><span>${rows.length - fresh} edited · ${fresh} untracked</span><span>staged work is kept</span></div>`,
   })
   if (ok) discard(rows.map(c => c.path), true)
 }
@@ -822,7 +819,7 @@ function placeCaret(line) {
 async function closeTab(i) {
   const t = state.tabs[i]
   if (t.content !== t.saved) {
-    const ok = await ask({ title: 'Discard unsaved edits?', tone: 'danger', icon: 'file', ok: 'Discard', html: `<p><b>${esc(t.path)}</b> has changes that were never saved.</p>` })
+    const ok = await ask({ title: 'Close without saving', kicker: 'unsaved', tone: 'danger', ok: 'Discard edits', html: `<p><b>${esc(t.path)}</b> has changes that were never saved.</p>` })
     if (!ok || state.tabs[i] !== t) return
   }
   state.tabs.splice(i, 1)
@@ -1697,9 +1694,9 @@ async function saveFile(force = false) {
 async function fileAction(action) {
   const current = state.selected || activeTab()?.path
   if (action !== 'create' && !current) return setStatus('Select a file first')
-  const path = action === 'create' ? await ask({ title: 'New file', icon: 'file', ok: 'Create', input: { label: 'Path, relative to the repository', placeholder: 'src/name.ext' } }) : current
+  const path = action === 'create' ? await ask({ title: 'Name the new file', ok: 'Create', input: { label: 'Path, relative to the repository', placeholder: 'src/name.ext' } }) : current
   if (!path) return
-  const newPath = action === 'rename' ? await ask({ title: 'Rename file', icon: 'file', ok: 'Rename', input: { label: 'New path', value: path } }) : ''
+  const newPath = action === 'rename' ? await ask({ title: 'Rename this file', ok: 'Rename', input: { label: 'New path', value: path } }) : ''
   if (action === 'rename' && !newPath) return
   try {
     await post('/api/file', { action, path, newPath, content: '' })
@@ -1797,10 +1794,11 @@ async function doCommit(all) {
   if (!t.staged.length && !t.unstaged.length) return setStatus('Nothing to commit')
   const fresh = t.unstaged.filter(c => c.code === '??').length
   const ok = await ask({
-    title: 'Commit staged and unstaged changes?', tone: 'warn', icon: 'warn', ok: 'Stage all & Commit',
-    html: `<p class="alert">All staged <b>and</b> unstaged changes will be committed: ${plural(t.staged.length, 'file')} already staged, ${plural(t.unstaged.length, 'more file')} about to be staged${fresh ? ` (${fresh} untracked)` : ''}.</p>`
-      + (t.unstaged.length ? `<p class="note">Being staged now</p>${fileListHTML(t.unstaged, 'work')}` : '')
-      + `<p class="note">Message</p><div class="dialog-quote">${esc(message.trim())}</div>`,
+    title: 'Commit everything, staged or not', kicker: 'stages all', tone: 'warn', ok: 'Stage all & Commit',
+    html: `<p class="say">All staged <b>and</b> unstaged changes will be committed.</p>`
+      + (t.unstaged.length ? fileListHTML(t.unstaged, 'work') : '')
+      + `<div class="dialog-quote">${esc(message.trim())}</div>`
+      + `<div class="slip-total"><span>${t.staged.length} already staged · ${t.unstaged.length} to stage</span><span>${fresh ? `${fresh} untracked` : ''}</span></div>`,
   })
   if (ok) gitAction({ action: 'commit:all', message })
 }
@@ -1924,7 +1922,7 @@ async function runRefAction(i) {
   closeRefMenu()
   toggleBranchPop(false)
   if (what === 'new') {
-    const name = await ask({ title: 'New branch', icon: 'branch', ok: 'Create', html: `<p class="note">Starts from <b>${esc(ref)}</b>.</p>`, input: { label: 'Branch name', placeholder: 'feature/name' } })
+    const name = await ask({ title: 'Name the new branch', ok: 'Create', html: `<p class="note">Starts from <b>${esc(ref)}</b>.</p>`, input: { label: 'Branch name', placeholder: 'feature/name' } })
     if (name) await gitAction({ action: 'branch:create', from: name, to: ref })
   } else if (what === 'compare') {
     startCompare(state.status.branch, ref)
@@ -2012,7 +2010,7 @@ function switchRepo(port, newTab) {
 // says the server is gone, like any other lost connection.
 async function stopRepo(port, all) {
   const what = all ? 'every echo process' : basename(repos.find(r => r.port === port)?.root || '')
-  const ok = await ask({ title: all ? 'Stop every echo process?' : `Stop ${what}?`, tone: 'danger', icon: 'stop', ok: 'Stop', html: `<p>${all ? 'Every repository open in echo will stop.' : `<b>${esc(what)}</b>’s echo process will stop.`}</p><p class="note">Running work is finished first. Reopen a repository with the <code>echo</code> command in its folder.</p>` })
+  const ok = await ask({ title: all ? 'Stop every echo process' : `Stop ${what}`, kicker: 'stops echo', tone: 'danger', ok: 'Stop', html: `<p>${all ? 'Every repository open in echo will stop.' : `<b>${esc(what)}</b>’s echo process will stop.`}</p><p class="note">Running work is finished first. Reopen a repository with the <code>echo</code> command in its folder.</p>` })
   if (!ok) return
   try { await post('/api/shutdown', { port: all ? 0 : port, all }) } catch (e) { return setStatus(e.message, 'err') }
   if (all || port === +location.port) return setStatus('echo is stopping.', 'ok')
@@ -2832,7 +2830,7 @@ $('#branch-list').addEventListener('click', e => {
 })
 $('#bp-new').onclick = async () => {
   toggleBranchPop(false)
-  const name = await ask({ title: 'New branch', icon: 'branch', ok: 'Create', html: '<p class="note">Starts from the current commit.</p>', input: { label: 'Branch name', placeholder: 'feature/name' } })
+  const name = await ask({ title: 'Name the new branch', ok: 'Create', html: '<p class="note">Starts from the current commit.</p>', input: { label: 'Branch name', placeholder: 'feature/name' } })
   if (name) await gitAction({ action: 'branch:create', from: name })
 }
 $('#ref-menu').addEventListener('click', e => { const b = e.target.closest('.menu-item'); if (b && menuFor) runRefAction(+b.dataset.i) })
