@@ -644,6 +644,10 @@ body.resizing { cursor: col-resize; user-select: none; }
 .tally .u i { background: var(--warn); }
 .btn-split { display: flex; }
 .btn-split .btn { height: 30px; }
+.push-split { flex: 1; }
+.push-split .btn { height: 26px; }
+.push-split #push { flex: 1; border-radius: var(--r) 0 0 var(--r); }
+.push-split .caret { width: 24px; padding: 0; border-radius: 0 var(--r) var(--r) 0; border-left: 0; }
 .btn-split #commit { border-radius: var(--r) 0 0 var(--r); }
 .btn-split .caret { width: 30px; padding: 0; border-radius: 0 var(--r) var(--r) 0; border-left: 1px solid color-mix(in srgb, var(--on-accent) 30%, transparent); }
 .hint { font-size: 11px; line-height: 1.4; color: var(--warn); }

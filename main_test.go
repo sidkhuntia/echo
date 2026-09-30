@@ -1008,6 +1008,58 @@ func TestMermaidServedFromZip(t *testing.T) {
 }
 
 // Stage-all-and-commit takes staged, unstaged and untracked work in one commit.
+// A rewritten branch is refused by a plain push, accepted by a force push, and a lease refuses when
+// the remote holds a commit that was never fetched.
+func TestForcePush(t *testing.T) {
+	a := testRepo(t)
+	bare, other := t.TempDir(), t.TempDir()
+	run := func(dir string, args ...string) string {
+		cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	post := func(action string) *httptest.ResponseRecorder {
+		return request(a, http.MethodPost, "/api/git", `{"action":"`+action+`"}`)
+	}
+	run(bare, "init", "-q", "--bare")
+	run(a.root, "remote", "add", "origin", bare)
+	if w := post("push:force"); w.Code == http.StatusOK || !strings.Contains(w.Body.String(), "Publish it first") {
+		t.Fatalf("force push without upstream: %d %s", w.Code, w.Body)
+	}
+	run(a.root, "commit", "-qam", "one")
+	if w := post("publish"); w.Code != http.StatusOK {
+		t.Fatalf("publish: %d %s", w.Code, w.Body)
+	}
+	branch := strings.TrimSpace(run(a.root, "branch", "--show-current"))
+
+	run(a.root, "commit", "-q", "--amend", "-m", "one, rewritten")
+	if w := post("push"); w.Code == http.StatusOK {
+		t.Fatal("plain push of a rewritten branch should be rejected")
+	}
+	// Someone else pushes to the branch; this clone has not fetched it.
+	run(other, "clone", "-q", bare, ".")
+	run(other, "commit", "-q", "--allow-empty", "-m", "theirs")
+	run(other, "push", "-q", "origin", "HEAD:"+branch)
+	if w := post("push:lease"); w.Code == http.StatusOK {
+		t.Fatal("lease should refuse a remote that moved since the last fetch")
+	}
+	if w := post("push:force"); w.Code != http.StatusOK {
+		t.Fatalf("force push: %d %s", w.Code, w.Body)
+	}
+	if got, want := strings.TrimSpace(run(bare, "rev-parse", branch)), strings.TrimSpace(run(a.root, "rev-parse", "HEAD")); got != want {
+		t.Errorf("remote %s, want %s", got, want)
+	}
+
+	run(a.root, "commit", "-q", "--amend", "-m", "again")
+	if w := post("push:lease"); w.Code != http.StatusOK {
+		t.Fatalf("lease with an up-to-date tracking ref: %d %s", w.Code, w.Body)
+	}
+}
+
 func TestCommitAllTakesEverything(t *testing.T) {
 	a := testRepo(t)
 	if _, err := a.commitAll("  "); err == nil {

@@ -318,7 +318,7 @@ The following Git capabilities were accepted as part of the product direction:
 ## 12c. Reset and Revert
 
 - **Accepted:** Reset branch here (soft only) and Revert are actions on a commit, shown in the commit details of the History tab and the Log. Mixed and hard reset are not offered: hard fits badly with the rule that echo's destructive actions are immediate, and soft loses no work.
-- **Default:** `reset:soft` asks first (unlike discard, it rewrites history), listing up to ten commits it will undo and counting those already on the upstream. It only warns about pushed commits; echo has no force push. Recovery is the reflog, and the success message names the old tip.
+- **Default:** `reset:soft` asks first (unlike discard, it rewrites history), listing up to ten commits it will undo and counting those already on the upstream. It warns about pushed commits; pushing them afterwards is a force push (section 12d). Recovery is the reflog, and the success message names the old tip.
 - **Default:** the server allows a soft reset only to a strict ancestor of HEAD on a checked-out branch, with no merge, revert, cherry-pick, or rebase in progress (`/api/reset/preview` runs the same check for the dialog).
 - **Default:** `revert` runs `git revert --no-edit` with no confirmation, since it only adds a commit that can be reverted in turn. A merge commit needs a mainline `parent` (1-based, `-m`); the dialog asks, defaulting to 1, and the server rejects a missing or out-of-range parent.
 - **Default:** a revert that stops on conflicts leaves Git's `REVERT_HEAD`; the status reports `reverting` and the Commit card shows Continue (`revert --continue`, editor disabled) and Abort (`revert --abort`). This is the one exception to §10's "no continue/abort UI", because a stuck revert has no other exit in the app.
@@ -358,6 +358,15 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** Compare with the current branch shows two lists in the Log, "Only in <other>" and "Only in <current>" (`a..b` and `b..a`, up to 500 each), with a swap button. "Files changed" opens the merge-base diff (`a...b`, what a pull request shows); Esc returns to the comparison.
 - **Default:** the Compare refs scope has a `..` / `...` toggle: two dots compare the tips, three dots compare from the merge base.
 - **Default:** delivery order: A) ahead/behind, Fetch, Sync/Publish; B) commit details and files; C) `/api/history`, graph, Log mode; D) branches sidebar and popup; E) file history, blame, compare.
+
+## 12d. Force push
+
+- **Accepted:** Push has a caret menu with **Force push with lease** and **Force push (no lease)**. The plain Push button never forces.
+- **Accepted:** both ask first, unlike discard: they rewrite shared history. The lease dialog is `warn`, the no-lease dialog is `danger`, and the menu lists the lease first.
+- **Default:** actions are `push:lease` and `push:force`, run through the network path (single-flight, timeout, `409` when busy).
+- **Default:** the server pushes `<remote> HEAD:<upstream ref>` taken from the current branch's upstream, never a bare `git push --force`, so `push.default=matching` cannot widen the blast radius. No upstream, an upstream of `.`, or a detached HEAD is refused.
+- **Default:** the lease is Git's own `--force-with-lease` against the remote-tracking ref, so it only protects as well as the last fetch (a background fetch elsewhere can move that ref). `--force-if-includes` is not used, as it needs Git 2.30.
+- **Default:** Sync and Publish never force.
 
 ## 13. Non-Git directories
 

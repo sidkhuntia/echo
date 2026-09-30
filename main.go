@@ -1032,7 +1032,28 @@ func (a *App) gitArgs(req gitRequest) ([]string, error) {
 	}
 }
 
-var netActions = map[string]bool{"fetch": true, "pull": true, "push": true, "sync": true, "publish": true}
+var netActions = map[string]bool{"fetch": true, "pull": true, "push": true, "push:lease": true, "push:force": true, "sync": true, "publish": true}
+
+// forcePush overwrites the current branch's upstream with the local branch. The remote and ref are
+// spelled out so a push.default of "matching" cannot drag other branches into a force push. With a
+// lease Git refuses if the remote branch moved since the last fetch; without one it overwrites blindly.
+func (a *App) forcePush(ctx context.Context, lease bool) (string, error) {
+	branch, err := a.git("branch", "--show-current")
+	branch = strings.TrimSpace(branch)
+	if err != nil || branch == "" {
+		return "", errors.New("force push needs a checked-out branch")
+	}
+	out, err := a.git("for-each-ref", "--format=%(upstream:remotename) %(upstream:remoteref)", "refs/heads/"+branch)
+	f := strings.Fields(out)
+	if err != nil || len(f) != 2 || f[0] == "." {
+		return "", fmt.Errorf("%s has no remote upstream; Publish it first", branch)
+	}
+	flag := "--force"
+	if lease {
+		flag = "--force-with-lease"
+	}
+	return a.gitNet(ctx, "push", flag, f[0], "HEAD:"+f[1])
+}
 
 // network runs the actions that talk to a remote. Pull respects the user's pull.rebase/pull.ff
 // config, so a diverged branch with no config stops with Git's own explanation.
@@ -1046,6 +1067,8 @@ func (a *App) network(action string) (string, error) {
 		return a.gitNet(ctx, "pull")
 	case "push":
 		return a.gitNet(ctx, "push")
+	case "push:lease", "push:force":
+		return a.forcePush(ctx, action == "push:lease")
 	case "sync":
 		out, err := a.gitNet(ctx, "pull")
 		if err != nil {

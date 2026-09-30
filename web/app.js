@@ -2461,7 +2461,7 @@ function renderHistoryCurrent() {
   document.querySelectorAll('.commit-row').forEach(r => r.classList.toggle('current', r.dataset.hash === state.commit))
 }
 
-const NET = new Set(['fetch', 'pull', 'push', 'sync', 'publish'])
+const NET = new Set(['fetch', 'pull', 'push', 'push:lease', 'push:force', 'sync', 'publish'])
 
 async function gitAction(body, button) {
   const net = NET.has(body.action)
@@ -2470,7 +2470,7 @@ async function gitAction(body, button) {
     setStatus(`git ${body.action}…`)
     const out = await post('/api/git', body)
     // Remote output leads with "To <url>" or progress lines; say what happened and keep Git's text in the tooltip.
-    const done = { fetch: 'Fetched all remotes', pull: 'Pulled', push: 'Pushed', sync: 'Synced', publish: 'Published' }[body.action]
+    const done = { fetch: 'Fetched all remotes', pull: 'Pulled', push: 'Pushed', 'push:lease': 'Force pushed (with lease)', 'push:force': 'Force pushed', sync: 'Synced', publish: 'Published' }[body.action]
     setStatus(done ? `${done}\n${out.output || ''}` : out.output || `git ${body.action} done`, 'ok')
     if (['commit', 'commit:all', 'amend'].includes(body.action)) $('#commit-message').value = ''
   } catch (e) { setStatus(e.message, 'err') }
@@ -3052,6 +3052,40 @@ $('#fetch').onclick = () => gitAction({ action: 'fetch' }, $('#fetch'))
 $('#sync').onclick = () => gitAction({ action: upstream() ? 'sync' : 'publish' }, $('#sync'))
 $('#pull').onclick = () => gitAction({ action: 'pull' }, $('#pull'))
 $('#push').onclick = () => gitAction({ action: upstream() ? 'push' : 'publish' }, $('#push'))
+
+// Force pushes rewrite the remote branch, so each asks first. The lease is the safer default: Git
+// refuses it when the remote gained commits since the last fetch. A plain force does not look.
+async function forcePush(lease) {
+  const t = state.status?.tracking
+  if (!upstream()) return setStatus('Force push needs a branch with an upstream; Publish it first', 'err')
+  const behind = t.behind ? `<p class="note">${plural(t.behind, 'commit')} on ${esc(t.upstream)} ${t.behind === 1 ? 'is' : 'are'} not in your branch (as of the last fetch) and will be lost.</p>` : ''
+  const ok = await ask(lease ? {
+    title: `Force push ${t.name} to ${t.upstream}?`, kicker: 'Force with lease', tone: 'warn', ok: 'Force push',
+    html: `<p>${esc(t.upstream)} is replaced with your branch. Git refuses if anyone pushed to it since your last fetch, so their commits are not lost by surprise.</p>${behind}`,
+  } : {
+    title: `Force push ${t.name} to ${t.upstream}?`, kicker: 'No lease', tone: 'danger', ok: 'Force push',
+    html: `<p>${esc(t.upstream)} is replaced with your branch <strong>without checking</strong> what is there. Commits pushed by others since your last fetch are lost from the remote.</p>${behind}<p class="note">Prefer force with lease unless you know the remote is yours alone.</p>`,
+  })
+  if (ok) await gitAction({ action: lease ? 'push:lease' : 'push:force' }, $('#push'))
+}
+function togglePushMenu(open) {
+  const m = $('#push-menu')
+  m.hidden = !open
+  if (!open) return
+  m.innerHTML = '<button class="menu-item" data-p="lease" role="menuitem" title="git push --force-with-lease">Force push with lease</button>'
+    + '<button class="menu-item danger" data-p="force" role="menuitem" title="git push --force">Force push (no lease)</button>'
+  const r = $('#push-more').getBoundingClientRect()
+  m.style.left = Math.max(8, r.right - m.offsetWidth) + 'px'
+  m.style.top = r.bottom + 4 + 'px'
+  m.querySelector('.menu-item').focus()
+}
+$('#push-more').onclick = e => { e.stopPropagation(); togglePushMenu($('#push-menu').hidden) }
+$('#push-menu').addEventListener('click', e => {
+  const p = e.target.closest('[data-p]')?.dataset.p
+  togglePushMenu(false)
+  if (p) forcePush(p === 'lease')
+})
+document.addEventListener('click', e => { if (!e.target.closest('#push-menu, #push-more')) togglePushMenu(false) })
 setInterval(renderTracking, 30000)
 $('#merge').onclick = () => gitAction({ action: 'merge', from: $('#branch-select').value })
 $('#rebase').onclick = () => gitAction({ action: 'rebase', from: $('#branch-select').value })
@@ -3088,6 +3122,7 @@ $('#palette-input').addEventListener('keydown', e => {
 
 document.addEventListener('keydown', e => {
   if (dlg) { if (e.key === 'Escape') { e.preventDefault(); dlg.done(null) } return }
+  if (e.key === 'Escape' && !$('#push-menu').hidden) { e.preventDefault(); togglePushMenu(false); $('#push-more').focus(); return }
   if (e.key === 'Escape' && !$('#commit-menu').hidden) { e.preventDefault(); toggleCommitMenu(false); $('#commit-more').focus(); return }
   if (!$('#palette').hidden) return
   if (mod(e)) {

@@ -54,7 +54,7 @@ It opens your browser at `http://127.0.0.1:6030`. Each process serves one reposi
 - file create, rename, delete
 - stage, unstage, discard (discarding from the unstaged list keeps staged work)
 - test 2
-- commit, amend, rebase, pull, push, branch create/switch, merge
+- commit, amend, rebase, pull, push (plus force push, with or without lease), branch create/switch, merge
 - stash create/apply
 - live Git status over SSE
 - 14 open-source themes plus a System theme that follows macOS appearance
