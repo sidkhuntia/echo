@@ -41,6 +41,11 @@ Status meanings:
 - **Default:** the app binds to `127.0.0.1` only.
 - **Default:** the app does not support LAN, remote, or container access in v1.
 
+- **Accepted:** echo is distributed as prebuilt macOS binaries (arm64 and amd64), named `echo-desk` so the name never collides with the shell's `echo`. Channels: Homebrew tap (`brew install sidkhuntia/tap/echo-desk`), `install.sh` (curl), a GitHub Release tarball, and building from source. Releases are cut by pushing a `v*` tag; GoReleaser builds, archives, checksums and updates the tap.
+- **Default:** `install.sh` downloads over HTTPS only and refuses an archive whose SHA-256 does not match the release's `checksums.txt`. It installs to `~/.local/bin` (no sudo) and prints a PATH hint instead of editing shell profiles.
+- **Default:** release binaries are built `CGO_ENABLED=0 -trimpath -ldflags "-s -w"`, which takes the binary from 11.9 MB to 8.9 MB (about 4.7 MB as a tarball). UPX is not used: it breaks macOS code signing and slows start-up.
+- **Default:** `-version` prints the release version (stamped by the build, or read from the module for `go install`).
+
 ## 3. Runtime architecture
 
 - **Accepted:** use Go, not Swift or Rust.
@@ -423,7 +428,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted (2026-09-30):** the curated set grows to 32 popular themes, 12 light and 20 dark, adding GitHub Dark Dimmed, One Dark/Light, Ayu Dark/Mirage/Light, Everforest Dark/Light, Kanagawa Wave/Lotus, Gruvbox Light, Tokyo Night Day, Catppuccin Frappé/Macchiato, Rosé Pine Moon, Night Owl/Light Owl, and Poimandres. Each is still one block of the same 16 tokens, and the picker's search matches the family name as well as the theme name.
 - **Default:** echo ink is cool graphite with the Ember amber accent (`#f5a94e`), and echo paper is its light counterpart (`#b5660a` accent).
 - **Default:** each theme is one block of about 16 tokens in `web/themes.css`; `style.css` only reads tokens and derives soft/strong tints with `color-mix`.
-- **Default:** the chosen theme is saved in the global config and mirrored to `localStorage` so a small inline script can apply it before first paint.
+- **Default:** the chosen theme is saved in the global config and mirrored to `localStorage` so a small script (`web/theme-init.js`) can apply it before first paint.
 - **Default:** no remote font service is required at runtime.
 - **Default:** the app mark is one hand-written SVG (`web/favicon.svg`) using the echo ink accent, so tabs and bookmarks are recognizable; the page head carries a description, `color-scheme`, and that icon. `app.js` still owns the title, which is `repository — branch`.
 
@@ -439,6 +444,10 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** the server binds to localhost only.
 - **Accepted:** the server rejects requests whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding), whose `Origin` is another site, and writes that are not `application/json` (cross-site form posts).
 - **Accepted:** user-supplied refs and branch names that start with `-` or contain whitespace or control characters are rejected, so they cannot become Git options.
+- **Accepted:** symlinks cannot be used to leave the repository. Reading or writing a file resolves symlinks first and refuses a target outside the repository's real path; Git actions, delete and rename act on a link itself, so a link to outside can still be staged or removed.
+- **Accepted:** the page cannot create, change, rename or delete anything inside a `.git` directory, so a compromised page cannot plant a hook that Git later runs.
+- **Accepted:** every response carries a Content-Security-Policy (same-origin only, no inline script, no `eval`, no framing), `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and `Cross-Origin-Resource-Policy: same-origin`. Request bodies are capped at 64 MB and the server has header and idle timeouts.
+- **Default:** Git runs with `core.fsmonitor=false`, so a hostile repository cannot start a daemon through its own config just by being browsed. Hooks still run on commit, as in any Git client; open only repositories you trust.
 - **Default:** discard deletes untracked files (`git clean -f -- <path>`) and restores tracked ones, so agent-created files can be rejected.
 - **Default:** no remote host flag is implemented.
 - **Default:** no embedded credential store exists.

@@ -4,13 +4,25 @@ A small local-first proof desk for reviewing code written by coding agents, on m
 
 ## Install
 
-Build once, under a name your shell will not confuse with its built-in `echo` command:
+macOS only (Apple Silicon and Intel). The command is `echo-desk`, so it never collides with your shell's `echo`.
+
+```sh
+# Homebrew
+brew install sidkhuntia/tap/echo-desk
+
+# or the install script (verifies the release checksum; installs to ~/.local/bin)
+curl -fsSL https://raw.githubusercontent.com/sidkhuntia/echo/main/install.sh | sh
+```
+
+Or download `echo-desk_<version>_darwin_<arch>.tar.gz` from [Releases](https://github.com/sidkhuntia/echo/releases), check it against `checksums.txt`, and put `echo-desk` on your `PATH`.
+
+From source (Go 1.25+):
 
 ```sh
 go build -o "$(go env GOPATH)/bin/echo-desk" .
 ```
 
-`$(go env GOPATH)/bin` (usually `~/go/bin`) must be on your `PATH`. Run the same command again after pulling changes to echo; open pages reload themselves when the new version starts.
+`echo-desk -version` prints the installed version. Update with `brew upgrade echo-desk` or by running the install script again; open pages reload themselves when the new version starts.
 
 ## Open any repository
 

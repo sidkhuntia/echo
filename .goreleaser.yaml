@@ -1,0 +1,44 @@
+version: 2
+
+project_name: echo-desk
+
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: echo-desk
+    binary: echo-desk
+    env: [CGO_ENABLED=0]
+    goos: [darwin]
+    goarch: [arm64, amd64]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+
+archives:
+  - formats: [tar.gz]
+    name_template: "echo-desk_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [README.md]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  disable: true
+
+release:
+  prerelease: auto
+
+# Needs a repository named homebrew-tap and a HOMEBREW_TAP_TOKEN secret (see PUBLISHING.md).
+# Without the token the release still publishes; only the formula update is skipped.
+brews:
+  - name: echo-desk
+    repository:
+      owner: sidkhuntia
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    skip_upload: auto
+    homepage: https://github.com/sidkhuntia/echo
+    description: Local-first proof desk for reviewing code written by coding agents
+    test: |
+      assert_match "echo", shell_output("#{bin}/echo-desk -version")

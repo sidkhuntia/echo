@@ -1291,3 +1291,73 @@ func TestGithubPRURL(t *testing.T) {
 		}
 	}
 }
+
+func TestSymlinksCannotLeaveTheRepository(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret"), []byte("s3cret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	for link, target := range map[string]string{"dir": outside, "file": filepath.Join(outside, "secret")} {
+		if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := newApp(root, 6030)
+	for _, rel := range []string{"dir/secret", "file"} {
+		if _, err := a.safeContent(rel); err == nil {
+			t.Errorf("safeContent(%q) followed a symlink out of the repository", rel)
+		}
+	}
+	if _, err := a.safePath("dir/secret"); err == nil {
+		t.Error("safePath allowed a path through a symlinked directory")
+	}
+	// The link itself is still addressable, so it can be staged, renamed or deleted.
+	if _, err := a.safePath("file"); err != nil {
+		t.Errorf("safePath(file) = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ok.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.safeContent("ok.txt"); err != nil {
+		t.Errorf("safeContent(ok.txt) = %v", err)
+	}
+	if _, err := a.safeContent("new/deep/file.txt"); err != nil {
+		t.Errorf("safeContent of a not-yet-created path = %v", err)
+	}
+}
+
+func TestPageCannotWriteIntoGitDir(t *testing.T) {
+	root := t.TempDir()
+	h := newApp(root, 6030).routes()
+	for _, p := range []string{".git/hooks/pre-commit", ".GIT/config", "sub/.git/config"} {
+		body := `{"action":"create","path":` + strconv.Quote(p) + `,"content":"x"}`
+		r := httptest.NewRequest("POST", "/api/file", strings.NewReader(body))
+		r.Host = "127.0.0.1:6030"
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != 400 {
+			t.Errorf("%s: status %d, want 400", p, w.Code)
+		}
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	h := newApp(t.TempDir(), 6030).routes()
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Host = "127.0.0.1:6030"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	for k, want := range map[string]string{"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer"} {
+		if got := w.Header().Get(k); got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+	if c := w.Header().Get("Content-Security-Policy"); !strings.Contains(c, "frame-ancestors 'none'") || strings.Contains(c, "unsafe-eval") {
+		t.Errorf("Content-Security-Policy = %q", c)
+	}
+	if strings.Contains(w.Body.String(), "<script>") {
+		t.Error("index.html has an inline script that the CSP would block")
+	}
+}

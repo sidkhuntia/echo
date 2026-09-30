@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,6 +51,20 @@ var build = func() string {
 	})
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }()
+
+// version is stamped by the release build (-X main.version=...). A `go install` build reads it
+// from the module instead.
+var version = "dev"
+
+func buildVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return strings.TrimPrefix(bi.Main.Version, "v")
+	}
+	return version
+}
 
 // emptyTree is Git's well-known empty tree, used as the diff base before the first commit.
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -245,7 +260,12 @@ type gitRequest struct {
 func main() {
 	port := flag.Int("port", 0, fmt.Sprintf("port to listen on (default: this repository's last port, else the first free one in %d-%d)", firstPort, lastPort))
 	noOpen := flag.Bool("no-open", false, "do not launch a browser")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("echo", buildVersion())
+		return
+	}
 
 	root, err := os.Getwd()
 	if err != nil {
@@ -291,7 +311,13 @@ func main() {
 	// is in flight, let the language servers exit, and only then close the port.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	srv := &http.Server{Handler: app.routes()}
+	srv := &http.Server{
+		Handler: app.routes(),
+		// No write timeout: the status stream stays open. These stop a stalled client holding a socket.
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    64 << 10,
+	}
 	app.srv = srv
 	go func() {
 		<-ctx.Done()
@@ -488,6 +514,14 @@ func serveMermaid(w http.ResponseWriter, r *http.Request, f *zip.File) {
 	http.ServeContent(w, r, f.Name, f.Modified, bytes.NewReader(b))
 }
 
+// csp is what every page and asset is served under: echo loads nothing from elsewhere, runs no
+// inline script, and cannot be framed.
+const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; " +
+	"font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+// maxBody caps a request body; the largest legitimate one is a file being saved.
+const maxBody = 64 << 20
+
 // guard only admits requests from echo's own page: a foreign Host means DNS rebinding,
 // a foreign Origin means another site, and a non-JSON write is a CSRF-style simple request.
 func (a *App) guard(next http.Handler) http.Handler {
@@ -500,11 +534,18 @@ func (a *App) guard(next http.Handler) http.Handler {
 			http.Error(w, "forbidden origin", http.StatusForbidden)
 			return
 		}
+		h := w.Header()
+		h.Set("Content-Security-Policy", csp)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/json" {
 				http.Error(w, "content type must be application/json", http.StatusUnsupportedMediaType)
 				return
 			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -595,7 +636,7 @@ func (a *App) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := r.URL.Query().Get("path")
-	path, err := a.safePath(rel)
+	path, err := a.safeContent(rel)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -620,7 +661,7 @@ func (a *App) handleFile(w http.ResponseWriter, r *http.Request) {
 // handleRaw serves a file's bytes, for images in rendered Markdown. The sandbox policy keeps an
 // SVG or HTML file from running script with echo's origin.
 func (a *App) handleRaw(w http.ResponseWriter, r *http.Request) {
-	path, err := a.safePath(r.URL.Query().Get("path"))
+	path, err := a.safeContent(r.URL.Query().Get("path"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -677,8 +718,17 @@ func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Writing into .git would let a page plant a hook or config that Git then runs.
+	if inGitDir(req.Path) || inGitDir(req.NewPath) {
+		http.Error(w, "the .git directory cannot be changed from the page", http.StatusBadRequest)
+		return
+	}
 	switch req.Action {
 	case "", "save":
+		if path, err = a.safeContent(req.Path); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		// A base hash means "only save if the file is still what I opened", so an
 		// agent's edit made while the tab was open is never silently overwritten.
 		if req.BaseHash != "" {
@@ -702,7 +752,7 @@ func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 		if req.NewPath == "" {
 			req.NewPath = req.Path
 		}
-		path, err = a.safePath(req.NewPath)
+		path, err = a.safeContent(req.NewPath)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -2079,6 +2129,10 @@ func (a *App) shutdown(why string) {
 	})
 }
 
+// safePath maps a repository-relative path to disk. It refuses absolute paths, "..", and any path
+// whose parent directory is a symlink leading out of the repository. The last element may itself
+// be a symlink: Git and delete/rename act on the link, not its target. To read or write through a
+// path, use safeContent.
 func (a *App) safePath(rel string) (string, error) {
 	if rel == "" {
 		return a.root, nil
@@ -2091,7 +2145,54 @@ func (a *App) safePath(rel string) (string, error) {
 	if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 		return "", errors.New("path escapes workspace")
 	}
+	if err := a.withinRoot(filepath.Dir(clean)); err != nil {
+		return "", err
+	}
 	return clean, nil
+}
+
+// safeContent is safePath for code that opens the file, so a symlink at the last element is
+// followed and must also stay inside the repository.
+func (a *App) safeContent(rel string) (string, error) {
+	p, err := a.safePath(rel)
+	if err != nil {
+		return "", err
+	}
+	if err := a.withinRoot(p); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+// withinRoot resolves symlinks in the longest prefix of p that exists and checks the result is
+// inside the repository's real location.
+func (a *App) withinRoot(p string) error {
+	root, err := filepath.EvalSymlinks(a.root)
+	if err != nil {
+		return nil
+	}
+	for q := p; ; q = filepath.Dir(q) {
+		if real, err := filepath.EvalSymlinks(q); err == nil {
+			r, err := filepath.Rel(root, real)
+			if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+				return errors.New("path escapes workspace through a symlink")
+			}
+			return nil
+		}
+		if q == filepath.Dir(q) {
+			return nil
+		}
+	}
+}
+
+// inGitDir reports whether a repository-relative path is, or is inside, a .git directory.
+func inGitDir(rel string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(filepath.Clean(rel)), "/") {
+		if strings.EqualFold(part, ".git") {
+			return true
+		}
+	}
+	return false
 }
 
 // gitCmd never takes optional locks, so echo's polling cannot collide with an agent's git commands.
@@ -2100,7 +2201,7 @@ func (a *App) gitCmd(args ...string) *exec.Cmd {
 }
 
 func (a *App) gitCmdContext(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-optional-locks", "-c", "core.quotePath=false"}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-optional-locks", "-c", "core.quotePath=false", "-c", "core.fsmonitor=false"}, args...)...)
 	cmd.Dir = a.root
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	return cmd
@@ -2296,7 +2397,7 @@ func saveConfig(cfg Config) error {
 
 // writeAtomic replaces a file in one rename, so another echo process never reads a half-written one.
 func writeAtomic(name string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(name), filepath.Base(name)+".*")

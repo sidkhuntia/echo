@@ -4,3 +4,6 @@ echo
 # Editor and OS state
 .vscode/
 .DS_Store
+
+# Release output
+dist/

@@ -7,13 +7,7 @@
 <meta name="description" content="echo is a local-first proof desk for macOS: review diffs, commits, blame, and branches of the git repository in your own folder, with no account and no network.">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<script>
-// Apply the last theme before first paint; app.js confirms it from the saved config.
-try {
-  const t = localStorage.getItem('echo:theme') || 'system'
-  document.documentElement.dataset.theme = t === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'echo-paper' : 'echo-ink') : t
-} catch {}
-</script>
+<script src="/theme-init.js"></script>
 <link rel="preload" href="/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/GeistMono-Variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/themes.css">
