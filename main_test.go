@@ -148,7 +148,7 @@ func testRepo(t *testing.T) *App {
 			t.Fatal(err)
 		}
 	}
-	run("init", "-q")
+	run("init", "-q", "-b", "main")
 	write("keep.txt", "one\ntwo\n")
 	run("add", ".")
 	run("commit", "-q", "-m", "init")
@@ -376,7 +376,7 @@ func TestPublishSyncFetch(t *testing.T) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	run(bare, "init", "-q", "--bare")
+	run(bare, "init", "-q", "--bare", "-b", "main")
 	run(a.root, "remote", "add", "origin", bare)
 	act := func(action string) {
 		if w := request(a, http.MethodPost, "/api/git", `{"action":"`+action+`"}`); w.Code != http.StatusOK {
@@ -1039,7 +1039,7 @@ func TestForcePush(t *testing.T) {
 	post := func(action string) *httptest.ResponseRecorder {
 		return request(a, http.MethodPost, "/api/git", `{"action":"`+action+`"}`)
 	}
-	run(bare, "init", "-q", "--bare")
+	run(bare, "init", "-q", "--bare", "-b", "main")
 	run(a.root, "remote", "add", "origin", bare)
 	if w := post("push:force"); w.Code == http.StatusOK || !strings.Contains(w.Body.String(), "Publish it first") {
 		t.Fatalf("force push without upstream: %d %s", w.Code, w.Body)
