@@ -179,14 +179,14 @@ try {
       <section class="sec commit-card" data-for="commit">
         <h4>Commit <span id="commit-tally" class="tally"></span></h4>
         <textarea id="commit-message" class="field" placeholder="Summarize the change"></textarea>
-        <div class="split">
+        <div class="btn-split">
           <button id="commit" class="btn primary grow"><span id="commit-label">Commit</span> <kbd>⌘↵</kbd></button>
           <button id="commit-more" class="btn primary caret" title="Other ways to commit" aria-haspopup="menu"><svg class="i" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
         </div>
         <div id="commit-hint" class="hint" hidden></div>
         <div id="revert-bar" class="revert-bar" hidden>
           <span>A revert stopped on conflicts. Fix and stage the files, then continue.</span>
-          <span class="split"><button class="btn sm" data-revert="revert:continue">Continue</button><button class="btn sm" data-revert="revert:abort">Abort</button></span>
+          <span class="btn-split"><button class="btn sm" data-revert="revert:continue">Continue</button><button class="btn sm" data-revert="revert:abort">Abort</button></span>
         </div>
       </section>
       <section class="sec" data-for="commit">
