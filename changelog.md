@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Hunk headings name the right place**: echo turns on Git's per-language heading rules for its own diffs (Go, CSS, HTML, Markdown, Python, Rust, Java, C/C++ and more, plus a JavaScript/TypeScript rule). The pill shows just the name, e.g. `(a *App) network`, `clampWidth`, `button.branch::after`, `16. Visual design`. JSON, YAML, lockfiles and other data files show no heading instead of the neighbouring line. Your repository's `.gitattributes` and your global attributes still take precedence.
+- **The Git rail is optional, and off by default**: open the Git panel from the title bar's Git button (which now carries the staged badge and shows when the panel is open) or with `⌘J`. Settings › Layout › Git rail › Shown brings the strip back.
+- **Settings page** (the gear in the title bar, or `⌘,`): categories for Appearance (a theme grid with swatches), Layout, Review, Editor and Commit, with a switch or segmented control and a one-line explanation for each option. Settings are no longer tucked under the shortcuts card.
+- **Pin the Git panel**: the pin in the Git panel's header (or Settings › Layout › Pinned) docks it as a column beside the review instead of a drawer. `⌘J` still shows and hides it.
+- **Swap panel sides**: Settings › Layout › Sidebar right moves the file sidebar to the right, and the Git rail and panel to the left. Resize grips follow.
+- **Closer to the Carbon mockup**: underline tabs, uppercase mono group labels, churn bars on changed files, flat full-width file sections in the diff, a bordered branch pill, and the drawer floating as a card.
+- Fixed the change trace looking faded out when every file is staged.
+- Fixed long hunk context overflowing its pill; it now ends in an ellipsis.
+- Fixed the toolbar crowding (the whitespace toggle over the file summary) when the review column is narrow; it now drops the summary, then the toggle.
+- Fixed the open-file tabs being squeezed to nothing in a narrow Files toolbar.
+- **Design revamp ("Signal")**: echo now looks like an instrument for reading agent changes. Geist and Geist Mono are embedded in the binary (`web/fonts/`, SIL OFL) and served locally. echo ink is re-cut as cool graphite with an Ember amber accent, and echo paper is its light counterpart. The logo and favicon are a new mark: an "e" sending out a sound wave.
+- **Change trace**: the title bar shows the whole diff as a strip with a segment per file and a tick per hunk. Additions rise and deletions drop, the current hunk is an amber playhead that follows `j`/`k` and scrolling, and fully staged files fade. Click a tick to jump to that hunk. Go to file moves to a compact `⌘K` button beside it.
+- **Git drawer**: the Git panel is now a drawer opened from a rail on the right (Commit, History, Branches) or `⌘J`, so the diff keeps the full width. The rail shows staged and to-push badges. `Esc`, `⌘J` or ✕ closes the drawer.
+- **Readable hunk headers**: each hunk starts with a pill reading "2/3 func (a *App) network", its +/− size and "lines 1058–1065", instead of Git's `@@` line (kept as the tooltip). The current hunk's pill turns amber.
+- **Review position** in the status bar ("file 2/9 · hunk 3/18"), and the key hints are shown as keycaps.
+- **18 more themes**, for 32 in all (12 light, 20 dark): GitHub Dark Dimmed, One Dark, One Light, Ayu Dark, Ayu Mirage, Ayu Light, Everforest Dark and Light, Kanagawa Wave and Lotus, Gruvbox Light, Tokyo Night Day, Catppuccin Frappé and Macchiato, Rosé Pine Moon, Night Owl, Light Owl, and Poimandres. The theme search also matches family names.
 - **Find in file (`⌘F`)**: a VS Code-style bar over the editor with match case, whole word and regex, `n of m` count, `↵`/`⇧↵` (or `⌘G`/`⇧⌘G`) to step, and `Esc` to close, leaving the current match selected. Every occurrence is tinted and the current one is stronger. Selecting one line of text first seeds the query. Outside the editor (diff, Log, Markdown preview) `⌘F` stays the browser's own find.
 - **`⌘⇧F` uses the selection**: with text selected in the editor it opens Search with that text as the query and runs it.
 - **Search hits are marked in the file**: clicking a content-search result opens the file with every match of the query tinted (the find bar opens without taking focus; `Esc` in the editor dismisses it).

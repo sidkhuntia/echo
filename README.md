@@ -57,7 +57,9 @@ It opens your browser at `http://127.0.0.1:6030`. Each process serves one reposi
 - commit, amend, rebase, pull, push (plus force push, with or without lease), branch create/switch, merge
 - stash create/apply
 - live Git status over SSE
-- 14 open-source themes plus a System theme that follows macOS appearance
+- 32 open-source themes (12 light, 20 dark) plus a System theme that follows macOS appearance
+- a change trace in the title bar: every changed file and hunk at a glance, with the current hunk as the playhead
+- Geist and Geist Mono embedded, so the app never fetches fonts
 - global config file for theme, editor, and panel preferences
 
 ## Development

@@ -6,7 +6,7 @@ const state = {
   tree: [], treeStale: true, tabs: [], active: -1, selected: '',
   status: null, changes: new Map(), folded: new Map(),
   config: { vim: false, theme: 'system', diffMode: 'unified' }, mode: 'diff', rail: 'changes', dirOpen: new Map(),
-  diffFiles: [], diffSeq: 0, current: -1, commit: '', returnTo: '', statusSeq: 0,
+  diffFiles: [], diffSeq: 0, current: -1, hunk: -1, commit: '', returnTo: '', statusSeq: 0,
   // diffStale: the diff missed an update while Files mode was showing; it reloads on the way back to Review.
   diffStale: false, diffReady: Promise.resolve(), diffScroll: 0,
   palette: { items: [], sel: 0 },
@@ -282,6 +282,16 @@ function groupStat(rows, sec) {
   const nums = `${added ? `<span class="add">+${added}</span>` : ''}${deleted ? `<span class="del">−${deleted}</span>` : ''}`
   return `${nums}${bin ? (nums ? ' ' : '') + '<span class="faint">bin</span>' : ''}`
 }
+// A row's share of the biggest change in the list, split into added and deleted. The square root
+// keeps a one-line fix visible beside a 500-line file.
+function churnBar(st, most) {
+  if (!st) return ''
+  if (st.binary) return '<span class="faint">bin</span>'
+  const n = st.added + st.deleted
+  if (!n) return ''
+  const w = Math.max(8, Math.sqrt(n / most) * 100)
+  return `<span class="churn"><span style="width:${w.toFixed(1)}%"><i class="p" style="flex:${st.added}"></i><i class="m" style="flex:${st.deleted}"></i></span></span>`
+}
 const iconBtn = (act, icon, title) => `<button class="btn quiet icon xs" data-act="${act}" title="${title}">${icon}</button>`
 // The group a row belongs to decides which scope shows its diff: staged rows the index, the rest the working tree.
 const secScope = sec => sec === 'staged' ? 'staged' : 'worktree'
@@ -300,6 +310,8 @@ function renderQueue() {
   }
   const filter = $('#file-filter').value.toLowerCase()
   const list = all.filter(c => !filter || c.path.toLowerCase().includes(filter))
+  const size = st => st && !st.binary ? st.added + st.deleted : 0
+  const most = Math.max(1, ...list.flatMap(c => [size(c.index), size(c.work)]))
   const row = (c, sec) => {
     const acts = [
       c.code[1] !== 'D' && c.code !== 'D ' ? iconBtn('open', ICON.open, 'Open file') : '',
@@ -307,10 +319,10 @@ function renderQueue() {
       sec === 'staged' ? iconBtn('unstage', ICON.minus, 'Unstage') : iconBtn('stage', ICON.plus, sec === 'merge' ? 'Mark resolved (stage)' : 'Stage'),
     ].join('')
     const st = sec === 'staged' ? c.index : sec === 'work' ? c.work : null
-    return `<div class="qrow" data-path="${esc(c.path)}" data-sec="${sec}" title="${esc(c.path)}">
-      <span class="qpath">${nameFirst(c.path)}</span>
+    return `<div class="qrow" data-path="${esc(c.path)}" data-sec="${sec}" title="${esc(c.path)}${st && !st.binary ? `  +${st.added} −${st.deleted}` : ''}">
+      ${sideTag(c, sec)}<span class="qpath">${nameFirst(c.path)}</span>
       <span class="qacts">${acts}</span>
-      <span class="qmeta">${sideStat(st)}${sideTag(c, sec)}</span>
+      <span class="qmeta">${churnBar(st, most)}</span>
     </div>`
   }
   const bulk = { staged: iconBtn('unstage-all', ICON.minus, 'Unstage all'), work: iconBtn('discard-all', ICON.discard, 'Discard all unstaged changes') + iconBtn('stage-all', ICON.plus, 'Stage all changes'), merge: iconBtn('stage-all', ICON.plus, 'Mark all resolved (stage)') }
@@ -471,7 +483,7 @@ function parseDiff(text) {
       const m = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/)
       if (!m) continue
       o = +m[1]; n = +m[2]
-      h = { range: line.slice(0, line.indexOf('@@', 2) + 2), context: m[3], lines: [], nStart: n }
+      h = { range: line.slice(0, line.indexOf('@@', 2) + 2), context: m[3], lines: [], nStart: n, add: 0, del: 0 }
       f.hunks.push(h)
       continue
     }
@@ -485,9 +497,9 @@ function parseDiff(text) {
       continue
     }
     const c = line[0]
-    if (c === '+') { h.lines.push({ t: 'add', n: n++, text: line.slice(1) }); f.added++ }
+    if (c === '+') { h.lines.push({ t: 'add', n: n++, text: line.slice(1) }); f.added++; h.add++ }
     // `at` is where a deleted line would sit in the new version, so it can still jump to the editor.
-    else if (c === '-') { h.lines.push({ t: 'del', o: o++, at: n, text: line.slice(1) }); f.deleted++ }
+    else if (c === '-') { h.lines.push({ t: 'del', o: o++, at: n, text: line.slice(1) }); f.deleted++; h.del++ }
     else if (c === ' ') h.lines.push({ t: 'ctx', o: o++, n: n++, text: line.slice(1) })
     else if (c === '\\') h.lines.push({ t: 'meta', text: line.slice(2) })
     else continue
@@ -529,7 +541,10 @@ async function loadDiff() {
 function diffMessage(title, body) {
   state.diffFiles = []
   state.current = -1
+  state.hunk = -1
   $('#diff-summary').textContent = ''
+  renderTrace()
+  renderPos()
   $('#diff').innerHTML = `<div class="diff-empty"><div class="empty"><b>${esc(title)}</b>${esc(body)}</div></div>`
 }
 
@@ -550,7 +565,56 @@ function renderDiff() {
   view.innerHTML = files.map(fileHTML).join('')
   view.scrollTop = top
   state.current = -1
+  renderTrace()
   updateCurrent()
+}
+
+// ---------- change trace ----------
+// The title bar's picture of the whole diff: one segment per file, one tick per hunk. Additions rise
+// above the baseline and deletions drop below it. A segment grows with the square root of its changed
+// lines, so one huge file cannot squeeze the rest down to nothing.
+const tickH = (n, max) => n ? Math.round(2 + max * Math.min(1, Math.sqrt(n / 30))) : 0
+// In All changes, a file with nothing left unstaged has been looked at, so it fades.
+const fullyStaged = f => { const c = scope() === 'head' && state.changes.get(f.path); return !!(c && c.index && !c.work && !conflicted(c)) }
+// Everything staged is the finished state, not a faded one, so the strip only fades while some are left.
+
+function renderTrace() {
+  const files = state.diffFiles, box = $('#trace')
+  box.classList.toggle('empty', !files.length)
+  if (!files.length) { box.innerHTML = ''; return }
+  const added = files.reduce((s, f) => s + f.added, 0), deleted = files.reduce((s, f) => s + f.deleted, 0)
+  const done = files.map(fullyStaged), fade = done.some(d => !d)
+  const segs = files.map((f, i) => {
+    const n = f.hunks.length
+    const ticks = f.hunks.map((h, hi) => `<i data-h="${hi}" style="left:${((hi + .5) / n * 100).toFixed(2)}%" title="${esc(`${basename(f.path)} · hunk ${hi + 1} of ${n}${h.context ? ` · ${hunkLabel(h.context)}` : ''} · +${h.add} −${h.del}`)}"><span class="a" style="height:${tickH(h.add, 14)}px"></span><span class="d" style="height:${tickH(h.del, 6)}px"></span></i>`).join('')
+    return `<button class="tseg${fade && done[i] ? ' done' : ''}" data-i="${i}" style="flex-grow:${Math.sqrt(f.added + f.deleted + 1).toFixed(2)}" title="${esc(f.path)}  +${f.added} −${f.deleted}"><span class="tks">${ticks}</span><span class="tl">${esc(basename(f.path))}</span></button>`
+  }).join('')
+  const staged = scope() === 'head' ? done.filter(Boolean).length : -1
+  box.innerHTML = `<span class="t-sum">${plural(files.length, 'file')} <span class="add">+${added}</span> <span class="del">−${deleted}</span></span><div class="t-strip">${segs}</div>${staged >= 0 ? `<span class="t-staged" title="Files with nothing left unstaged"><b>${staged}</b>/${files.length} staged</span>` : ''}`
+  markTrace()
+}
+
+function markTrace() {
+  const box = $('#trace')
+  box.querySelectorAll('.tseg').forEach(s => s.classList.toggle('cur', +s.dataset.i === state.current))
+  box.querySelector('.tks i.cur')?.classList.remove('cur')
+  box.querySelector(`.tseg[data-i="${state.current}"] i[data-h="${state.hunk}"]`)?.classList.add('cur')
+}
+
+async function goHunk(i, hi) {
+  if (state.mode !== 'diff') await setMode('diff')
+  const f = state.diffFiles[i]
+  if (!f) return
+  if (isFolded(f)) { state.folded.set(f.path, false); rerenderFile(i) }
+  const view = $('#diff'), el = view.querySelector(`.dfile[data-i="${i}"] .hunk[data-h="${hi}"]`)
+  if (!el) return goFile(i)
+  view.scrollTop = offsetIn(el, view) - 60
+  updateCurrent()
+}
+
+function renderPos() {
+  const f = state.mode === 'diff' && state.diffFiles[state.current]
+  $('#pos').innerHTML = f ? `file <b>${state.current + 1}</b>/${state.diffFiles.length}${state.hunk >= 0 ? ` · hunk <b>${state.hunk + 1}</b>/${f.hunks.length}` : ''}` : ''
 }
 
 function rerenderFile(i) {
@@ -595,7 +659,7 @@ function fileHTML(f, i) {
     if (f.note) body = `<div class="dnote">${esc(f.note)}</div>`
     else if (f.binary) body = `<div class="dnote">Binary file — not shown.</div>`
     else if (!f.hunks.length) body = `<div class="dnote">${f.isNew ? 'Empty new file.' : 'Mode or metadata change only.'}</div>`
-    else body = f.hunks.map((h, hi) => hunkHTML(h, hi, f.path)).join('')
+    else body = f.hunks.map((h, hi) => hunkHTML(h, hi, f.path, f.hunks.length)).join('')
   }
   const unsaved = state.tabs.some(t => t.path === f.path && t.content !== t.saved)
   const why = folded && !state.folded.has(f.path) ? (GENERATED.test(f.path) ? 'generated' : f.lines > 1500 ? 'large' : '') : ''
@@ -622,10 +686,36 @@ function colorHunk(h, path) {
   }
 }
 
-function hunkHTML(h, hi, path) {
+// Git's hunk heading is a whole line (the server picks the right one per language); the header wants
+// the name in it: a Go func with its receiver, a JS function or arrow, a class, a Markdown or HTML
+// heading's text, or anything up to its opening brace (a CSS rule, a C or Java function).
+function hunkLabel(line) {
+  const s = line.trim()
+  let m
+  if (!s) return ''
+  if ((m = s.match(/^#{1,6}\s+(.*?)\s*#*$/))) return m[1]
+  if ((m = s.match(/^<h[1-6][^>]*>(.*?)(?:<\/h[1-6]>|$)/i))) return m[1].replace(/<[^>]*>/g, '').trim()
+  if ((m = s.match(/^func\s+(\([^)]*\)\s*)?([\w.]+)/))) return (m[1] || '') + m[2]
+  if ((m = s.match(/^type\s+(\w+)/))) return 'type ' + m[1]
+  if ((m = s.match(/^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\*?\s+([\w$]+)/))) return m[1]
+  if ((m = s.match(/^(?:export\s+)?(?:const|let|var)\s+([\w$]+)\s*=/))) return m[1]
+  if ((m = s.match(/^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:pub\s+)?(class|struct|enum|trait|interface|impl)\s+([\w$]+)/))) return `${m[1]} ${m[2]}`
+  if ((m = s.match(/^(?:async\s+)?def\s+(\w+)/))) return m[1]
+  if ((m = s.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)/))) return m[1]
+  return s.replace(/\s*\{.*$/, '').replace(/\s*[:(]$/, '') || s
+}
+
+// The header reads as a place, not Git's @@ line: which hunk of how many, the enclosing function Git
+// found, its size, and the lines it covers in the new version. The raw @@ range stays as the tooltip.
+function hunkHTML(h, hi, path, total) {
   if (!h.colored) colorHunk(h, path)
   const split = state.config.diffMode === 'split'
-  return `<div class="hunk ${split ? 'split' : ''}" data-h="${hi}"><div class="hunk-head"><span>${esc(h.range)}</span><b>${esc(h.context)}</b></div>${split ? splitRows(h) : stackedRows(h)}</div>`
+  const label = hunkLabel(h.context)
+  const nums = h.lines.filter(l => l.n != null), olds = h.lines.filter(l => l.o != null)
+  const span = (a, b, word) => a === b ? `${word} ${a}` : `${word}s ${a}–${b}`
+  const where = nums.length ? span(nums[0].n, nums.at(-1).n, 'line') : olds.length ? span(olds[0].o, olds.at(-1).o, 'old line') : ''
+  const size = `${h.add ? `<span class="add">+${h.add}</span>` : ''}${h.del ? `<span class="del">−${h.del}</span>` : ''}`
+  return `<div class="hunk ${split ? 'split' : ''}" data-h="${hi}"><div class="hunk-head" title="${esc(`${h.range} ${h.context}`.trim())}"><span class="hpill"><b>${hi + 1}/${total}</b>${label ? `<span class="hctx">${esc(label)}</span>` : ''}</span><span class="hmeta">${size}<span>${where}</span></span></div>${split ? splitRows(h) : stackedRows(h)}</div>`
 }
 
 function stackedRows(h) {
@@ -708,10 +798,18 @@ function updateCurrent() {
   const secs = view.querySelectorAll('.dfile')
   let cur = secs.length ? 0 : -1
   secs.forEach((s, i) => { if (offsetIn(s, view) - view.scrollTop <= 40) cur = i })
-  if (cur === state.current) return
-  state.current = cur
-  secs.forEach((s, i) => s.classList.toggle('current', i === cur))
-  markQueueCurrent()
+  // The current hunk is the last one in the current file whose header has reached the top, which is
+  // also where j and k leave it.
+  const hunks = cur >= 0 ? [...secs[cur].querySelectorAll('.hunk')] : []
+  let hunk = -1
+  for (const h of hunks) { if (hunk >= 0 && offsetIn(h, view) > view.scrollTop + 61) break; hunk = +h.dataset.h }
+  if (cur === state.current && hunk === state.hunk) return
+  if (cur !== state.current) { secs.forEach((s, i) => s.classList.toggle('current', i === cur)); state.current = cur; markQueueCurrent() }
+  state.hunk = hunk
+  view.querySelector('.hunk.current')?.classList.remove('current')
+  hunks.find(h => +h.dataset.h === hunk)?.classList.add('current')
+  markTrace()
+  renderPos()
 }
 
 // In the Unstaged or Staged view only the row of the matching group is current; All changes marks both.
@@ -746,7 +844,6 @@ function stepHunk(dir) {
   const tops = hunks.map(h => offsetIn(h, view))
   let idx = dir > 0 ? tops.findIndex(t => t > pos + 1) : tops.findLastIndex(t => t < pos - 1)
   if (idx < 0) return
-  hunks.forEach((h, i) => h.classList.toggle('current', i === idx))
   view.scrollTop = tops[idx] - 60
   updateCurrent()
 }
@@ -1612,7 +1709,7 @@ function setMode(m) {
     if (state.diffStale) state.diffReady = loadDiff()
     else { if (state.diffFiles.length) renderDiff(); state.diffReady = Promise.resolve() }
   }
-  renderTabs(); renderEditor(); markQueueCurrent()
+  renderTabs(); renderEditor(); markQueueCurrent(); renderPos()
   return state.diffReady
 }
 
@@ -1628,6 +1725,9 @@ function renderCommit() {
   const bit = (cls, n, word) => n ? `<span class="${cls}"><i></i>${n} ${word}</span>` : ''
   $('#commit-tally').innerHTML = bit('s', t.staged.length, 'staged') + bit('u', t.unstaged.length, 'unstaged') || 'Clean'
   $('#commit-label').textContent = all ? 'Stage all & Commit' : 'Commit'
+  // The rail and the title bar's Git button carry the same staged badge; one of them is on screen.
+  for (const id of ['#rail-staged', '#tb-staged']) { $(id).hidden = !t.staged.length; $(id).textContent = t.staged.length }
+  $('#git-toggle').title = t.staged.length ? `Git panel (⌘J) · ${plural(t.staged.length, 'file')} staged` : 'Git panel (⌘J)'
   const hint = $('#commit-hint')
   hint.hidden = !(all && t.unstaged.length)
   hint.textContent = `Stages ${plural(t.unstaged.length, 'unstaged change')} first, after you confirm.`
@@ -2215,6 +2315,9 @@ function renderTracking() {
   $('#sync-label').textContent = tracked ? 'Sync' : 'Publish'
   $('#sync').title = tracked ? `Pull${t.behind ? ` ${t.behind}` : ''}, then push${t.ahead ? ` ${t.ahead}` : ' if ahead'} (${t.upstream})` : `Push ${t?.name || 'this branch'} and set its upstream (git push -u)`
   $('#sync').classList.toggle('attn', tracked && (t.ahead > 0 || t.behind > 0))
+  $('#rail-out').hidden = !(tracked && t.ahead > 0)
+  $('#rail-out').textContent = t?.ahead || ''
+  $('#rail-out').parentElement.title = tracked && t.ahead ? `History · ${plural(t.ahead, 'commit')} to push` : 'History'
 }
 
 function counts(b) {
@@ -2418,11 +2521,17 @@ function choosePalette(i) {
 // ---------- themes ----------
 // Ids match the [data-theme] blocks in themes.css. "system" follows macOS: echo paper when light, echo ink when dark.
 const THEMES = [
-  ['echo-paper', 'echo paper', 'light', 'echo'], ['github-light', 'GitHub Light', 'light', 'Primer'], ['solarized-light', 'Solarized Light', 'light', 'Solarized'],
-  ['catppuccin-latte', 'Catppuccin Latte', 'light', 'Catppuccin'], ['rose-pine-dawn', 'Rosé Pine Dawn', 'light', 'Rosé Pine'],
-  ['echo-ink', 'echo ink', 'dark', 'echo'], ['github-dark', 'GitHub Dark', 'dark', 'Primer'], ['nord', 'Nord', 'dark', 'Nord'],
-  ['gruvbox-dark', 'Gruvbox Dark', 'dark', 'Gruvbox'], ['solarized-dark', 'Solarized Dark', 'dark', 'Solarized'], ['catppuccin-mocha', 'Catppuccin Mocha', 'dark', 'Catppuccin'],
-  ['tokyo-night', 'Tokyo Night', 'dark', 'Tokyo Night'], ['rose-pine', 'Rosé Pine', 'dark', 'Rosé Pine'], ['dracula', 'Dracula', 'dark', 'Dracula'],
+  ['echo-paper', 'echo paper', 'light', 'echo'], ['ayu-light', 'Ayu Light', 'light', 'Ayu'], ['catppuccin-latte', 'Catppuccin Latte', 'light', 'Catppuccin'],
+  ['everforest-light', 'Everforest Light', 'light', 'Everforest'], ['github-light', 'GitHub Light', 'light', 'Primer'], ['gruvbox-light', 'Gruvbox Light', 'light', 'Gruvbox'],
+  ['kanagawa-lotus', 'Kanagawa Lotus', 'light', 'Kanagawa'], ['light-owl', 'Light Owl', 'light', 'Night Owl'], ['one-light', 'One Light', 'light', 'Atom'],
+  ['rose-pine-dawn', 'Rosé Pine Dawn', 'light', 'Rosé Pine'], ['solarized-light', 'Solarized Light', 'light', 'Solarized'], ['tokyo-night-day', 'Tokyo Night Day', 'light', 'Tokyo Night'],
+  ['echo-ink', 'echo ink', 'dark', 'echo'], ['ayu-dark', 'Ayu Dark', 'dark', 'Ayu'], ['ayu-mirage', 'Ayu Mirage', 'dark', 'Ayu'],
+  ['catppuccin-frappe', 'Catppuccin Frappé', 'dark', 'Catppuccin'], ['catppuccin-macchiato', 'Catppuccin Macchiato', 'dark', 'Catppuccin'], ['catppuccin-mocha', 'Catppuccin Mocha', 'dark', 'Catppuccin'],
+  ['dracula', 'Dracula', 'dark', 'Dracula'], ['everforest-dark', 'Everforest Dark', 'dark', 'Everforest'], ['github-dark', 'GitHub Dark', 'dark', 'Primer'],
+  ['github-dark-dimmed', 'GitHub Dark Dimmed', 'dark', 'Primer'], ['gruvbox-dark', 'Gruvbox Dark', 'dark', 'Gruvbox'], ['kanagawa-wave', 'Kanagawa Wave', 'dark', 'Kanagawa'],
+  ['night-owl', 'Night Owl', 'dark', 'Night Owl'], ['nord', 'Nord', 'dark', 'Nord'], ['one-dark', 'One Dark', 'dark', 'Atom'],
+  ['poimandres', 'Poimandres', 'dark', 'Poimandres'], ['rose-pine', 'Rosé Pine', 'dark', 'Rosé Pine'], ['rose-pine-moon', 'Rosé Pine Moon', 'dark', 'Rosé Pine'],
+  ['solarized-dark', 'Solarized Dark', 'dark', 'Solarized'], ['tokyo-night', 'Tokyo Night', 'dark', 'Tokyo Night'],
 ]
 const osLight = matchMedia('(prefers-color-scheme: light)')
 const themeId = () => THEMES.some(t => t[0] === state.config.theme) ? state.config.theme : 'system'
@@ -2453,7 +2562,7 @@ function renderThemes() {
   const cur = themeId()
   const item = (id, name, note, sw) => `<div class="th ${cur === id ? 'on' : ''}" data-theme-id="${id}"><span class="ok">${cur === id ? '✓' : ''}</span>${swatchHTML(sw)}${esc(name)}<small>${esc(note)}</small></div>`
   const group = kind => {
-    const list = THEMES.filter(t => t[2] === kind && t[1].toLowerCase().includes(q))
+    const list = THEMES.filter(t => t[2] === kind && (t[1] + ' ' + t[3]).toLowerCase().includes(q))
     return list.length ? `<h5>${kind === 'light' ? 'Light' : 'Dark'}</h5>` + list.map(t => item(t[0], t[1], t[3], t[0])).join('') : ''
   }
   const system = !q || 'system'.includes(q) ? item('system', 'System', 'echo paper / ink', osLight.matches ? 'echo-paper' : 'echo-ink') : ''
@@ -2479,6 +2588,66 @@ function toggleThemes(open = $('#theme-pop').hidden) {
 function setInspector(tab) {
   $('#insp').dataset.insp = tab
   document.querySelectorAll('.insp-switch button').forEach(b => b.classList.toggle('on', b.dataset.insp === tab))
+  markRail()
+}
+
+// ---------- Git drawer ----------
+// The Git panel floats over the review from the rail on the right, so the diff keeps the width until
+// you ask for Git. Opening it on Commit with something staged puts the caret in the message.
+const gitOpen = () => $('.desk').classList.contains('git-open')
+const gitPinned = () => !!state.config.gitPinned
+function toggleGit(open = !gitOpen(), tab = '') {
+  if (tab) setInspector(tab)
+  $('.desk').classList.toggle('git-open', open)
+  markRail()
+  if (open && $('#insp').dataset.insp === 'commit' && changeTally().staged.length) $('#commit-message').focus({ preventScroll: true })
+  if (!open && document.activeElement?.closest('#git-panel')) document.activeElement.blur()
+}
+// Layout settings: the Git panel docked or as a drawer, and which side each panel sits on.
+function applyLayout() {
+  const desk = $('.desk'), pinned = gitPinned()
+  desk.classList.toggle('pinned', pinned)
+  desk.classList.toggle('swap', !!state.config.swapPanels)
+  desk.classList.toggle('no-rail', !state.config.showRail)
+  document.body.classList.toggle('git-shown-rail', !!state.config.showRail)
+  // Pinning opens the panel; unpinning leaves the review full width.
+  desk.classList.toggle('git-open', pinned)
+  $('#git-pin').setAttribute('aria-pressed', pinned)
+  $('#git-pin').title = pinned ? 'Unpin: open the Git panel as a drawer' : 'Pin the Git panel beside the review'
+  markRail()
+  if (!$('#settings').hidden) renderSettings()
+}
+async function saveSetting(patch) {
+  Object.assign(state.config, patch)
+  try { await post('/api/config', patch); setStatus('Settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
+}
+
+function openSettings() {
+  $('#help').hidden = true
+  toggleThemes(false)
+  $('#settings').hidden = false
+  renderSettings()
+  $('#settings .set-body').focus?.({ preventScroll: true })
+}
+function showSettingsPane(pane) {
+  document.querySelectorAll('#settings [data-pane]').forEach(el => {
+    if (el.closest('.set-nav')) el.classList.toggle('on', el.dataset.pane === pane)
+    else el.hidden = el.dataset.pane !== pane
+  })
+}
+function renderSettings() {
+  const cur = { gitPinned: gitPinned() ? '1' : '0', swapPanels: state.config.swapPanels ? '1' : '0', showRail: state.config.showRail ? '1' : '0', diffMode: state.config.diffMode }
+  document.querySelectorAll('#settings [data-set]').forEach(b => b.classList.toggle('on', cur[b.dataset.set] === b.dataset.val))
+  const id = themeId()
+  const card = (tid, name, sw) => `<button class="set-theme ${id === tid ? 'on' : ''}" data-theme-id="${tid}" title="${esc(name)}">${swatchHTML(sw)}<span>${esc(name)}</span></button>`
+  const group = kind => `<h5>${kind === 'light' ? 'Light' : 'Dark'}</h5><div class="set-grid">${THEMES.filter(t => t[2] === kind).map(t => card(t[0], t[1], t[0])).join('')}</div>`
+  $('#set-themes').innerHTML = `<div class="set-grid">${card('system', 'System', osLight.matches ? 'echo-paper' : 'echo-ink')}</div>` + group('dark') + group('light')
+}
+
+function markRail() {
+  const tab = gitOpen() && $('#insp').dataset.insp
+  document.querySelectorAll('#git-rail [data-open]').forEach(b => b.classList.toggle('on', b.dataset.open === tab))
+  $('#git-toggle').setAttribute('aria-pressed', gitOpen())
 }
 
 // ---------- wiring ----------
@@ -2854,11 +3023,35 @@ $('#rename-file').onclick = () => fileAction('rename')
 $('#delete-file').onclick = () => fileAction('delete')
 $('#save').onclick = () => saveFile()
 $('#refresh').onclick = refreshAll
-const narrow = matchMedia('(max-width: 1100px)')
 const toggleTree = () => $('.desk').classList.toggle('no-tree')
-const toggleLedger = () => $('.desk').classList.toggle(narrow.matches ? 'show-git' : 'no-git')
 $('#tree-toggle').onclick = toggleTree
-$('#git-toggle').onclick = toggleLedger
+$('#git-toggle').onclick = () => toggleGit()
+$('#git-close').onclick = () => toggleGit(false)
+$('#git-pin').onclick = () => { saveSetting({ gitPinned: !gitPinned() }); applyLayout() }
+$('#settings-open').onclick = openSettings
+document.querySelector('[data-open-settings]').onclick = openSettings
+$('#settings').addEventListener('click', e => {
+  if (e.target === $('#settings') || e.target.closest('[data-close]')) { $('#settings').hidden = true; return }
+  const t = e.target.closest('[data-theme-id]')
+  if (t) { setTheme(t.dataset.themeId).then(renderSettings); renderSettings(); return }
+  const nav = e.target.closest('.set-nav [data-pane]')
+  if (nav) return showSettingsPane(nav.dataset.pane)
+  const b = e.target.closest('[data-set]')
+  if (!b) return
+  const k = b.dataset.set, v = b.dataset.val
+  if (k === 'diffMode') { setDiffMode(v); renderSettings(); return }
+  saveSetting({ [k]: v === '1' })
+  applyLayout()
+})
+$('#git-rail').onclick = e => {
+  const tab = e.target.closest('[data-open]')?.dataset.open
+  if (tab === 'branches') { e.stopPropagation(); toggleBranchPop() }
+  else if (tab) toggleGit(!(gitOpen() && $('#insp').dataset.insp === tab), tab)
+}
+$('#trace').addEventListener('click', e => {
+  const seg = e.target.closest('.tseg')
+  if (seg) goHunk(+seg.dataset.i, +(e.target.closest('[data-h]')?.dataset.h ?? 0))
+})
 
 // ---------- panel widths ----------
 // The desk grid reads --tree-w and --git-w, so a drag is one property write per frame. The widths are
@@ -2879,11 +3072,12 @@ const applyWidths = () => {
     grip.setAttribute('aria-valuenow', w)
   }
 }
-const gitShown = () => narrow.matches ? $('.desk').classList.contains('show-git') : !$('.desk').classList.contains('no-git')
 // A panel stops at its own range, and early rather than at that range if the editor needs the room.
+// The Git panel floats over the review, so only the rail beside it takes width from the sidebar.
 const clampWidth = (side, want) => {
   const [min, max] = PANEL_RANGE[side]
-  const other = side === 'tree' ? (gitShown() ? state.widths.git : 0) : ($('.desk').classList.contains('no-tree') ? 0 : state.widths.tree)
+  const desk = $('.desk')
+  const other = (state.config.showRail ? 46 : 0) + (side === 'git' ? (desk.classList.contains('no-tree') ? 0 : state.widths.tree) : (gitPinned() && gitOpen() ? state.widths.git : 0))
   const room = Math.max(min, $('.desk').clientWidth - other - CENTER_MIN)
   return Math.round(Math.max(min, Math.min(want, max, room)))
 }
@@ -2893,9 +3087,10 @@ const scheduleWidthSave = () => {
   // Both keys go in every patch, since the server replaces the whole panelSizes map.
   widthSave = setTimeout(() => post('/api/config', { panelSizes: { ...state.widths } }).catch(e => setStatus(e.message, 'err')), 250)
 }
-// The left grip grows with the pointer, the right one against it.
+// A panel on the left grows with the pointer, one on the right against it; Swap trades the sides.
+const gripSign = side => (side === 'tree') === !state.config.swapPanels ? 1 : -1
 const dragGrip = (side, e) => {
-  const grip = $(`#grip-${side}`), sign = side === 'tree' ? 1 : -1
+  const grip = $(`#grip-${side}`), sign = gripSign(side)
   const from = e.clientX, start = state.widths[side]
   const move = ev => { state.widths[side] = clampWidth(side, start + sign * (ev.clientX - from)); applyWidths() }
   const done = () => {
@@ -2922,7 +3117,7 @@ for (const side of ['tree', 'git']) {
     const dir = { ArrowRight: 1, ArrowLeft: -1 }[e.key]
     if (!dir) return
     e.preventDefault()
-    state.widths[side] = clampWidth(side, state.widths[side] + dir * (side === 'tree' ? 1 : -1) * (e.shiftKey ? 40 : 12))
+    state.widths[side] = clampWidth(side, state.widths[side] + dir * gripSign(side) * (e.shiftKey ? 40 : 12))
     applyWidths()
     scheduleWidthSave()
   }
@@ -3025,6 +3220,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !$('#push-menu').hidden) { e.preventDefault(); togglePushMenu(false); $('#push-more').focus(); return }
   if (e.key === 'Escape' && !$('#commit-menu').hidden) { e.preventDefault(); toggleCommitMenu(false); $('#commit-more').focus(); return }
   if (!$('#palette').hidden) return
+  if (!$('#settings').hidden && !mod(e) && e.key !== 'Escape') return
   if (mod(e)) {
     const k = e.key.toLowerCase()
     if (k === 'o' && e.shiftKey) { e.preventDefault(); toggleRepoPop() }
@@ -3040,7 +3236,8 @@ document.addEventListener('keydown', e => {
     else if (k === 'g' && find.open && inEditor()) { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1) }
     else if (k === 'k' || k === 'p') { e.preventDefault(); openPalette() }
     else if (k === 'b') { e.preventDefault(); toggleTree() }
-    else if (k === 'j') { e.preventDefault(); toggleLedger() }
+    else if (k === 'j') { e.preventDefault(); toggleGit() }
+    else if (e.key === ',') { e.preventDefault(); $('#settings').hidden ? openSettings() : ($('#settings').hidden = true) }
     else if (k === 'd') { e.preventDefault(); setMode(state.mode === 'diff' ? 'file' : 'diff') }
     else if (k === 's') { e.preventDefault(); saveFile() }
     else if (k === 'v' && e.shiftKey && state.mode === 'file' && isMarkdown(activeTab()?.path || '')) { e.preventDefault(); setPreview(!activeTab().preview) }
@@ -3052,6 +3249,8 @@ document.addEventListener('keydown', e => {
   // Keys inside the branch popup and menu belong to their buttons (Enter activates the focused item).
   if (e.key !== 'Escape' && e.target.closest?.('#ref-menu, #branch-pop')) return
   if (e.key === 'Escape' && (!$('#ref-menu').hidden || !$('#branch-pop').hidden)) { e.preventDefault(); if (!$('#ref-menu').hidden) closeRefMenu(); else toggleBranchPop(false); return }
+  if (e.key === 'Escape' && !$('#settings').hidden) { e.preventDefault(); $('#settings').hidden = true; if (typing(e)) e.target.blur(); return }
+  if (e.key === 'Escape' && gitOpen() && !gitPinned() && $('#help').hidden && (!typing(e) || e.target.closest('#git-panel'))) { e.preventDefault(); toggleGit(false); return }
   if (e.key === 'Escape' && state.mode === 'diff' && state.fromLog && !typing(e) && $('#help').hidden) { e.preventDefault(); setMode('log'); return }
   if (e.key === 'Escape' && !$('#diagram').hidden) { e.preventDefault(); closeDiagram(); return }
   if (e.key === 'Escape') { $('#help').hidden = true; toggleThemes(false); toggleRepoPop(false); if (typing(e)) e.target.blur(); return }
@@ -3087,6 +3286,7 @@ async function loadConfig() {
     if (w >= PANEL_RANGE[side][0] && w <= PANEL_RANGE[side][1]) state.widths[side] = w
   }
   applyWidths()
+  applyLayout()
   $('#gutter-base').value = gutterBase()
   $('#inline-blame').checked = blameInline()
   document.querySelectorAll('.layout-switch button').forEach(b => b.classList.toggle('on', b.dataset.layout === state.config.diffMode))
@@ -3097,6 +3297,9 @@ async function loadConfig() {
 syncScopeInputs()
 loadConfig()
 refreshAll()
+// Geist Mono can arrive after the first paint; the editor's measured character width and wrap
+// heights belong to whichever font was showing, so they are measured again once it is in.
+document.fonts?.ready.then(() => { charWidth = 0; wrap.tab = null; if (state.mode === 'file') renderEditor() })
 const events = new EventSource('/api/stream')
 // After a lost connection the server may have restarted with new history; forget the refs key so the
 // first status after reconnecting reloads History and the Log.

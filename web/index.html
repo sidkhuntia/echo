@@ -14,13 +14,15 @@ try {
   document.documentElement.dataset.theme = t === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'echo-paper' : 'echo-ink') : t
 } catch {}
 </script>
+<link rel="preload" href="/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/GeistMono-Variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/themes.css">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <header class="titlebar">
   <div class="crumbs">
-    <div class="logo">e</div>
+    <div class="logo"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" class="m-bg"/><path d="M11 16h9.5a4.8 4.8 0 1 0-1.3 3.4" class="m-e"/><path d="M24.5 11.5a7.5 7.5 0 0 1 0 9" class="m-w"/></svg></div>
     <button id="repo" class="repo" title="Switch repository (⌘⇧O)"><span id="repo-name"></span><svg class="i" viewBox="0 0 16 16"><path d="M5 6.5 8 3.5l3 3M5 9.5l3 3 3-3"/></svg></button>
     <span class="sep">/</span>
     <button id="branch" class="branch" title="Branches: checkout, merge, rebase, delete">—</button>
@@ -28,14 +30,13 @@ try {
     <button id="fetch" class="btn quiet sm net" title="Fetch all remotes (git fetch --all --prune)" hidden><svg class="i" viewBox="0 0 16 16"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Fetch <span id="fetched" class="faint"></span></button>
     <button id="sync" class="btn quiet sm net" hidden><svg class="i" viewBox="0 0 16 16"><path d="M13 6.5A5 5 0 0 0 4 4.5M3 9.5a5 5 0 0 0 9 2"/><path d="M4 1.8v2.9h2.9M12 14.2v-2.9H9.1"/></svg><span id="sync-label">Sync</span></button>
   </div>
-  <button id="search-open" class="search" title="Go to file (⌘K)">
-    <svg class="i" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
-    <span>Go to file…</span><kbd>⌘K</kbd>
-  </button>
+  <div id="trace" class="trace" aria-label="Change trace: every changed file and its hunks"></div>
   <div class="tb-right">
+    <button id="search-open" class="btn quiet sm search" title="Go to file (⌘K)"><svg class="i" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><kbd>⌘K</kbd></button>
     <button id="tree-toggle" class="btn quiet icon" title="Toggle sidebar (⌘B)"><svg class="i" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6 3v10"/></svg></button>
-    <button id="git-toggle" class="btn quiet icon" title="Toggle Git panel (⌘J)"><svg class="i" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M10 3v10"/></svg></button>
+    <button id="git-toggle" class="btn quiet icon" title="Git panel (⌘J)" aria-pressed="false"><svg class="i" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M10 3v10"/></svg><em id="tb-staged" class="badge" hidden></em></button>
     <button id="theme-open" class="btn quiet icon" title="Theme"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11z" fill="currentColor"/></svg></button>
+    <button id="settings-open" class="btn quiet icon" title="Settings (⌘,)" aria-label="Settings"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M3.6 12.4l1.2-1.2M11.2 4.8l1.2-1.2"/></svg></button>
     <button id="help-open" class="btn quiet icon" title="Shortcuts (?)">?</button>
   </div>
   <div id="repo-pop" class="pop repo-pop" hidden>
@@ -184,6 +185,8 @@ try {
         <button data-insp="history" role="tab">History</button>
       </div>
       <span id="staged-count" class="dim"></span>
+      <button id="git-pin" class="btn quiet icon xs" title="Pin the Git panel beside the review" aria-label="Pin Git panel" aria-pressed="false"><svg class="i" viewBox="0 0 16 16"><path d="M6 2.5h4M7 2.5v4L4.5 9h7L9 6.5v-4M8 9v4.5"/></svg></button>
+      <button id="git-close" class="btn quiet icon xs" title="Close (⌘J)" aria-label="Close Git panel">✕</button>
     </div>
     <div id="insp" class="insp" data-insp="commit">
       <section class="sec commit-card" data-for="commit">
@@ -225,12 +228,18 @@ try {
       </section>
     </div>
   </aside>
+  <nav id="git-rail" class="git-rail" aria-label="Git">
+    <button data-open="commit" title="Commit (⌘J)" aria-label="Commit"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.6"/><path d="M1.5 8h4M10.5 8h4"/></svg><em id="rail-staged" hidden></em></button>
+    <button data-open="history" title="History" aria-label="History"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg><em id="rail-out" hidden></em></button>
+    <button data-open="branches" title="Branches" aria-label="Branches"><svg class="i" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="6" r="1.6"/><path d="M4.5 5v6M11.5 7.6c0 2.4-7 1.6-7 3.3"/></svg></button>
+  </nav>
 </main>
 
 <footer class="statusbar">
   <span class="live"></span>
   <span id="status">Ready</span>
-  <span class="console-help">⌘K files · ⌘D review/files · ⌘B sidebar · ⌘J Git · ? shortcuts</span>
+  <span id="pos" class="pos"></span>
+  <span class="console-help"><span><kbd>j</kbd><kbd>k</kbd> hunk</span><span><kbd>n</kbd><kbd>p</kbd> file</span><span><kbd>e</kbd> edit</span><span><kbd>⌘J</kbd> Git</span><span><kbd>?</kbd> keys</span></span>
 </footer>
 
 <div id="ref-menu" class="menu" role="menu" hidden></div>
@@ -283,7 +292,7 @@ try {
       <dt><kbd>⌘F</kbd></dt><dd>Find in the open file (<kbd>↵</kbd> next, <kbd>⇧↵</kbd> previous, <kbd>Esc</kbd> close)</dd>
       <dt><kbd>⌘⇧F</kbd></dt><dd>Search file contents (a selection in the editor is the query)</dd>
       <dt><kbd>⌘B</kbd></dt><dd>Toggle sidebar</dd>
-      <dt><kbd>⌘J</kbd></dt><dd>Toggle Git panel</dd>
+      <dt><kbd>⌘J</kbd></dt><dd>Open or close the Git drawer (<kbd>Esc</kbd> closes it too)</dd>
       <dt><kbd>⌘⌥N</kbd></dt><dd>New file (beside the selected one)</dd>
       <dt><kbd>⌘S</kbd></dt><dd>Save current file</dd>
       <dt><kbd>⌘⇧V</kbd></dt><dd>Markdown: switch Preview / Edit</dd>
@@ -296,19 +305,57 @@ try {
       <dt><kbd>↑</kbd> <kbd>↓</kbd> <kbd>j</kbd> <kbd>k</kbd></dt><dd>In Log: previous / next commit</dd>
       <dt><kbd>↵</kbd></dt><dd>In Log: show the commit's diff (<kbd>Esc</kbd> comes back)</dd>
       <dt><kbd>?</kbd></dt><dd>Show this card</dd>
+      <dt><kbd>⌘,</kbd></dt><dd>Settings</dd>
       <dt><kbd>Esc</kbd></dt><dd>Close overlays</dd>
     </dl>
-    <div class="modal-sub">Settings</div>
-    <label class="setting">Editor change bars compare against
-      <select id="gutter-base" class="field">
-        <option value="head">HEAD — staged lines hollow</option>
-        <option value="index">Index — unstaged changes only</option>
-      </select>
-    </label>
-    <label class="check"><input id="inline-blame" type="checkbox"> Show who last changed the caret line in the editor</label>
-    <label class="check"><input id="word-wrap" type="checkbox"> Wrap long lines in the editor and the diff instead of scrolling sideways</label>
-    <label class="check"><input id="commit-all" type="checkbox"> Make Commit stage everything first (asks before it commits staged + unstaged changes)</label>
-    <label class="check"><input id="vim-mode" type="checkbox"> Vim keys in Files view (j/k scroll)</label>
+    <div class="modal-foot"><button class="btn sm" data-open-settings>Settings <kbd>⌘,</kbd></button></div>
+  </div>
+</div>
+<div id="settings" class="modal" hidden>
+  <div class="modal-card settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="modal-head"><span id="settings-title">Settings</span><span class="set-note">Shared by every repository</span><button class="btn quiet icon" data-close title="Close (Esc)">×</button></div>
+    <div class="set-wrap">
+    <nav class="set-nav" aria-label="Settings sections">
+      <button data-pane="appearance" class="on">Appearance</button>
+      <button data-pane="layout">Layout</button>
+      <button data-pane="review">Review</button>
+      <button data-pane="editor">Editor</button>
+      <button data-pane="commit">Commit</button>
+    </nav>
+    <div class="set-body" tabindex="-1">
+      <section class="set-sec" data-pane="appearance">
+        <h4>Appearance</h4>
+        <div class="set-row"><span class="set-text"><b>Theme</b><small>System follows macOS: echo paper when light, echo ink when dark.</small></span></div>
+        <div id="set-themes" class="set-themes"></div>
+      </section>
+      <section class="set-sec" data-pane="layout" hidden>
+        <h4>Layout</h4>
+        <div class="set-row"><span class="set-text"><b>Git panel</b><small>A drawer opens over the review and leaves it full width. Pinned keeps it open beside the review.</small></span>
+          <span class="seg" role="group" aria-label="Git panel"><button data-set="gitPinned" data-val="0">Drawer</button><button data-set="gitPinned" data-val="1">Pinned</button></span></div>
+        <div class="set-row"><span class="set-text"><b>Panel sides</b><small>Swap puts the file sidebar on the right and the Git panel on the left.</small></span>
+          <span class="seg" role="group" aria-label="Panel sides"><button data-set="swapPanels" data-val="0">Sidebar left</button><button data-set="swapPanels" data-val="1">Sidebar right</button></span></div>
+        <div class="set-row"><span class="set-text"><b>Git rail</b><small>A thin strip of Commit, History, and Branches buttons beside the review. Without it, open Git from the title bar or with <kbd>⌘J</kbd>.</small></span>
+          <span class="seg" role="group" aria-label="Git rail"><button data-set="showRail" data-val="0">Hidden</button><button data-set="showRail" data-val="1">Shown</button></span></div>
+      </section>
+      <section class="set-sec" data-pane="review" hidden>
+        <h4>Review</h4>
+        <div class="set-row"><span class="set-text"><b>Diff layout</b><small>Stacked shows old and new lines in one column; split puts them side by side.</small></span>
+          <span class="seg" role="group" aria-label="Diff layout"><button data-set="diffMode" data-val="unified">Stacked</button><button data-set="diffMode" data-val="split">Split</button></span></div>
+        <label class="set-row"><span class="set-text"><b>Wrap long lines</b><small>In the editor and the diff, instead of scrolling sideways. For this session.</small></span><span class="toggle"><input id="word-wrap" type="checkbox"><span class="sw"></span></span></label>
+      </section>
+      <section class="set-sec" data-pane="editor" hidden>
+        <h4>Editor</h4>
+        <div class="set-row"><span class="set-text"><b>Change bars compare against</b><small>HEAD draws staged lines hollow; the index shows only unstaged changes.</small></span>
+          <select id="gutter-base" class="field"><option value="head">HEAD</option><option value="index">Index</option></select></div>
+        <label class="set-row"><span class="set-text"><b>Inline blame</b><small>Who last changed the caret line, shown at the end of it.</small></span><span class="toggle"><input id="inline-blame" type="checkbox"><span class="sw"></span></span></label>
+        <label class="set-row"><span class="set-text"><b>Vim keys in Files</b><small><kbd>j</kbd> and <kbd>k</kbd> scroll the file when the editor is not focused.</small></span><span class="toggle"><input id="vim-mode" type="checkbox"><span class="sw"></span></span></label>
+      </section>
+      <section class="set-sec" data-pane="commit" hidden>
+        <h4>Commit</h4>
+        <label class="set-row"><span class="set-text"><b>Commit stages everything</b><small>Commit also takes unstaged changes, after it asks.</small></span><span class="toggle"><input id="commit-all" type="checkbox"><span class="sw"></span></span></label>
+      </section>
+    </div>
+    </div>
   </div>
 </div>
 <script type="module" src="/app.js"></script>

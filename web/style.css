@@ -1,4 +1,7 @@
 /* echo — layout and components. Colors come only from theme tokens in themes.css. */
+/* Geist and Geist Mono (SIL OFL, web/fonts) ship inside the binary; nothing is fetched from the network. */
+@font-face { font-family: "Geist"; src: url(/fonts/Geist-Variable.woff2) format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Geist Mono"; src: url(/fonts/GeistMono-Variable.woff2) format("woff2"); font-weight: 100 900; font-display: swap; }
 :root, [data-theme] {
   --accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
   --add-soft: color-mix(in srgb, var(--add) 12%, transparent);
@@ -8,8 +11,8 @@
   --del-strong: color-mix(in srgb, var(--del) 55%, transparent);
   --hover: color-mix(in srgb, var(--fg) 5%, transparent);
   --shadow: 0 20px 50px -12px rgba(0, 0, 0, .45);
-  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-  --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: "Geist", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   --r: 6px;
 }
 
@@ -128,12 +131,12 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 
 /* ---------- title bar ---------- */
 .titlebar {
-  height: 44px;
+  height: 52px;
   flex: none;
   display: grid;
-  grid-template-columns: 1fr minmax(240px, 440px) 1fr;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
+  gap: 20px;
   padding: 0 10px 0 14px;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
@@ -141,7 +144,12 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
   z-index: 5;
 }
 .crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.logo { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font: 700 13px/1 var(--sans); letter-spacing: -.04em; flex: none; }
+.logo { width: 22px; height: 22px; flex: none; display: grid; }
+.logo svg { width: 22px; height: 22px; }
+.logo .m-bg { fill: var(--accent); }
+.logo .m-e, .logo .m-w { fill: none; stroke: var(--on-accent); stroke-linecap: round; }
+.logo .m-e { stroke-width: 2.6; }
+.logo .m-w { stroke-width: 1.6; opacity: .55; }
 .repo { display: inline-flex; align-items: center; gap: 4px; min-width: 0; height: 24px; padding: 0 6px; border: 1px solid transparent; border-radius: var(--r); background: none; font-weight: 600; cursor: pointer; }
 .repo span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .repo .i { color: var(--muted); flex: none; }
@@ -149,8 +157,10 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
 .sep { color: var(--faint); }
 .branch { display: inline-flex; align-items: center; gap: 5px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
 .branch::before { content: "⎇"; color: var(--muted); }
-button.branch { border: 0; background: none; font: inherit; padding: 3px 6px; margin: 0 -6px; border-radius: 6px; cursor: pointer; }
+button.branch { border: 1px solid var(--line-2); background: none; font: 500 12px var(--mono); padding: 3px 9px; margin: 0; border-radius: 6px; cursor: pointer; }
 button.branch:hover { background: var(--hover); color: var(--fg); }
+.crumbs .sep { display: none; }
+.crumbs .net { border: 1px solid var(--line-2); color: var(--fg-2); }
 button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .track { display: inline-flex; gap: 6px; font: 600 11.5px/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .track .in { color: var(--info); }
@@ -163,28 +173,38 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .net-busy .net.busy { opacity: 1; }
 .net.busy .i { display: none; }
 .net.busy::before { content: ""; flex: none; width: 10px; height: 10px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
-.search {
-  height: 28px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--sunk);
-  color: var(--faint);
-  cursor: text;
-  font-size: 12.5px;
-  text-align: left;
-}
-.search:hover { border-color: var(--line-2); }
-.search span { flex: 1; }
+.btn.search { gap: 6px; margin-right: 4px; border: 1px solid var(--line); }
+.btn.search kbd { border: 0; padding: 0; opacity: 1; font-size: 11px; }
 .tb-right { display: flex; justify-content: flex-end; align-items: center; gap: 2px; }
+
+/* change trace: one segment per changed file, one tick per hunk; additions rise above the baseline,
+   deletions drop below it. The playhead is the current hunk. */
+.trace { min-width: 0; height: 100%; display: flex; align-items: center; gap: 14px; }
+.trace.empty::before { content: "No changes"; margin: 0 auto; color: var(--faint); font-size: 12px; }
+.t-sum, .t-staged { flex: none; font: 11.5px var(--mono); color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.t-staged b { color: var(--fg-2); font-weight: 500; }
+.t-strip { flex: 1; min-width: 0; height: 40px; display: flex; gap: 3px; overflow: hidden; }
+.tseg { flex: 1 1 0; min-width: 4px; container-type: inline-size; display: grid; grid-template-rows: 1fr 12px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; transition: background .12s, opacity .2s; }
+.tseg:hover { background: var(--hover); }
+.tseg.cur { background: var(--accent-soft); }
+.tseg.done:not(.cur) { opacity: .4; }
+.tks { position: relative; margin: 0 3px; }
+.tks::after { content: ""; position: absolute; left: 0; right: 0; top: 70%; height: 1px; background: var(--line-2); }
+.tks i { position: absolute; top: 0; bottom: 0; width: 7px; margin-left: -3.5px; }
+.tks .a, .tks .d { position: absolute; left: 2px; right: 2px; }
+.tks .a { bottom: 30%; background: var(--add); border-radius: 1px 1px 0 0; opacity: .7; }
+.tks .d { top: 70%; background: var(--del); border-radius: 0 0 1px 1px; opacity: .8; }
+.tks i:hover .a, .tks i:hover .d { opacity: 1; }
+.tks i.cur .a { background: var(--accent); opacity: 1; box-shadow: 0 0 8px var(--accent); }
+.tks i.cur .a[style*="height:0"] { height: 4px !important; }
+.tl { font: 10px/12px var(--mono); color: var(--muted); text-align: left; padding-left: 3px; overflow: hidden; white-space: nowrap; }
+.tseg.cur .tl { color: var(--accent); }
+@container (max-width: 44px) { .tl { visibility: hidden; } }
 
 /* theme picker */
 .pop {
   position: absolute;
-  top: 44px;
+  top: 52px;
   right: 10px;
   width: 290px;
   max-height: min(560px, 75vh);
@@ -255,14 +275,58 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .desk {
   --tree-w: 272px; --git-w: 300px;
   --tree-t: min(var(--tree-w), 42%); --git-t: min(var(--git-w), 42%);
+  --tree-c: var(--tree-t); --git-c: 0px; --rail-c: 46px;
   flex: 1; min-height: 0;
+  position: relative;
   display: grid;
-  grid-template-columns: var(--tree-t) minmax(0, 1fr) var(--git-t);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: var(--tree-c) minmax(0, 1fr) var(--git-c) var(--rail-c);
 }
-.desk.no-tree { grid-template-columns: 0 minmax(0, 1fr) var(--git-t); }
-.desk.no-git { grid-template-columns: var(--tree-t) minmax(0, 1fr) 0; }
-.desk.no-tree.no-git { grid-template-columns: 0 minmax(0, 1fr) 0; }
-.desk.no-tree #tree-panel, .desk.no-git #git-panel { visibility: hidden; }
+.desk.no-tree { --tree-c: 0px; }
+.desk.no-tree #tree-panel { visibility: hidden; }
+.desk.pinned.git-open { --git-c: var(--git-t); }
+#tree-panel { grid-area: 1 / 1; }
+.review { grid-area: 1 / 2; }
+.git-rail { grid-area: 1 / 4; }
+.desk.pinned #git-panel { grid-area: 1 / 3; }
+/* Swap: rail and Git on the left, sidebar on the right. */
+.desk.swap { grid-template-columns: var(--rail-c) var(--git-c) minmax(0, 1fr) var(--tree-c); }
+/* Without the rail the drawer sits 8px from the edge, and the title bar's Git button is the way in. */
+.desk.no-rail { --rail-c: 0px; }
+.desk.no-rail .git-rail { display: none; }
+.desk.swap #tree-panel { grid-area: 1 / 4; border-right: 0; border-left: 1px solid var(--line); }
+.desk.swap .review { grid-area: 1 / 3; }
+.desk.swap .git-rail { grid-area: 1 / 1; border-left: 0; border-right: 1px solid var(--line); }
+.desk.swap.pinned #git-panel { grid-area: 1 / 2; border-left: 0; border-right: 1px solid var(--line); }
+.desk.swap .sidebar .grip { right: auto; left: 0; }
+.desk.swap .inspector .grip { left: auto; right: 0; }
+/* As a drawer the Git panel floats over the review as a card beside the rail (⌘J); the diff keeps its
+   width. Pinned, it is an ordinary column. */
+#git-panel {
+  position: absolute; top: 8px; bottom: 8px; right: calc(var(--rail-c) + 8px); z-index: 8;
+  width: var(--git-t);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  box-shadow: 0 24px 56px -18px rgba(0, 0, 0, .55);
+  visibility: hidden; opacity: 0; transform: translateX(10px);
+  transition: opacity .14s ease-in, transform .14s ease-in, visibility 0s .14s;
+}
+.desk.swap #git-panel { right: auto; left: calc(var(--rail-c) + 8px); transform: translateX(-10px); }
+#git-toggle { position: relative; }
+#git-toggle[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+#git-toggle .badge { position: absolute; top: -3px; right: -4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: 600 9.5px/15px var(--mono); font-style: normal; text-align: center; }
+/* The rail shows the badge when it is there, so the title bar does not repeat it. */
+.git-shown-rail #git-toggle .badge { display: none; }
+.desk.git-open #git-panel { visibility: visible; opacity: 1; transform: none; transition: opacity .18s cubic-bezier(.23, 1, .32, 1), transform .18s cubic-bezier(.23, 1, .32, 1); }
+.desk.pinned #git-panel { position: relative; inset: auto; width: auto; border: 0; border-left: 1px solid var(--line); border-radius: 0; box-shadow: none; transform: none; transition: none; }
+#git-pin[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.git-rail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 8px; background: var(--surface); border-left: 1px solid var(--line); }
+.git-rail button { position: relative; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
+.git-rail button:hover { background: var(--hover); color: var(--fg); }
+.git-rail button.on { background: var(--accent-soft); color: var(--accent); }
+.git-rail .i { width: 16px; height: 16px; }
+.git-rail em { position: absolute; top: 1px; right: 0; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: 600 9.5px/15px var(--mono); font-style: normal; text-align: center; }
+.no-git-repo .git-rail button { opacity: .35; pointer-events: none; }
 .pane { min-width: 0; min-height: 0; position: relative; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
 .sidebar { border-right: 1px solid var(--line); }
 .inspector { border-left: 1px solid var(--line); }
@@ -284,10 +348,16 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .grip:focus-visible { outline: none; }
 body.resizing { cursor: col-resize; user-select: none; }
 .pane-head { height: 44px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px; }
-.sidebar .seg { flex: 1; }
-.sidebar .seg button { flex: 1; padding: 0 8px; }
-/* Four tabs do not fit the 272px rail as words, so Search is an icon, like VS Code's activity bar. */
-.sidebar .seg button[data-rail="search"] { flex: none; }
+/* Rails, modes, and Git tabs are underline tabs: text, with an accent rule under the one that is on. */
+.sidebar .pane-head, .inspector .pane-head { height: 40px; border-bottom: 1px solid var(--line); padding: 0 12px 0 14px; align-items: stretch; }
+.rail-switch, .mode-switch, .insp-switch { background: none; border: 0; padding: 0; border-radius: 0; gap: 16px; align-self: stretch; }
+.rail-switch { flex: 1; }
+.rail-switch button, .mode-switch button, .insp-switch button { position: relative; height: auto; padding: 0; border-radius: 0; font-size: 12.5px; color: var(--muted); }
+.rail-switch button.on, .mode-switch button.on, .insp-switch button.on { background: none; box-shadow: none; color: var(--fg); }
+.rail-switch button.on::after, .mode-switch button.on::after, .insp-switch button.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1.5px; border-radius: 1px; background: var(--accent); }
+/* Four tabs do not fit the 272px rail as words, so Search is an icon at the end, like VS Code's activity bar. */
+.rail-switch button[data-rail="search"] { margin-left: auto; }
+.rail-switch .count, .rail-switch button.on .count { background: none; padding: 0; color: var(--accent); font-size: 11px; }
 
 /* ---------- sidebar ---------- */
 .filter-row { padding: 0 10px 8px; display: flex; gap: 6px; flex: none; }
@@ -297,14 +367,14 @@ body.resizing { cursor: col-resize; user-select: none; }
 .rail-files #tree-collapse { display: inline-flex; }
 .list { flex: 1; overflow: auto; padding: 0 6px 10px; min-height: 0; }
 .files-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.group-label { display: flex; justify-content: space-between; align-items: center; padding: 10px 8px 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.group-label { display: flex; justify-content: space-between; align-items: center; padding: 10px 8px 4px; font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .qrow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: 16px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   height: 28px;
-  padding: 0 6px 0 22px;
+  padding: 0 8px 0 10px;
   border-radius: var(--r);
   cursor: pointer;
 }
@@ -317,15 +387,23 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* Row and group actions appear on hover, like VS Code; the letter badge stays so the row never jumps. */
 .qacts, .gacts { display: none; gap: 0; }
 .qrow:hover .qacts, .qgroup:hover .gacts { display: flex; }
-.qrow:hover .qmeta > :not(.st) { display: none; }
+.qrow:hover .qmeta { display: none; }
+.qrow .st { background: none; }
+.churn { display: flex; width: 44px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.churn > span { display: flex; gap: 1px; height: 100%; }
+.churn i { display: block; min-width: 2px; }
+.churn .p { background: var(--add); } .churn .m { background: var(--del); }
+.churn .m[style="flex:0"], .churn .p[style="flex:0"] { display: none; }
+.qrow.current .qpath b { font-weight: 500; }
 .btn.icon.xs { width: 20px; height: 20px; }
 .btn.icon.xs .i { width: 13px; height: 13px; }
-.qgroup { justify-content: flex-start; gap: 4px; height: 26px; padding: 8px 6px 2px 4px; cursor: pointer; user-select: none; text-transform: none; }
+.qgroup { justify-content: flex-start; gap: 4px; height: 26px; padding: 8px 6px 2px 4px; cursor: pointer; user-select: none; }
 .qgroup .tw { width: 12px; color: var(--faint); font-size: 10px; text-align: center; }
 .qgroup .gname { flex: 1; }
+.qgroup .count { background: none; padding: 0; letter-spacing: 0; }
 .qgroup:hover .gname { color: var(--fg); }
 /* The group total gives way to the group actions on hover, like a row's own counts do. */
-.qgroup .gstat { display: flex; gap: 5px; font: 500 10.5px var(--mono); }
+.qgroup .gstat { display: flex; gap: 5px; font: 500 10.5px var(--mono); text-transform: none; letter-spacing: 0; }
 .qgroup .gstat:empty { display: none; }
 .qgroup:hover .gstat { display: none; }
 .dacts .btn .i { width: 12px; height: 12px; margin-right: 3px; }
@@ -364,8 +442,16 @@ body.resizing { cursor: col-resize; user-select: none; }
 .empty b { display: block; font-size: 14px; font-weight: 600; color: var(--fg); margin-bottom: 4px; }
 
 /* ---------- review surface ---------- */
-.review { background: var(--bg); }
-.toolbar { height: 44px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.review { background: var(--bg); container: review / inline-size; }
+/* The toolbar sheds its least important parts as the review column narrows, which happens with
+   the window, a wide sidebar, or a pinned Git panel alike, so it asks the column, not the window. */
+@container review (max-width: 900px) { #diff-summary, #stage-count { display: none; } }
+@container review (max-width: 720px) { .toolbar .toggle { display: none; } }
+.toolbar { min-width: 0; overflow: hidden; }
+.toolbar { height: 40px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.toolbar > .vr { display: none; }
+.toolbar select.field, .toolbar .field.ref { background: transparent; border-color: transparent; color: var(--fg-2); }
+.toolbar select.field:hover, .toolbar .field.ref:hover, .toolbar .field.ref:focus { border-color: var(--line-2); }
 .bar-group { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
 .ref-group { display: inline-flex; align-items: center; gap: 6px; }
 .ref { width: 120px; font-family: var(--mono); font-size: 11.5px; }
@@ -541,24 +627,24 @@ body.resizing { cursor: col-resize; user-select: none; }
 .md-doc .md-alert-caution .md-alert-title { color: var(--del); }
 
 /* diff */
-.diff-view { padding: 16px 20px 60vh; }
-.dfile { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); margin: 0 auto 14px; max-width: 1200px; }
-.dfile.current { border-color: var(--line-2); box-shadow: 0 0 0 1px var(--line-2), 0 8px 24px -14px rgba(0, 0, 0, .35); }
+.diff-view { padding: 0 0 60vh; }
+.dfile { border-bottom: 1px solid var(--line); background: var(--bg); }
 .dfile-head {
   position: sticky;
-  top: -16px;
+  top: 0;
   z-index: 3;
-  height: 42px;
+  height: 38px;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 8px 0 12px;
+  padding: 0 10px 0 14px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
-  border-radius: 8px 8px 0 0;
   cursor: pointer;
 }
-.dfile.folded .dfile-head { border-bottom-color: transparent; border-radius: 8px; }
+.dfile.folded .dfile-head { border-bottom-color: transparent; }
+.dfile:not(.current) .dpath { color: var(--fg-2); }
+.dfile.current .dfile-head .st { box-shadow: 0 0 0 1px currentColor; }
 .fold { color: var(--faint); width: 10px; transition: transform .15s; display: inline-block; font-size: 10px; }
 .dfile:not(.folded) .fold { transform: rotate(90deg); }
 .dpath { font: 500 12.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -573,7 +659,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .spacer { flex: 1; }
 .dacts { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
 .dfile:hover .dacts, .dfile.current .dacts { opacity: 1; }
-.dbody { overflow-x: auto; border-radius: 0 0 8px 8px; }
+.dbody { overflow-x: auto; }
 .dfile.folded .dbody { display: none; }
 .dnote { padding: 14px 18px; color: var(--muted); font-size: 12.5px; }
 
@@ -584,18 +670,23 @@ body.resizing { cursor: col-resize; user-select: none; }
   display: flex;
   gap: 10px;
   align-items: center;
-  height: 30px;
-  padding: 0 12px;
+  justify-content: space-between;
+  height: 40px;
+  padding: 6px 14px 0 12px;
   color: var(--muted);
-  background: var(--surface-2);
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  background: var(--bg);
   font-size: 11.5px;
   white-space: pre;
 }
 .hunk:first-child .hunk-head { border-top: 0; }
-.hunk-head b { color: var(--fg-2); font-weight: 500; }
-.hunk.current .hunk-head { box-shadow: inset 3px 0 0 var(--accent); }
+.hpill { display: inline-flex; align-items: center; gap: 8px; min-width: 0; height: 22px; max-width: min(80ch, 70%); padding: 0 10px 0 3px; border: 1px solid var(--line-2); border-radius: 99px; background: var(--surface); color: var(--fg-2); font: 11.5px var(--mono); transition: color .12s, border-color .12s; }
+.hpill:not(:has(.hctx)) { padding-right: 3px; }
+.hctx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.hunk.current .hctx { color: inherit; }
+.hpill b { flex: none; padding: 1px 7px; border-radius: 99px; background: var(--surface-2); color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.hunk.current .hpill { border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--accent); }
+.hunk.current .hpill b { background: var(--accent); color: var(--on-accent); }
+.hmeta { display: flex; gap: 10px; font: 11px var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
 .hunk > span { white-space: pre; }
 .hunk .no { color: var(--faint); text-align: right; padding: 0 10px 0 8px; min-width: 48px; user-select: none; font-size: 11px; }
 .hunk .sg { text-align: center; user-select: none; color: var(--faint); }
@@ -627,13 +718,16 @@ body.resizing { cursor: col-resize; user-select: none; }
 .diff-empty { display: grid; place-items: center; height: 70%; }
 
 /* ---------- Git panel ---------- */
-.inspector .pane-head { justify-content: space-between; border-bottom: 1px solid var(--line); padding: 0 12px 0 10px; }
-.inspector .pane-head .dim { font-size: 12px; }
+.inspector .pane-head { gap: 6px; }
+.inspector .pane-head .dim { margin-left: auto; align-self: center; font-size: 12px; }
+.inspector .pane-head .btn { align-self: center; }
+.desk.pinned #git-close { display: none; }
 .insp { flex: 1; overflow: auto; }
 .insp[data-insp="commit"] [data-for="history"], .insp[data-insp="history"] [data-for="commit"] { display: none; }
 .sec { padding: 14px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
 .sec[data-for="history"] { border: 0; }
-.sec h4 { margin: 0 0 2px; font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+.sec h4 { margin: 0 0 2px; font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+.sec h4 .tally { letter-spacing: 0; }
 .sec h4 .dim { font-weight: 400; color: var(--faint); }
 .hrow { display: flex; gap: 6px; }
 .hrow > .field { flex: 1; }
@@ -648,7 +742,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .sync .btn:not(.quiet) { flex: 1; }
 .sync .vr { height: 14px; margin: 0 2px; }
 /* the commit card: what will be committed, the message, then one wide split button */
-.commit-card { background: linear-gradient(180deg, var(--accent-soft), transparent 70%); }
+.commit-card { background: none; }
 .tally { display: inline-flex; gap: 10px; text-transform: none; letter-spacing: 0; font: 500 11px var(--mono); color: var(--muted); }
 .tally i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--faint); }
 .tally .s i { background: var(--add); }
@@ -757,13 +851,17 @@ body.resizing { cursor: col-resize; user-select: none; }
 .no-git-repo .insp { opacity: .4; pointer-events: none; }
 
 /* ---------- status bar ---------- */
-.statusbar { height: 26px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-top: 1px solid var(--line); background: var(--surface); font-size: 11.5px; color: var(--muted); }
+.statusbar { height: 26px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-top: 1px solid var(--line); background: var(--surface); font: 11px var(--mono); color: var(--muted); }
 .live { width: 6px; height: 6px; border-radius: 50%; background: var(--add); flex: none; }
 .live.off { background: var(--del); }
 #status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 #status.err { color: var(--del); }
 #status.ok { color: var(--add); }
-.console-help { white-space: nowrap; color: var(--faint); }
+.pos { font: 11px var(--mono); color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pos b { color: var(--fg-2); font-weight: 500; }
+.console-help { display: flex; gap: 12px; white-space: nowrap; color: var(--faint); font-size: 11px; }
+.console-help span { display: inline-flex; gap: 3px; align-items: center; }
+.console-help kbd { padding: 1px 4px; font-size: 10px; }
 
 /* ---------- overlays ---------- */
 .modal {
@@ -789,9 +887,37 @@ body.resizing { cursor: col-resize; user-select: none; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--line); font-weight: 600; }
 .keys { display: grid; grid-template-columns: 110px 1fr; gap: 8px 14px; margin: 14px 16px; font-size: 12.5px; }
 .keys dd { margin: 0; color: var(--fg-2); }
-.modal-card .check { margin: 4px 16px 0; }
-.modal-sub { margin: 4px 16px 8px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 11px; font-weight: 600; color: var(--muted); }
-.setting { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 16px 10px; font-size: 12px; color: var(--muted); }
+.modal-foot { display: flex; justify-content: flex-end; margin: 4px 16px 0; padding-top: 12px; border-top: 1px solid var(--line); }
+.modal-foot kbd { margin-left: 4px; }
+.settings-card { width: min(760px, calc(100vw - 32px)); height: min(600px, 80vh); padding-bottom: 0; display: flex; flex-direction: column; }
+.set-wrap { flex: 1; min-height: 0; display: grid; grid-template-columns: 160px minmax(0, 1fr); }
+.set-nav { display: flex; flex-direction: column; gap: 2px; padding: 12px 8px; border-right: 1px solid var(--line); background: var(--bg); }
+.set-nav button { text-align: left; height: 30px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 12.5px; cursor: pointer; }
+.set-nav button:hover { background: var(--hover); color: var(--fg); }
+.set-nav button.on { background: var(--accent-soft); color: var(--fg); }
+.settings-card .modal-head { gap: 12px; }
+.set-note { margin-right: auto; font: 11px var(--mono); font-weight: 400; color: var(--faint); }
+.set-body { overflow: auto; padding: 4px 20px 20px; outline: none; }
+.set-sec { padding-top: 18px; display: grid; gap: 2px; }
+.set-sec h4 { margin: 0 0 6px; font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 12px 0; cursor: default; }
+.set-row + .set-row { border-top: 1px solid var(--line); }
+label.set-row { cursor: pointer; }
+.set-text { display: grid; gap: 2px; min-width: 0; }
+.set-text b { font-weight: 500; font-size: 13px; color: var(--fg); }
+.set-text small { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.set-text kbd { font-size: 10px; padding: 1px 4px; }
+.set-row .seg, .set-row select, .set-row .toggle { flex: none; }
+.set-row .toggle .sw { width: 30px; height: 18px; }
+.set-row .toggle .sw::after { width: 14px; height: 14px; }
+.set-row .toggle input:checked + .sw::after { left: 14px; }
+.set-themes h5 { margin: 14px 0 6px; font: 500 10.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.set-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.set-theme { display: flex; align-items: center; gap: 8px; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); color: var(--fg-2); font-size: 12px; cursor: pointer; text-align: left; }
+.set-theme span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-theme:hover { border-color: var(--line-2); color: var(--fg); }
+.set-theme.on { border-color: var(--accent); background: var(--accent-soft); color: var(--fg); }
+@media (max-width: 620px) { .set-wrap { grid-template-columns: minmax(0, 1fr); } .set-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); } .set-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .set-row { flex-wrap: wrap; } }
 .palette-card { width: min(620px, calc(100vw - 32px)); }
 /* an expanded diagram takes the window, since a wide flowchart is the reason to expand it */
 .diagram-modal { place-items: center; padding: 3vh 16px; }
@@ -817,16 +943,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 
 @media (max-width: 1100px) {
-  .desk { grid-template-columns: 240px minmax(0, 1fr) 0; }
-  #git-panel { visibility: hidden; }
-  .desk.show-git { grid-template-columns: 240px minmax(0, 1fr) 300px; }
-  .desk.show-git #git-panel { visibility: visible; }
-  .desk.no-tree { grid-template-columns: 0 minmax(0, 1fr) 0; }
-  .desk.no-tree.show-git { grid-template-columns: 0 minmax(0, 1fr) 300px; }
+  .desk { --tree-t: 240px; --git-t: 300px; }
+  .tabs { min-width: 90px; }
   /* The tracks are fixed at this width, so a grip would promise a drag that does nothing. */
   .grip { display: none; }
-  .titlebar { grid-template-columns: 1fr minmax(160px, 280px) auto; }
-  .console-help, .dstat .blocks { display: none; }
+  .t-sum, .t-staged, #fetched, .console-help, .dstat .blocks { display: none; }
 }
 
 /* ---------- dialog: replaces the browser's alert, confirm and prompt ---------- */

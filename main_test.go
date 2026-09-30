@@ -749,6 +749,20 @@ func TestConfigPostIsAPatch(t *testing.T) {
 	}
 }
 
+func TestConfigLayoutSettings(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	a := newApp(t.TempDir(), 6030)
+	if w := request(a, "POST", "/api/config", `{"gitPinned":true,"swapPanels":true,"showRail":true}`); w.Code != 200 {
+		t.Fatalf("post layout: %d %s", w.Code, w.Body)
+	}
+	if w := request(a, "POST", "/api/config", `{"theme":"one-dark"}`); w.Code != 200 {
+		t.Fatalf("post theme: %d %s", w.Code, w.Body)
+	}
+	if cfg := loadConfig(); !cfg.GitPinned || !cfg.SwapPanels || !cfg.ShowRail || cfg.Theme != "one-dark" {
+		t.Errorf("layout settings survive a later patch: %+v", cfg)
+	}
+}
+
 func TestInstances(t *testing.T) {
 	a := testRepo(t)
 	ln, err := listen(a.root, 0)
@@ -1199,5 +1213,67 @@ func TestRevert(t *testing.T) {
 	act(`{"action":"revert:abort"}`, http.StatusOK)
 	if a.gitStatus().Reverting {
 		t.Error("abort left the revert in progress")
+	}
+}
+
+func TestHunkHeadings(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	a := testRepo(t)
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		cmd.Dir = a.root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(a.root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lines := func(first string, n int) string {
+		var b strings.Builder
+		b.WriteString(first + "\n")
+		for i := 0; i < n; i++ {
+			b.WriteString("  line" + strconv.Itoa(i) + ": " + strconv.Itoa(i) + ";\n")
+		}
+		return b.String()
+	}
+	write("s.css", ".a { color: red; }\n\n"+lines(".b {", 8)+"}\n")
+	write("d.md", "# Title\n\n## 16. Visual design\n\n- one\n- two\n- three\n- four\n- five\n- six\n")
+	write("a.js", "const x = 1\n\nclass Desk {\n\tasync render() {}\n}\n\n\tconst clampWidth = (side, want) => {\n\t\tlet a = 1\n\t\tlet b = 2\n\t\tlet c = 3\n\t\tlet d = 4\n\t}\n")
+	write("p.json", "{\n  \"name\": \"x\",\n  \"a\": 1,\n  \"b\": 2,\n  \"c\": 3,\n  \"d\": 4,\n  \"e\": 5\n}\n")
+	run("add", ".")
+	run("commit", "-q", "-m", "files")
+	write("s.css", strings.Replace(".a { color: red; }\n\n"+lines(".b {", 8)+"}\n", "line7: 7", "line7: 70", 1))
+	write("d.md", "# Title\n\n## 16. Visual design\n\n- one\n- two\n- three\n- four\n- five\n- seven\n")
+	write("a.js", strings.Replace("const x = 1\n\nclass Desk {\n\tasync render() {}\n}\n\n\tconst clampWidth = (side, want) => {\n\t\tlet a = 1\n\t\tlet b = 2\n\t\tlet c = 3\n\t\tlet d = 4\n\t}\n", "let d = 4", "let d = 5", 1))
+	write("p.json", strings.Replace("{\n  \"name\": \"x\",\n  \"a\": 1,\n  \"b\": 2,\n  \"c\": 3,\n  \"d\": 4,\n  \"e\": 5\n}\n", "\"e\": 5", "\"e\": 6", 1))
+	w := request(a, "GET", "/api/diff?scope=head", "")
+	var got struct{ Text string }
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("diff: %d %s", w.Code, w.Body)
+	}
+	heads := map[string]string{}
+	file := ""
+	for _, l := range strings.Split(got.Text, "\n") {
+		if strings.HasPrefix(l, "diff --git ") {
+			file = l[strings.LastIndex(l, " b/")+3:]
+		} else if strings.HasPrefix(l, "@@ ") && file != "" {
+			heads[file] = strings.TrimSpace(l[strings.Index(l[2:], "@@")+4:])
+		}
+	}
+	want := map[string]string{
+		"s.css":    ".b {",
+		"d.md":     "## 16. Visual design",
+		"a.js":     "const clampWidth = (side, want) => {",
+		"p.json":   "",
+		"keep.txt": "",
+	}
+	for f, h := range want {
+		if heads[f] != h {
+			t.Errorf("%s heading = %q, want %q (all: %q)", f, heads[f], h, heads)
+		}
 	}
 }
