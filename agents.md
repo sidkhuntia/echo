@@ -13,5 +13,5 @@ This repository is a small Go + vanilla JavaScript macOS app. Keep it local-firs
 - Embed `web/` in the binary; do not add a frontend framework or build step.
 - Keep API handlers small and explicit.
 - Do not add features that are not in `decisions.md` or the changelog.
-- Run `gofmt -w main.go` and `go test ./...` before handing off changes.
+- Run `gofmt -w *.go` and `go test ./...` before handing off changes.
 - Update `changelog.md` and `decisions.md` when behavior or architecture changes.
