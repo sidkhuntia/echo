@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install echo-desk (the echo proof desk) on macOS.
+# Install echo-desk (the echo proof desk) on macOS or Linux.
 #
 #   curl -fsSL https://raw.githubusercontent.com/sidkhuntia/echo/main/install.sh | sh
 #
@@ -15,7 +15,11 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 
-[ "$(uname -s)" = "Darwin" ] || die "echo only supports macOS"
+case "$(uname -s)" in
+  Darwin) OS=darwin ;;
+  Linux) OS=linux ;;
+  *) die "echo supports macOS and Linux" ;;
+esac
 case "$(uname -m)" in
   arm64|aarch64) ARCH=arm64 ;;
   x86_64) ARCH=amd64 ;;
@@ -23,12 +27,14 @@ case "$(uname -m)" in
 esac
 
 if [ "$VERSION" = "latest" ]; then
-  VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -n 1)
-  [ -n "$VERSION" ] || die "could not find the latest release"
+  # The /releases/latest page redirects to /releases/tag/<tag>: no API call, no JSON, no rate limit.
+  LATEST_URL=$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest") || die "could not reach GitHub"
+  VERSION="${LATEST_URL##*/}"
+  case "$VERSION" in v[0-9]*|[0-9]*) ;; *) die "could not find the latest release (got '$LATEST_URL')" ;; esac
 fi
 VERSION="${VERSION#v}"
 
-ARCHIVE="${BIN}_${VERSION}_darwin_${ARCH}.tar.gz"
+ARCHIVE="${BIN}_${VERSION}_${OS}_${ARCH}.tar.gz"
 BASE="https://github.com/$REPO/releases/download/v$VERSION"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

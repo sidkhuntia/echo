@@ -10,7 +10,7 @@ builds:
   - id: echo-desk
     binary: echo-desk
     env: [CGO_ENABLED=0]
-    goos: [darwin]
+    goos: [darwin, linux]
     goarch: [arm64, amd64]
     flags: [-trimpath]
     ldflags: ["-s -w -X main.version={{ .Version }}"]
@@ -19,6 +19,20 @@ archives:
   - formats: [tar.gz]
     name_template: "echo-desk_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files: [README.md]
+
+# Signs and notarizes the macOS binaries when the Apple secrets are set (see PUBLISHING.md); without
+# them the release still publishes, unsigned.
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      ids: [echo-desk]
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
 
 checksum:
   name_template: checksums.txt

@@ -23,6 +23,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -680,7 +681,10 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 func openBrowser(url string) error {
-	return exec.Command("open", url).Start()
+	if runtime.GOOS == "darwin" {
+		return exec.Command("open", url).Start()
+	}
+	return exec.Command("xdg-open", url).Start()
 }
 
 func fatal(err error) {
