@@ -317,7 +317,11 @@ func TestSaveRejectsStaleBase(t *testing.T) {
 	if w := request(a, "POST", "/api/file", string(body)); w.Code != http.StatusConflict {
 		t.Errorf("stale save status %d, want 409", w.Code)
 	}
-	body, _ = json.Marshal(map[string]string{"path": "keep.txt", "content": "mine"})
+	body, _ = json.Marshal(map[string]any{"path": "keep.txt", "content": "mine"})
+	if w := request(a, "POST", "/api/file", string(body)); w.Code != http.StatusConflict {
+		t.Errorf("save with no base hash status %d, want 409", w.Code)
+	}
+	body, _ = json.Marshal(map[string]any{"path": "keep.txt", "content": "mine", "force": true})
 	if w := request(a, "POST", "/api/file", string(body)); w.Code != 200 {
 		t.Errorf("forced save status %d", w.Code)
 	}

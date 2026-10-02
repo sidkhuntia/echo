@@ -98,7 +98,9 @@ type App struct {
 	port  int
 	hosts map[string]bool
 	mu    sync.Mutex
-	sigs  map[string]fileSig
+	// writeMu serializes saves, so a save's stale-base check and its write cannot interleave with another save.
+	writeMu sync.Mutex
+	sigs    map[string]fileSig
 	// net serializes network actions; a second fetch/pull/push while one runs is refused, not queued.
 	net sync.Mutex
 	// srv is the running server, so the page can ask for a graceful stop. It is nil in tests,

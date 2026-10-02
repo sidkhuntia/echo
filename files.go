@@ -22,6 +22,9 @@ import (
 	"unicode/utf8"
 )
 
+// maxFileRead caps what the editor loads; larger files are left on disk.
+const maxFileRead = 10 << 20
+
 // maxUntrackedDiff caps the size of an untracked file rendered as a new-file diff.
 const maxUntrackedDiff = 1 << 20
 
@@ -130,8 +133,18 @@ func (a *App) handleFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if inGitDir(rel) {
+		http.Error(w, "the .git directory cannot be read from the page", http.StatusBadRequest)
+		return
+	}
 	if rev := r.URL.Query().Get("rev"); rev != "" {
 		a.handleFileRev(w, rel, rev)
+		return
+	}
+	// A file past the cap is not loaded: the page shows a notice and offers the raw bytes, and
+	// a save of the (empty) content it never received cannot happen.
+	if info, err := os.Stat(path); err == nil && info.Size() > maxFileRead {
+		writeJSON(w, map[string]any{"path": filepath.ToSlash(rel), "content": "", "hash": "", "binary": false, "tooLarge": true, "size": info.Size()})
 		return
 	}
 	data, err := os.ReadFile(path)
@@ -150,9 +163,10 @@ func (a *App) handleFile(w http.ResponseWriter, r *http.Request) {
 // handleRaw serves a file's bytes, for images in rendered Markdown. The sandbox policy keeps an
 // SVG or HTML file from running script with echo's origin.
 func (a *App) handleRaw(w http.ResponseWriter, r *http.Request) {
-	path, err := a.safeContent(r.URL.Query().Get("path"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	rel := r.URL.Query().Get("path")
+	path, err := a.safeContent(rel)
+	if err != nil || inGitDir(rel) {
+		http.Error(w, "path not allowed", http.StatusBadRequest)
 		return
 	}
 	if info, err := os.Stat(path); err != nil || info.IsDir() {
@@ -192,11 +206,14 @@ func (a *App) handleFileRev(w http.ResponseWriter, rel, rev string) {
 
 func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Action   string `json:"action"`
-		Path     string `json:"path"`
-		NewPath  string `json:"newPath"`
-		Content  string `json:"content"`
+		Action  string `json:"action"`
+		Path    string `json:"path"`
+		NewPath string `json:"newPath"`
+		Content string `json:"content"`
+		// BaseHash means "only save if the file is still what I opened"; Force is the explicit
+		// "save over whatever is there" the page sends after a conflict.
 		BaseHash string `json:"baseHash"`
+		Force    bool   `json:"force"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -218,20 +235,22 @@ func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// A base hash means "only save if the file is still what I opened", so an
-		// agent's edit made while the tab was open is never silently overwritten.
-		if req.BaseHash != "" {
-			current, err := os.ReadFile(path)
-			if errors.Is(err, fs.ErrNotExist) {
-				http.Error(w, "file was deleted on disk since it was opened", http.StatusConflict)
-				return
-			}
-			if err == nil && hashBytes(current) != req.BaseHash {
-				http.Error(w, "file changed on disk since it was opened", http.StatusConflict)
-				return
-			}
+		// One save at a time per process, so the check below and the write are not split by another save.
+		a.writeMu.Lock()
+		defer a.writeMu.Unlock()
+		current, err := os.ReadFile(path)
+		switch {
+		case err == nil && !req.Force && req.BaseHash == "":
+			http.Error(w, "file exists; save needs the hash it was opened with", http.StatusConflict)
+			return
+		case err == nil && !req.Force && hashBytes(current) != req.BaseHash:
+			http.Error(w, "file changed on disk since it was opened", http.StatusConflict)
+			return
+		case errors.Is(err, fs.ErrNotExist) && req.BaseHash != "" && !req.Force:
+			http.Error(w, "file was deleted on disk since it was opened", http.StatusConflict)
+			return
 		}
-		if err := os.WriteFile(path, []byte(req.Content), 0o644); err != nil {
+		if err := writeFileAtomic(path, []byte(req.Content)); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -250,7 +269,24 @@ func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if err := os.WriteFile(path, []byte(req.Content), 0o644); err != nil {
+		// O_EXCL: "New file" never replaces a file that is already there.
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, fs.ErrExist) {
+			http.Error(w, "a file already exists at that path", http.StatusConflict)
+			return
+		}
+		if err == nil {
+			_, err = f.WriteString(req.Content)
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	case "mkdir":
+		if err := os.MkdirAll(path, 0o755); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -259,7 +295,21 @@ func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-	case "rename":
+	case "delete:dir":
+		if req.Path == "" || filepath.Clean(path) == filepath.Clean(a.root) {
+			http.Error(w, "refusing to delete the repository root", http.StatusBadRequest)
+			return
+		}
+		info, err := os.Lstat(path)
+		if err != nil || !info.IsDir() {
+			http.Error(w, "not a folder", http.StatusBadRequest)
+			return
+		}
+		if err := os.RemoveAll(path); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	case "rename", "duplicate":
 		if req.NewPath == "" {
 			http.Error(w, "newPath required", http.StatusBadRequest)
 			return
@@ -269,9 +319,26 @@ func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// A rename or copy never replaces what is already at the destination.
+		if _, err := os.Lstat(newPath); err == nil {
+			http.Error(w, "something already exists at "+req.NewPath, http.StatusConflict)
+			return
+		}
 		if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if req.Action == "duplicate" {
+			src, err := a.safeContent(req.Path)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := copyFile(src, newPath); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			break
 		}
 		if err := os.Rename(path, newPath); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -282,6 +349,54 @@ func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// writeFileAtomic replaces a file in one rename, so an agent or a crash never sees a half-written
+// file. The existing file's permission bits are kept.
+func writeFileAtomic(path string, data []byte) error {
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".echo-save-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+// copyFile copies a regular file without replacing anything; the caller checked the destination.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil || info.IsDir() {
+		return errors.New("only files can be duplicated")
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // sig returns a workspace file's content hash, re-reading it only when size or mtime change.

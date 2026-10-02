@@ -112,7 +112,9 @@ type GitStatus struct {
 	Reverting bool     `json:"reverting,omitempty"`
 	Branches  []string `json:"branches"`
 	Stashes   []Stash  `json:"stashes"`
-	Error     string   `json:"error,omitempty"`
+	// LastDiscard is the newest discard snapshot that can still be restored.
+	LastDiscard *DiscardInfo `json:"lastDiscard,omitempty"`
+	Error       string       `json:"error,omitempty"`
 }
 
 type gitRequest struct {
@@ -214,6 +216,7 @@ func (a *App) gitStatus() GitStatus {
 	if out, err := a.git("remote"); err == nil {
 		status.Remotes = parseLines(out)
 	}
+	status.LastDiscard = a.lastDiscard()
 	if out, err := a.git("for-each-ref", "--format=%(refname)", "refs/remotes", "refs/tags"); err == nil {
 		c := parseContains(out)
 		status.Remote, status.Tags = c.Remotes, c.Tags
@@ -248,6 +251,8 @@ func (a *App) handleGit(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if req.Action == "discard" {
 		out, err = a.discard(req.Paths, req.Worktree)
+	} else if req.Action == "discard:restore" {
+		out, err = a.restoreDiscard()
 	} else if req.Action == "commit:all" {
 		out, err = a.commitAll(req.Message)
 	} else if req.Action == "reset:soft" {
@@ -521,6 +526,11 @@ func (a *App) discard(paths []string, worktree bool) (string, error) {
 		if _, err := a.safePath(p); err != nil {
 			return "", err
 		}
+	}
+	// What is about to be thrown away is kept in a snapshot first; a discard that cannot be
+	// snapshotted does not run.
+	if _, err := a.snapshotPaths(paths); err != nil {
+		return "", fmt.Errorf("could not snapshot before discarding: %w", err)
 	}
 	out, err := a.git(append([]string{"ls-files", "--others", "--exclude-standard", "-z", "--"}, paths...)...)
 	if err != nil {
@@ -959,7 +969,9 @@ func (a *App) gitCmd(args ...string) *exec.Cmd {
 func (a *App) gitCmdContext(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-optional-locks", "-c", "core.quotePath=false", "-c", "core.fsmonitor=false"}, args...)...)
 	cmd.Dir = a.root
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	// Paths from the page are file names, never patterns: without this a file called [id].tsx also
+	// matches i.tsx and d.tsx, and a discard of one would revert all three.
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_LITERAL_PATHSPECS=1")
 	return cmd
 }
 
@@ -985,7 +997,15 @@ func (a *App) gitCombined(args ...string) (string, error) {
 
 // gitNet is gitCombined with a deadline, for commands that wait on a remote.
 func (a *App) gitNet(ctx context.Context, args ...string) (string, error) {
-	out, err := a.gitCmdContext(ctx, args...).CombinedOutput()
+	cmd := a.gitCmdContext(ctx, args...)
+	// ssh asks for a passphrase on the controlling terminal, which would hang until the timeout;
+	// BatchMode makes it fail at once with a message. A user's own ssh command is left alone.
+	if os.Getenv("GIT_SSH_COMMAND") == "" && os.Getenv("GIT_SSH") == "" {
+		if out, _ := a.git("config", "--get", "core.sshCommand"); strings.TrimSpace(out) == "" {
+			cmd.Env = append(cmd.Env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+		}
+	}
+	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		err = fmt.Errorf("git %s timed out after %s", args[0], netTimeout)
 	}
