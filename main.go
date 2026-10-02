@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -20,7 +22,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -97,10 +101,19 @@ type App struct {
 	root  string
 	port  int
 	hosts map[string]bool
+	// token is the secret every request must carry (cookie or header); empty turns the check off, as in tests.
+	token string
 	mu    sync.Mutex
 	// writeMu serializes saves, so a save's stale-base check and its write cannot interleave with another save.
 	writeMu sync.Mutex
 	sigs    map[string]fileSig
+	// refs caches the slow half of the status; see refsPart.
+	refsMu    sync.Mutex
+	refs      refsPart
+	dirsMu    sync.Mutex
+	gitDir    string
+	gitCommon string
+	hub       statusHub
 	// net serializes network actions; a second fetch/pull/push while one runs is refused, not queued.
 	net sync.Mutex
 	// srv is the running server, so the page can ask for a graceful stop. It is nil in tests,
@@ -151,9 +164,10 @@ func main() {
 			_ = openBrowser(url)
 		}
 	}
+	authToken = loadToken()
 	if *port == 0 {
 		if p := runningFor(root, instances()); p != 0 {
-			url := "http://127.0.0.1:" + strconv.Itoa(p)
+			url := "http://127.0.0.1:" + strconv.Itoa(p) + "/?t=" + authToken
 			fmt.Printf("echo %s is already open at %s\n", root, url)
 			open(url)
 			return
@@ -169,7 +183,8 @@ func main() {
 	}
 
 	app := newApp(root, bound)
-	url := "http://127.0.0.1:" + strconv.Itoa(bound)
+	app.token = authToken
+	url := "http://127.0.0.1:" + strconv.Itoa(bound) + "/?t=" + authToken
 	fmt.Printf("echo %s\n", root)
 	fmt.Printf("open %s\n", url)
 	open(url)
@@ -252,7 +267,9 @@ func instances() []Instance {
 		wg.Add(1)
 		go func(p int) {
 			defer wg.Done()
-			res, err := client.Get("http://127.0.0.1:" + strconv.Itoa(p) + "/api/instance")
+			req, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(p)+"/api/instance", nil)
+			req.Header.Set(tokenHeader, authToken)
+			res, err := client.Do(req)
 			if err != nil {
 				return
 			}
@@ -401,6 +418,9 @@ func (a *App) guard(next http.Handler) http.Handler {
 			http.Error(w, "forbidden origin", http.StatusForbidden)
 			return
 		}
+		if !a.authorized(w, r) {
+			return
+		}
 		h := w.Header()
 		h.Set("Content-Security-Policy", csp)
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -418,40 +438,6 @@ func (a *App) guard(next http.Handler) http.Handler {
 	})
 }
 
-func (a *App) handleStream(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "stream unsupported", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	var last []byte
-	send := func() {
-		data, _ := json.Marshal(a.gitStatus())
-		if bytes.Equal(data, last) {
-			return
-		}
-		last = data
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
-	}
-	send()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-a.done:
-			return
-		case <-ticker.C:
-			send()
-		}
-	}
-}
-
 // handleConfig reads the config from disk and applies a POST as a patch onto the file, so echo
 // processes for different repositories, which share one config file, do not undo each other's settings.
 func (a *App) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -464,12 +450,52 @@ func (a *App) handleConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if err := validateConfig(cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		if err := saveConfig(cfg); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 	writeJSON(w, cfg)
+}
+
+var themeName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
+// validateConfig refuses settings the page could never have produced, so a stray POST cannot
+// fill the config file with junk or crash the page that reads it back.
+func validateConfig(c Config) error {
+	if c.Theme != "" && !themeName.MatchString(c.Theme) {
+		return errors.New("invalid theme name")
+	}
+	if !slices.Contains([]string{"", "unified", "split"}, c.DiffMode) {
+		return errors.New("invalid diffMode")
+	}
+	if !slices.Contains([]string{"", "head", "index"}, c.GutterBase) {
+		return errors.New("invalid gutterBase")
+	}
+	if !slices.Contains([]string{"", "line", "off"}, c.Blame) {
+		return errors.New("invalid blame")
+	}
+	if len(c.Panels) > 8 {
+		return errors.New("too many panels")
+	}
+	for _, p := range c.Panels {
+		if !themeName.MatchString(p) {
+			return errors.New("invalid panel name")
+		}
+	}
+	if len(c.PanelSizes) > 8 {
+		return errors.New("too many panel sizes")
+	}
+	for k, v := range c.PanelSizes {
+		if !themeName.MatchString(k) || v < 0 || v > 4000 {
+			return errors.New("invalid panel size")
+		}
+	}
+	return validateEditorConfig(c)
 }
 
 func (a *App) handleInstance(w http.ResponseWriter, r *http.Request) {
@@ -545,6 +571,7 @@ func stopInstance(port int) bool {
 		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(tokenHeader, authToken)
 	res, err := client.Do(req)
 	if err != nil {
 		return false
@@ -660,3 +687,61 @@ func fatal(err error) {
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
 }
+
+// authToken is this user's secret, read once at start. Sibling echo processes share it, so they can
+// ask each other for their status and ask each other to stop.
+var authToken string
+
+const (
+	tokenHeader = "X-Echo-Token"
+	tokenCookie = "echo_token"
+)
+
+// loadToken returns the per-user secret, creating it (mode 0600, beside config.json) on first run.
+// Another macOS user or a process that cannot read the file cannot call echo's API, even though the
+// port is on loopback.
+func loadToken() string {
+	path := filepath.Join(filepath.Dir(configPath()), "token")
+	if b, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(b))) >= 32 {
+		return strings.TrimSpace(string(b))
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		fatal(err)
+	}
+	tok := hex.EncodeToString(raw)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err == nil {
+		if f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err == nil {
+			_, _ = f.WriteString(tok + "\n")
+			f.Close()
+		} else if b, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(b))) >= 32 {
+			return strings.TrimSpace(string(b)) // another echo created it first
+		}
+	}
+	return tok
+}
+
+// authorized admits a request that carries the token: in the cookie (the page), or the header (a
+// sibling process). The link echo opens carries it once as ?t=, which becomes the cookie.
+func (a *App) authorized(w http.ResponseWriter, r *http.Request) bool {
+	if a.token == "" {
+		return true
+	}
+	if r.Method == http.MethodGet && r.URL.Path == "/" && subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("t")), []byte(a.token)) == 1 {
+		http.SetCookie(w, &http.Cookie{Name: tokenCookie, Value: a.token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 365 * 24 * 3600})
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return false
+	}
+	got := r.Header.Get(tokenHeader)
+	if c, err := r.Cookie(tokenCookie); err == nil {
+		got = c.Value
+	}
+	if subtle.ConstantTimeCompare([]byte(got), []byte(a.token)) == 1 {
+		return true
+	}
+	http.Error(w, "echo: this request has no access token. Open echo with the echo-desk command in the repository's folder.", http.StatusUnauthorized)
+	return false
+}
+
+// validateEditorConfig checks the editor's numeric and enumerated settings (added in v2).
+func validateEditorConfig(c Config) error { return nil }

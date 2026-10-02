@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -159,6 +162,7 @@ func (a *App) gitStatus() GitStatus {
 		return status
 	}
 	status.Changes = parsePorcelain(out)
+	defer a.forgetSigs(status.Changes)
 	stats, index, work := map[string]Change{}, map[string]Change{}, map[string]Change{}
 	if out, err := a.git("diff", "--numstat", "-z", "--no-renames", a.base(), "--"); err == nil {
 		stats = parseNumstat(out)
@@ -192,44 +196,8 @@ func (a *App) gitStatus() GitStatus {
 			c.Work = &LineStat{s.Added, s.Deleted, s.Binary}
 		}
 	}
-	if out, err := a.git("rev-parse", "-q", "--verify", "HEAD"); err == nil {
-		status.Head = strings.TrimSpace(out)
-	}
 	status.Reverting = a.gitPathExists("REVERT_HEAD")
-	if out, err := a.git("for-each-ref", "--format=%(objectname) %(refname)"); err == nil {
-		status.RefsSig = hashBytes([]byte(out))[:12]
-	}
-	if out, err := a.git("branch", "-a", "--format=%(refname:short)"); err == nil {
-		status.Branches = parseLines(out)
-	}
-	if out, err := a.git("stash", "list", "--format=%gd%x09%s"); err == nil {
-		status.Stashes = parseStashes(out)
-	}
-	if out, err := a.git("for-each-ref", "--format=%(refname:short)%09%(upstream:short)%09%(upstream:track,nobracket)", "refs/heads"); err == nil {
-		status.Local = parseBranches(out)
-	}
-	for i := range status.Local {
-		if status.Local[i].Name == status.Branch {
-			status.Tracking = &status.Local[i]
-		}
-	}
-	if out, err := a.git("remote"); err == nil {
-		status.Remotes = parseLines(out)
-	}
-	status.LastDiscard = a.lastDiscard()
-	if out, err := a.git("for-each-ref", "--format=%(refname)", "refs/remotes", "refs/tags"); err == nil {
-		c := parseContains(out)
-		status.Remote, status.Tags = c.Remotes, c.Tags
-	}
-	if out, err := a.git("rev-parse", "--git-path", "FETCH_HEAD"); err == nil {
-		p := strings.TrimSpace(out)
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(a.root, p)
-		}
-		if info, err := os.Stat(p); err == nil {
-			status.FetchedAt = info.ModTime().Unix()
-		}
-	}
+	a.fillRefs(&status)
 	return status
 }
 
@@ -795,15 +763,11 @@ func (a *App) handleCommit(w http.ResponseWriter, r *http.Request) {
 
 // gitPathExists reports whether a file or directory exists inside the repository's git dir.
 func (a *App) gitPathExists(name string) bool {
-	out, err := a.git("rev-parse", "--git-path", name)
-	if err != nil {
+	dir, _ := a.gitDirs()
+	if dir == "" {
 		return false
 	}
-	p := strings.TrimSpace(out)
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(a.root, p)
-	}
-	_, err = os.Stat(p)
+	_, err := os.Stat(filepath.Join(dir, name))
 	return err == nil
 }
 
@@ -1015,3 +979,140 @@ func (a *App) gitNet(ctx context.Context, args ...string) (string, error) {
 // logFormat separates fields with the ASCII unit separator and records with the record separator,
 // so subjects and ref names can hold tabs or newlines-free text without ambiguity.
 const logFormat = "--format=%H%x1f%h%x1f%P%x1f%D%x1f%aN%x1f%at%x1f%s%x1e"
+
+// refsPart is the half of the status that only changes when a ref, the stash, the remotes or the
+// config change. It is recomputed only when refsStamp says one did, instead of on every poll.
+type refsPart struct {
+	stamp       string
+	head        string
+	refsSig     string
+	branches    []string
+	stashes     []Stash
+	local       []Branch
+	remotes     []string
+	remote      []string
+	tags        []string
+	fetchedAt   int64
+	lastDiscard *DiscardInfo
+}
+
+func (a *App) fillRefs(status *GitStatus) {
+	stamp := a.refsStamp()
+	a.refsMu.Lock()
+	defer a.refsMu.Unlock()
+	if stamp == "" || stamp != a.refs.stamp {
+		a.refs = a.computeRefs()
+		a.refs.stamp = stamp
+	}
+	p := &a.refs
+	status.Head, status.RefsSig, status.Branches, status.Stashes = p.head, p.refsSig, p.branches, p.stashes
+	status.Remotes, status.Remote, status.Tags, status.FetchedAt = p.remotes, p.remote, p.tags, p.fetchedAt
+	status.LastDiscard = p.lastDiscard
+	status.Local = append([]Branch(nil), p.local...)
+	for i := range status.Local {
+		if status.Local[i].Name == status.Branch {
+			status.Tracking = &status.Local[i]
+		}
+	}
+}
+
+func (a *App) computeRefs() refsPart {
+	var p refsPart
+	if out, err := a.git("rev-parse", "-q", "--verify", "HEAD"); err == nil {
+		p.head = strings.TrimSpace(out)
+	}
+	if out, err := a.git("for-each-ref", "--format=%(objectname) %(refname)"); err == nil {
+		p.refsSig = hashBytes([]byte(out))[:12]
+	}
+	if out, err := a.git("branch", "-a", "--format=%(refname:short)"); err == nil {
+		p.branches = parseLines(out)
+	}
+	if out, err := a.git("stash", "list", "--format=%gd%x09%s"); err == nil {
+		p.stashes = parseStashes(out)
+	}
+	if out, err := a.git("for-each-ref", "--format=%(refname:short)%09%(upstream:short)%09%(upstream:track,nobracket)", "refs/heads"); err == nil {
+		p.local = parseBranches(out)
+	}
+	if out, err := a.git("remote"); err == nil {
+		p.remotes = parseLines(out)
+	}
+	p.lastDiscard = a.lastDiscard()
+	if out, err := a.git("for-each-ref", "--format=%(refname)", "refs/remotes", "refs/tags"); err == nil {
+		c := parseContains(out)
+		p.remote, p.tags = c.Remotes, c.Tags
+	}
+	if info, err := os.Stat(filepath.Join(a.commonDir(), "FETCH_HEAD")); err == nil {
+		p.fetchedAt = info.ModTime().Unix()
+	}
+	return p
+}
+
+// gitDirs resolves the repository's git directory and common directory once. They differ in a
+// linked worktree: HEAD and the index live in the first, refs, config and FETCH_HEAD in the second.
+func (a *App) gitDirs() (dir, common string) {
+	a.dirsMu.Lock()
+	defer a.dirsMu.Unlock()
+	if a.gitDir != "" {
+		return a.gitDir, a.gitCommon
+	}
+	// Not cached while this is not a repository, so a later `git init` is noticed.
+	out, err := a.git("rev-parse", "--git-dir", "--git-common-dir")
+	lines := parseLines(out)
+	if err != nil || len(lines) < 2 {
+		return "", ""
+	}
+	abs := func(p string) string {
+		if filepath.IsAbs(p) {
+			return p
+		}
+		return filepath.Join(a.root, p)
+	}
+	a.gitDir, a.gitCommon = abs(lines[0]), abs(lines[1])
+	return a.gitDir, a.gitCommon
+}
+
+func (a *App) commonDir() string { _, c := a.gitDirs(); return c }
+
+// refsStamp is a cheap fingerprint (file stats, no processes) of everything the refs part reads.
+// An empty stamp means "cannot tell", and the part is then recomputed every time.
+func (a *App) refsStamp() string {
+	dir, common := a.gitDirs()
+	if dir == "" {
+		return ""
+	}
+	h := sha256.New()
+	stat := func(p string) {
+		if info, err := os.Stat(p); err == nil {
+			fmt.Fprintf(h, "%s %d %d\n", p, info.Size(), info.ModTime().UnixNano())
+		}
+	}
+	stat(filepath.Join(dir, "HEAD"))
+	stat(filepath.Join(common, "packed-refs"))
+	stat(filepath.Join(common, "config"))
+	stat(filepath.Join(common, "FETCH_HEAD"))
+	_ = filepath.WalkDir(filepath.Join(common, "refs"), func(p string, d fs.DirEntry, err error) error {
+		if err == nil {
+			if info, err := d.Info(); err == nil {
+				fmt.Fprintf(h, "%s %d %d\n", p, info.Size(), info.ModTime().UnixNano())
+			}
+		}
+		return nil
+	})
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// forgetSigs drops cached file hashes for paths that are no longer changed, so the cache does not
+// grow with every file an agent ever touched during a long session.
+func (a *App) forgetSigs(changes []Change) {
+	keep := make(map[string]bool, len(changes))
+	for _, c := range changes {
+		keep[c.Path] = true
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for p := range a.sigs {
+		if !keep[p] {
+			delete(a.sigs, p)
+		}
+	}
+}
