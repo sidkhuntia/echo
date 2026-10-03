@@ -90,6 +90,7 @@
           <button class="btn quiet icon xs" data-opt="regex" title="Use regular expression" aria-pressed="false">.*</button>
         </span>
       </div>
+      <div class="replace-row"><input id="replace-files-input" class="field" placeholder="Replace with…" autocomplete="off" spellcheck="false" aria-label="Replace in files"><button id="replace-files" class="btn sm" disabled title="Replace every match listed below, in files that have no unsaved edits">Replace all</button></div>
       <div id="search-meta" class="search-meta"></div>
       <div id="search-results" class="list"></div>
     </div>
@@ -143,6 +144,7 @@
         <span id="stage-count" class="summary"></span>
         <button id="eol" class="btn quiet sm" hidden title="Line endings. Click to convert the file.">LF</button>
         <button id="json-format" class="btn quiet sm" hidden title="Pretty-print this JSON (Shift-click to minify)">Format JSON</button>
+        <button id="open-ext" class="btn quiet sm" hidden title="Open this file in another app">Open in…</button>
         <button id="file-history" class="btn quiet sm" hidden title="Commits that changed this file, across renames">History</button>
         <button id="blame-toggle" class="btn quiet sm" hidden title="Show who last changed each line; click an entry to see its commit">Blame</button>
         <button id="save" class="btn primary" hidden disabled>Save <kbd>⌘S</kbd></button>
@@ -171,6 +173,10 @@
       </div>
       <div id="highlight" class="code-view"></div>
       <div id="md" class="md-view"></div>
+      <aside id="side" class="side-pane" hidden>
+        <div class="side-head"><span id="side-title" class="side-title"></span><span class="side-acts"><button class="btn quiet sm" data-side="swap" title="Make this the main editor">Swap</button><button class="btn quiet icon xs" data-side="close" title="Close the side view" aria-label="Close side view">×</button></span></div>
+        <div id="side-code" class="side-code"></div>
+      </aside>
       <div id="syntax" class="syntax" aria-hidden="true"></div>
       <div id="guides" class="syntax guides" aria-hidden="true"></div>
       <div id="wrap-mirror" class="wrap-mirror" aria-hidden="true"></div>
@@ -178,11 +184,13 @@
       <textarea id="editor" class="editor" spellcheck="false" wrap="off"></textarea>
       <div id="occ" class="syntax findmarks occ" aria-hidden="true"></div>
       <div id="findmarks" class="syntax findmarks" aria-hidden="true"></div>
+      <div id="mcmarks" class="syntax findmarks mc" aria-hidden="true"></div>
       <div id="ruler" class="ruler" hidden></div>
       <div id="sticky" class="sticky" hidden></div>
       <canvas id="minimap" class="minimap" width="80" hidden></canvas>
       <div id="mm-view" class="mm-view" hidden></div>
       <div id="findbar" class="findbar" role="search" hidden>
+        <button id="find-toggle-replace" class="btn quiet icon xs" title="Replace (⌘⌥F)" aria-label="Toggle replace" aria-pressed="false">⇅</button>
         <input id="find-input" class="field" placeholder="Find" autocomplete="off" spellcheck="false" aria-label="Find in file">
         <button class="btn quiet icon xs" data-fopt="case" title="Match case" aria-pressed="false">Aa</button>
         <button class="btn quiet icon xs" data-fopt="word" title="Match whole word" aria-pressed="false"><u>ab</u></button>
@@ -191,6 +199,7 @@
         <button id="find-prev" class="btn quiet icon xs" title="Previous match (⇧↵)" aria-label="Previous match">↑</button>
         <button id="find-next" class="btn quiet icon xs" title="Next match (↵)" aria-label="Next match">↓</button>
         <button id="find-close" class="btn quiet icon xs" title="Close (Esc)" aria-label="Close find">✕</button>
+        <div class="fb-replace"><input id="replace-input" class="field" placeholder="Replace with   ↵ one · ⇧↵ all" autocomplete="off" spellcheck="false" aria-label="Replace with"><button id="replace-one" class="btn sm" title="Replace this match (↵)">Replace</button><button id="replace-all" class="btn sm" title="Replace every match (⇧↵)">All</button></div>
       </div>
     </div>
   </section>

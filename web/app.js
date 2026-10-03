@@ -11,6 +11,9 @@ import { rebaseUI } from './rebase.js'
 import { compareUI } from './compare.js'
 import * as T from './tools.js'
 import * as Ed from './editor.js'
+import * as Rp from './replace.js'
+import * as Pv from './preview.js'
+import * as FO from './fileops.js'
 import { wordRanges, pairRuns, injectMarks } from './wordiff.js'
 import { layoutGraph, graphWidth, graphSVG, railSVG, LOG_H, HIST_H } from './graph.js'
 
@@ -152,6 +155,7 @@ function applyStatus(s) {
   syncTabs()
   refreshGutter()
   Ops.renderOpBar()
+  FO.refreshSide()
   if (state.mode === 'file') Ops.renderConflictBar()
   if (LIVE.includes(scope())) state.mode === 'diff' ? scheduleDiff() : (state.diffStale = true)
 }
@@ -248,6 +252,7 @@ function markMatches(text, re) {
 function renderSearch() {
   const s = state.search, box = $('#search-results'), meta = $('#search-meta')
   if (s.err) { meta.textContent = ''; box.innerHTML = `<div class="empty"><b>Search failed</b>${esc(s.err)}</div>`; return }
+  $('#replace-files').disabled = !s.res?.matches.length
   if (!s.res) { meta.textContent = ''; box.innerHTML = ''; return }
   const files = new Map()
   for (const m of s.res.matches) files.has(m.path) ? files.get(m.path).push(m) : files.set(m.path, [m])
@@ -474,12 +479,12 @@ function renderTree() {
     let h = ''
     for (const [n, d] of [...node.dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
       const o = isOpen(d)
-      h += `<div class="tnode dir" data-dir="${esc(d.path)}" ${pad(depth)} title="${esc(d.path)}"><span class="tw">${o ? '▾' : '▸'}</span><svg class="i ic" viewBox="0 0 16 16"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><span class="nm">${esc(n)}</span>${d.changed ? `<span class="count">${d.changed}</span>` : ''}</div>`
+      h += `<div class="tnode dir" draggable="true" data-dir="${esc(d.path)}" ${pad(depth)} title="${esc(d.path)}"><span class="tw">${o ? '▾' : '▸'}</span><svg class="i ic" viewBox="0 0 16 16"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><span class="nm">${esc(n)}</span>${d.changed ? `<span class="count">${d.changed}</span>` : ''}</div>`
       if (o) h += render(d, depth + 1)
     }
     for (const p of node.files) {
       const c = state.changes.get(p)
-      h += `<div class="tnode ${state.selected === p || open === p ? 'active' : ''}" data-path="${esc(p)}" ${pad(depth)} title="${esc(p)}"><span class="tw"></span><svg class="i ic" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg><span class="nm">${name(basename(p))}</span>${c ? codeTag(c) : ''}</div>`
+      h += `<div class="tnode ${state.selected === p || open === p ? 'active' : ''}" draggable="true" data-path="${esc(p)}" ${pad(depth)} title="${esc(p)}"><span class="tw"></span><svg class="i ic" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg><span class="nm">${name(basename(p))}</span>${c ? codeTag(c) : ''}</div>`
     }
     return h
   }
@@ -1122,7 +1127,8 @@ function renderEditor() {
     $('#highlight').innerHTML = !tab
       ? `<div class="empty"><b>No file open</b>Press <kbd>⌘K</kbd> or pick a file from the sidebar.</div>`
       : tab.tooLarge ? `<div class="empty"><b>File too large to edit</b>${(tab.size / 1048576).toFixed(1)} MB. <button class="btn sm" data-open-ext>Open in default app</button></div>`
-      : `<div class="empty"><b>Binary file</b>Not shown.</div>`
+      : Pv.IMAGE.test(tab.path) ? Pv.imageViewHTML(tab)
+      : `<div class="empty"><b>Binary file</b>Not shown. <button class="btn sm" data-open-ext>Open in default app</button></div>`
   }
   renderBanner()
   Ops.renderConflictBar()
@@ -1130,6 +1136,8 @@ function renderEditor() {
   paintSyntax()
   paintFind()
   Ed.onRender()
+  $('#open-ext').hidden = !file || !tab
+  FO.paintSide()
 }
 
 // ---------- syntax highlighting ----------
@@ -1152,7 +1160,8 @@ function paintSyntax() {
 }
 
 // ---------- markdown preview ----------
-const isMarkdown = p => /\.(md|markdown|mdown|mkd)$/i.test(p)
+// Files that open rendered: Markdown, and CSV or TSV as a table.
+const isMarkdown = p => /\.(md|markdown|mdown|mkd|csv|tsv)$/i.test(p)
 
 // resolvePath joins a link in a document to a repository path; "/x" is the repository root, as on GitHub.
 function resolvePath(from, link) {
@@ -1183,11 +1192,15 @@ function renderPreview(tab) {
   if (view.shownTab === tab && view.shownText === tab.content) return
   const same = view.shownTab === tab
   if (view.shownTab && !same) view.shownTab.mdScroll = view.scrollTop
-  const doc = document.createElement('article')
-  doc.className = 'md-doc'
-  doc.append(...sanitize(renderMarkdown(tab.content), mdURL(tab)).childNodes)
+  let doc
+  if (Pv.isTable(tab.path)) doc = Pv.csvDoc(tab)
+  else {
+    doc = document.createElement('article')
+    doc.className = 'md-doc'
+    doc.append(...sanitize(renderMarkdown(tab.content), mdURL(tab)).childNodes)
+  }
   view.replaceChildren(doc)
-  paintPreview(doc)
+  if (!Pv.isTable(tab.path)) paintPreview(doc)
   if (!same) view.scrollTop = tab.mdScroll || 0
   view.shownTab = tab
   view.shownText = tab.content
@@ -2854,23 +2867,36 @@ function closeFileMenu() { $('#file-menu').hidden = true; fileMenuFor = null }
 function openFileMenu(row, x, y) {
   const isDir = row.classList.contains('dir'), path = isDir ? row.dataset.dir : row.dataset.path
   const dir = isDir ? path : path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
-  fileMenuFor = { path, dir }
-  const m = $('#file-menu')
+  fileMenuFor = { path, dir, isDir }
+  const m = $('#file-menu'), item = (a, label, extra = '', cls = '') => `<button class="menu-item ${cls}" data-a="${a}" role="menuitem">${label}${extra}</button>`
   m.innerHTML = `<div class="menu-head" title="${esc(path)}"><span>${esc(basename(path))}</span></div>`
-    + `<button class="menu-item" data-a="new" role="menuitem">New file${isDir ? ' in folder' : ' here'}…<kbd>⌘⌥N</kbd></button>`
+    + item('new', `New file${isDir ? ' in folder' : ' here'}…`, '<kbd>⌘⌥N</kbd>') + item('folder', 'New folder…')
     + '<div class="menu-sep"></div>'
-    + '<button class="menu-item" data-a="name" role="menuitem">Copy name</button>'
-    + '<button class="menu-item" data-a="rel" role="menuitem">Copy relative path</button>'
-    + '<button class="menu-item" data-a="abs" role="menuitem">Copy absolute path</button>'
+    + (isDir ? '' : item('side', 'Open to the side') + item('def', 'Open in default app') + item('ext', 'Open in editor…') )
+    + item('reveal', 'Reveal in file manager')
+    + '<div class="menu-sep"></div>'
+    + item('rename', 'Rename or move…') + (isDir ? '' : item('dup', 'Duplicate…')) + item('del', isDir ? 'Delete folder…' : 'Delete…', '', 'danger')
+    + '<div class="menu-sep"></div>'
+    + item('ignore', 'Add to .gitignore')
+    + item('name', 'Copy name') + item('rel', 'Copy relative path') + item('abs', 'Copy absolute path')
   m.hidden = false
   m.style.left = Math.max(8, Math.min(x, innerWidth - m.offsetWidth - 8)) + 'px'
   m.style.top = Math.max(8, Math.min(y, innerHeight - m.offsetHeight - 8)) + 'px'
   m.querySelector('.menu-item').focus()
 }
 async function runFileMenu(a) {
-  const { path, dir } = fileMenuFor
+  const { path, dir, isDir } = fileMenuFor
   closeFileMenu()
   if (a === 'new') return fileAction('create', dir)
+  if (a === 'folder') return FO.newFolder(dir)
+  if (a === 'side') return FO.openSide(path)
+  if (a === 'def') return FO.openDefault(path)
+  if (a === 'ext') return FO.openExternal(path)
+  if (a === 'reveal') return FO.reveal(path)
+  if (a === 'rename') return FO.rename(path)
+  if (a === 'dup') return FO.duplicate(path)
+  if (a === 'del') return FO.remove(path, isDir)
+  if (a === 'ignore') return G.ignorePaths([path])
   const text = a === 'name' ? basename(path) : a === 'rel' ? path : (state.status?.root || '').replace(/\/$/, '') + '/' + path
   try { await copyText(text); setStatus('Copied ' + text) } catch (e) { setStatus(e.message, 'err') }
 }
@@ -2923,6 +2949,24 @@ $('#diff').addEventListener('dblclick', e => {
 })
 let scrollFrame
 $('#diff').addEventListener('scroll', () => { cancelAnimationFrame(scrollFrame); scrollFrame = requestAnimationFrame(updateCurrent) })
+$('#tabs').addEventListener('contextmenu', e => {
+  const el = e.target.closest('.tab')
+  if (!el) return
+  e.preventDefault()
+  const i = +el.dataset.i, t = state.tabs[i]
+  popMenu([
+    { label: 'Close', run: () => closeTab(i) },
+    { label: 'Close others', run: async () => { for (let k = state.tabs.length - 1; k >= 0; k--) if (state.tabs[k] !== t) await closeTab(k) } },
+    { sep: true },
+    { label: 'Open to the side', run: () => FO.openSide(t.path) },
+    { label: 'Open in editor…', run: () => FO.openExternal(t.path) },
+    { label: 'Reveal in file manager', run: () => FO.reveal(t.path) },
+    { label: 'Copy path', run: () => copyText(t.path) },
+  ], e.clientX, e.clientY, basename(t.path))
+})
+$('#open-ext').onclick = () => { const t = activeTab(); if (t) FO.openExternal(t.path, lineAtCaret()) }
+$('#highlight').addEventListener('click', e => { if (e.target.closest('[data-open-ext]') && activeTab()) FO.openDefault(activeTab().path) })
+const lineAtCaret = () => { const ed = $('#editor'); return ed.classList.contains('active') ? ed.value.slice(0, ed.selectionStart).split('\n').length : 0 }
 $('#tabs').addEventListener('click', e => {
   const close = e.target.closest('[data-close]')
   if (close) return closeTab(+close.dataset.close)
@@ -3468,6 +3512,7 @@ document.addEventListener('keydown', e => {
       if (sel) { $('#search-input').value = sel; scheduleSearch(0) }
       $('#search-input').select()
     }
+    else if (k === 'f' && e.altKey) { if (inEditor()) { e.preventDefault(); const sel = editorSelection(); showFind(sel || null); Rp.toggleReplace(true) } }
     else if (k === 'f' && !e.altKey) { if (inEditor()) { e.preventDefault(); const sel = editorSelection(); showFind(sel || null) } }
     else if (k === 'g' && find.open && inEditor()) { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1) }
     else if (k === 'k' || k === 'p') { e.preventDefault(); openPalette() }
@@ -3704,10 +3749,13 @@ async function boot() {
   persistSession()
 }
 syncScopeInputs()
-Object.assign(ctx, { visibleRange, lineTop, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => Ed.applySettings(), rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
+Object.assign(ctx, { renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => Ed.applySettings(), rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
 R.initReview()
 Ops.initOps()
+Pv.initPreview()
+FO.initFileOps()
 Ed.initEditor()
+Rp.initReplace()
 T.initTools()
 G.init()
 boot()

@@ -1151,3 +1151,36 @@ label.set-row { cursor: pointer; }
 .crumb-sym .sym { cursor: pointer; } .crumb-sym .sym:hover { color: var(--accent); }
 .crumb-sym i { font-style: normal; margin: 0 5px; color: var(--faint); }
 .set-pair { display: inline-flex; gap: 6px; }
+.mc { z-index: 1; }
+.mc mark { background: color-mix(in srgb, var(--accent) 38%, transparent); color: transparent; border-radius: 2px; }
+.mc .mcaret { display: inline-block; width: 0; height: 17px; vertical-align: -3px; border-left: 2px solid var(--accent); margin-left: -1px; animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.findbar { flex-wrap: wrap; max-width: calc(100% - 44px); }
+.findbar .fb-replace { display: none; flex-basis: 100%; gap: 4px; margin-top: 4px; }
+.findbar.with-replace .fb-replace { display: flex; }
+.findbar .fb-replace .field { flex: 1; width: auto; }
+.replace-row { display: flex; gap: 6px; padding: 0 8px 6px; }
+.replace-row .field { flex: 1; min-width: 0; height: 26px; }
+
+/* side view, previews, drag targets */
+:root { --side-w: 0px; }
+.stage.has-side { --side-w: 42%; }
+.stage.has-side .editor { width: calc(100% - var(--side-w)); }
+.stage.has-side .syntax, .stage.has-side .md-view, .stage.has-side .code-view { right: var(--side-w); }
+.stage.has-side .findbar { right: calc(22px + var(--side-w)); }
+.stage.has-side .minimap, .stage.has-side .mm-view { right: calc(14px + var(--side-w)); }
+.stage.has-side .sticky { right: var(--side-w); }
+.side-pane { position: absolute; z-index: 2; top: 0; right: 0; bottom: 0; width: var(--side-w); display: flex; flex-direction: column; border-left: 1px solid var(--line-2); background: var(--sunk); }
+.side-head { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.side-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--mono); color: var(--fg-2); direction: rtl; text-align: left; }
+.side-acts { display: inline-flex; gap: 2px; }
+.side-code { flex: 1; overflow: auto; font: var(--ed-fs, 12.5px)/20px var(--mono); tab-size: var(--ed-tab, 4); }
+.side-row { display: flex; min-width: max-content; }
+.side-no { width: 52px; padding-right: 12px; text-align: right; color: var(--faint); user-select: none; font-size: 11px; flex: none; }
+.side-tx { white-space: pre; padding-right: 24px; }
+.img-view { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 20px; height: 100%; overflow: auto; }
+.img-frame { background: repeating-conic-gradient(var(--hover) 0 25%, transparent 0 50%) 0 0 / 16px 16px; border: 1px solid var(--line); padding: 8px; max-width: 100%; }
+.img-frame img { display: block; max-width: 100%; max-height: 70vh; }
+.img-meta { display: flex; gap: 12px; align-items: center; color: var(--muted); font: 12px var(--mono); }
+.csv-doc { max-width: none; }
+.tnode.drop { background: var(--accent-soft); outline: 1px dashed var(--accent); }

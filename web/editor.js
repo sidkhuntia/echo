@@ -4,6 +4,7 @@
 import { ctx } from './ctx.js'
 import * as E from './editing.js'
 import { replaceRange, applyText } from './edit.js'
+import * as MC from './multicursor.js'
 
 const ed = () => ctx.$('#editor')
 const cfg = () => ctx.state.config
@@ -52,6 +53,7 @@ let tabFocus = false
 
 function onKeyDown(e) {
   if (!inEditor() || e.isComposing) return
+  if (MC.handleKey(e)) return
   const mod = e.metaKey || e.ctrlKey, [s, en, t] = sel(), t0 = tab()
   const done = f => { e.preventDefault(); e.stopPropagation(); f() }
 
@@ -63,6 +65,7 @@ function onKeyDown(e) {
       else replaceRange(ed(), s, en, unit)
     })
   }
+  if (MC.active()) return
   if (e.key === 'Enter' && !mod && !e.shiftKey && !e.altKey) return done(() => apply(E.enterEdit(t, s, en, unitFor(t0))))
   if (!mod && !e.altKey && cfg().autoClose !== false && autoClose(e, t, s, en)) { e.preventDefault(); e.stopPropagation(); return }
   if (mod && !e.shiftKey && !e.altKey && e.key === '/') return done(() => { const ed1 = E.toggleComment(t, s, en, t0.path); if (ed1) apply(ed1); else ctx.setStatus('No comment syntax known for this file type') })
@@ -267,7 +270,7 @@ function minimapScroll(ev) {
 
 // ---------- the one entry point app.js calls after it paints the text ----------
 export function paintExtras() {
-  paintRuler(); paintGuides(); paintOccurrences(); paintScopes(); paintMinimapView()
+  paintRuler(); paintGuides(); paintOccurrences(); paintScopes(); paintMinimapView(); MC.paint()
 }
 
 export function onRender() {
@@ -298,6 +301,8 @@ export function decorateRow(html) {
 
 export function initEditor() {
   const e = ed()
+  MC.initMulti()
+  ctx.indentUnit = () => unitFor(tab())
   e.addEventListener('keydown', onKeyDown)
   e.addEventListener('blur', saveOnBlur)
   window.addEventListener('blur', saveOnBlur)
