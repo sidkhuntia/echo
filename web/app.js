@@ -851,7 +851,7 @@ function fileHTML(f, i) {
     !f.isDeleted ? '<button class="btn quiet sm" data-act="open" title="Open the file (o)">Open</button>' : '',
     state.status?.git ? '<button class="btn quiet sm" data-act="history" title="Commits that changed this file">History</button>' : '',
     canUnstage ? `<button class="btn quiet sm" data-act="unstage" title="Unstage (u)">${ICON.minus}Unstage</button>` : '',
-    canStage ? `<button class="btn sm stage" data-act="stage" title="Stage and go to the next file (s)">${ICON.plus}Stage</button>` : '',
+    canStage ? `<button class="btn sm do-stage" data-act="stage" title="Stage and go to the next file (s)">${ICON.plus}Stage</button>` : '',
   ].join('')
   let body = ''
   const lazy = !folded && state.lazy && !f.rendered && f.hunks.length && !f.note && !f.binary

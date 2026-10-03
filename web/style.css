@@ -516,7 +516,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 .compare [data-cmp="diff"] { margin-left: auto; }
 .lgroup { position: sticky; top: 0; z-index: 1; display: flex; gap: 8px; align-items: baseline; padding: 8px 14px 6px; background: var(--surface); border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--fg); }
 .lgroup .faint { font-weight: 400; }
-.editor:focus { box-shadow: inset 2px 0 0 var(--accent); }
 /* word wrap: long lines wrap at the editor's right edge instead of scrolling sideways. The width is
    published by app.js as --content-w, because the textarea's own scrollbar makes its content box
    narrower than the stage behind it, and the layer has to break in the same place. */
@@ -693,10 +692,10 @@ body.resizing { cursor: col-resize; user-select: none; }
 .hunk .tx { padding-right: 24px; color: var(--fg-2); }
 .hunk .r-add { background: var(--add-soft); }
 .hunk .r-add.tx { color: var(--fg); }
-.hunk .r-add.sg { color: var(--add); box-shadow: inset 2px 0 0 var(--add-strong); }
+.hunk .r-add.sg { color: var(--add); }
 .hunk .r-del { background: var(--del-soft); }
 .hunk .r-del.tx { color: var(--fg); }
-.hunk .r-del.sg { color: var(--del); box-shadow: inset 2px 0 0 var(--del-strong); }
+.hunk .r-del.sg { color: var(--del); }
 .hunk .r-add.no, .hunk .r-del.no { color: var(--muted); }
 .hunk .r-meta { color: var(--muted); font-style: italic; }
 /* split: old | new, lines wrap so both sides stay visible */
@@ -704,8 +703,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 .hunk.split > .tx { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 8px; padding-right: 12px; }
 .hunk.split .no { min-width: 44px; }
 .hunk.split .no.ns { border-left: 1px solid var(--line); }
-.hunk.split .r-add.tx { box-shadow: inset 2px 0 0 var(--add-strong); }
-.hunk.split .r-del.tx { box-shadow: inset 2px 0 0 var(--del-strong); }
 .hunk.split .r-none { background: color-mix(in srgb, var(--fg) 3%, transparent); }
 .hunk .tx[data-n] { cursor: text; }
 .hunk.split .meta { grid-column: 1 / -1; padding: 0 12px; color: var(--muted); font-style: italic; }
@@ -998,7 +995,7 @@ label.set-row { cursor: pointer; }
 
 /* multi-select in the Changes rail */
 .qrow { user-select: none; }
-.qrow.picked { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.qrow.picked { background: var(--accent-soft); }
 .pickbar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 4px 8px; margin-bottom: 4px; background: var(--surface); border-bottom: 1px solid var(--line); font-size: 12px; }
 .pickbar .grow { flex: 1; }
 
@@ -1053,8 +1050,6 @@ label.set-row { cursor: pointer; }
 .hbtn.ok.on { background: var(--add-soft); color: var(--add); border-color: var(--add-strong); }
 .hbtn.no.on { background: var(--del-soft); color: var(--del); border-color: var(--del-strong); }
 .hint-s { font-size: 11px; color: var(--muted); font-style: italic; }
-.hunk.hk-accepted .hunk-head { box-shadow: inset 3px 0 0 var(--add); }
-.hunk.hk-rejected .hunk-head { box-shadow: inset 3px 0 0 var(--del); }
 .hunk .no[data-l].r-add, .hunk .no[data-l].r-del { cursor: pointer; }
 .hunk .no[data-l].r-add:hover, .hunk .no[data-l].r-del:hover { color: var(--accent); }
 .hunk .sg[data-l] { cursor: pointer; }
@@ -1063,8 +1058,8 @@ label.set-row { cursor: pointer; }
 .hunk mark.wd-add { background: var(--add-strong); }
 .hunk mark.wd-del { background: var(--del-strong); }
 .lnote-row { grid-column: 1 / -1; padding: 4px 12px 6px 64px; font: 12px/1.45 var(--sans); background: var(--bg); }
-.lnote { display: flex; gap: 8px; align-items: flex-start; padding: 6px 10px; border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 6px; background: var(--surface); white-space: normal; }
-.lnote.done { opacity: .55; border-left-color: var(--add); }
+.lnote { display: flex; gap: 8px; align-items: flex-start; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); white-space: normal; }
+.lnote.done { opacity: .55; }
 .lnote-text { flex: 1; white-space: pre-wrap; color: var(--fg); }
 .lnote-acts { display: inline-flex; gap: 4px; }
 .lnote-edit { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--accent); border-radius: 6px; background: var(--surface); white-space: normal; }
@@ -1213,6 +1208,24 @@ label.set-row { cursor: pointer; }
 .pm { display: inline-grid; place-items: center; width: 14px; margin-right: 6px; font: 600 11px var(--mono); flex: none; }
 .pm.up { color: var(--accent); }
 .pm.ok { color: var(--faint); opacity: .55; }
-.lrow.unpushed, .commit-row.unpushed { box-shadow: inset 2px 0 0 var(--accent); }
 .lrow.unpushed .graph circle, .commit-row.unpushed .graph circle { fill: var(--sunk); stroke-width: 2; }
 .c-meta { display: flex; align-items: center; }
+
+/* review icons: one size, one stroke, and states that read without a color strip */
+.hbtn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 22px; padding: 0 8px; }
+.hbtn.icon { width: 26px; padding: 0; }
+.hbtn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.hbtn .n { font: 600 10.5px var(--mono); }
+.hbtn.ok:hover { color: var(--add); border-color: var(--add-strong); }
+.hbtn.no:hover { color: var(--del); border-color: var(--del-strong); }
+.hbtn.ok.on { background: var(--add); border-color: var(--add); color: var(--bg); }
+.hbtn.no.on { background: var(--del); border-color: var(--del); color: var(--bg); }
+.hbtn.has { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.hunk.hk-accepted .hpill b { background: var(--add); color: var(--bg); }
+.hunk.hk-rejected .hpill b { background: var(--del); color: var(--bg); }
+/* the file and hunk headers stay as wide as the window, so their buttons never scroll away with a long line */
+.dfile-head { position: sticky; left: 0; width: calc(100cqw - 12px); }
+.hunk-head { position: sticky; left: 0; width: calc(100cqw - 12px); }
+.lnote-ico { color: var(--muted); display: inline-grid; padding-top: 2px; }
+.lnote-ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.dacts .btn { flex: none; }

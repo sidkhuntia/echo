@@ -46,6 +46,11 @@ function sideOf(f) {
 }
 
 const BTN = (act, label, title, cls = '') => `<button class="hbtn ${cls}" data-hact="${act}" title="${esc(title)}">${label}</button>`
+const ICO = {
+  check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>',
+  cross: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>',
+  note: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10v7H8.5L5.5 13v-2.5H3z"/></svg>',
+}
 
 export function hunkActsHTML(f, h, hi) {
   const key = hunkKey(f.path, h), mark = review.marks[key]?.s
@@ -61,7 +66,7 @@ export function hunkActsHTML(f, h, hi) {
     h1 += `<span class="hint-s" title="This file has staged and unstaged changes. Use the Unstaged or Staged view to stage single hunks.">partly staged</span>`
   }
   const notes = review.notes.filter(n => n.path === f.path && h.lines.some(l => l.i !== undefined && n.side === lineSide(l) && n.line === lineNo(l))).length
-  const decide = `${BTN('accept', '✓', 'Accept this change (a)', mark === 'accepted' ? 'on ok' : 'ok')}${BTN('reject', '✗', 'Reject this change (x)', mark === 'rejected' ? 'on no' : 'no')}${BTN('note', notes ? `💬 ${notes}` : '💬', 'Add a note to this hunk (c)')}`
+  const decide = `${BTN('accept', ICO.check, mark === 'accepted' ? 'Accepted. Click to undo (a)' : 'Accept this change (a)', 'icon ok' + (mark === 'accepted' ? ' on' : ''))}${BTN('reject', ICO.cross, mark === 'rejected' ? 'Rejected. Click to undo (x)' : 'Reject this change (x)', 'icon no' + (mark === 'rejected' ? ' on' : ''))}${BTN('note', ICO.note + (notes ? `<span class="n">${notes}</span>` : ''), notes ? `${notes} note${notes === 1 ? '' : 's'} on this hunk. Click to add another (c)` : 'Add a note to this hunk (c)', notes ? 'has' : 'icon')}`
   return `<span class="hacts">${h1}${decide}</span>`
 }
 
@@ -73,7 +78,7 @@ export function noteRowsHTML(f, hi, l) {
   let h = ''
   for (const n of notesAt(f.path, l)) {
     if (review.editing?.id === n.id) { h += editorHTML(n.text, n.id); continue }
-    h += `<div class="lnote-row"><div class="lnote${n.done ? ' done' : ''}" data-note="${esc(n.id)}"><span class="lnote-ico">💬</span><div class="lnote-text">${esc(n.text)}</div><span class="lnote-acts"><button class="hbtn" data-nact="done" title="${n.done ? 'Reopen' : 'Mark as addressed'}">${n.done ? 'Reopen' : 'Done'}</button><button class="hbtn" data-nact="edit">Edit</button><button class="hbtn danger" data-nact="delete">Delete</button></span></div></div>`
+    h += `<div class="lnote-row"><div class="lnote${n.done ? ' done' : ''}" data-note="${esc(n.id)}"><span class="lnote-ico">${ICO.note}</span><div class="lnote-text">${esc(n.text)}</div><span class="lnote-acts"><button class="hbtn" data-nact="done" title="${n.done ? 'Reopen' : 'Mark as addressed'}">${n.done ? 'Reopen' : 'Done'}</button><button class="hbtn" data-nact="edit">Edit</button><button class="hbtn danger" data-nact="delete">Delete</button></span></div></div>`
   }
   const e = review.editing
   if (e && !e.id && e.path === f.path && e.side === lineSide(l) && e.line === lineNo(l) && e.hi === hi) h += editorHTML('', '')
