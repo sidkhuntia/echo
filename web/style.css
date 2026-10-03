@@ -1091,3 +1091,41 @@ label.set-row { cursor: pointer; }
 .dimg figure { margin: 0; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .dimg figcaption { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
 .dimg img { max-width: 100%; max-height: 420px; border: 1px solid var(--line); background: var(--bg); }
+
+.insp:not([data-insp="tools"]) [data-for="tools"] { display: none; }
+.insp[data-insp="tools"] [data-for="commit"], .insp[data-insp="tools"] [data-for="history"] { display: none; }
+.insp[data-insp="tools"] [data-for="tools"] { border: 0; }
+.commit-extras { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+.commit-extras .field { flex: 1; min-width: 120px; height: 24px; }
+.commit-extras .check { font-size: 12px; color: var(--fg-2); display: inline-flex; gap: 4px; align-items: center; }
+.meter { font: 11px var(--mono); color: var(--muted); min-width: 70px; }
+.meter.warn { color: var(--warn); } .meter.bad { color: var(--del); }
+.git-out { margin-top: 6px; font-size: 12px; }
+.git-out pre { max-height: 180px; overflow: auto; margin: 4px 0 0; padding: 6px 8px; background: var(--sunk); border-radius: 6px; font: 11px/1.45 var(--mono); white-space: pre-wrap; }
+.git-out.err summary { color: var(--del); }
+.op-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; margin: 0 8px 6px; border: 1px solid var(--warn); background: var(--warn-soft); border-radius: 8px; font-size: 12px; flex-wrap: wrap; }
+.op-bar b { color: var(--fg); } .op-bar .grow { flex: 1; min-width: 40px; }
+.conflict-bar { gap: 8px; flex-wrap: wrap; }
+.xmodal-card { width: min(720px, calc(100vw - 32px)); max-height: 80vh; display: flex; flex-direction: column; padding-bottom: 0; }
+.xmodal-card.wide { width: min(1000px, calc(100vw - 32px)); }
+.xmodal-body { overflow: auto; padding: 12px 16px; flex: 1; min-height: 0; }
+.xmodal-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--line); }
+.xmodal-body pre.diff-text { margin: 0; font: 11.5px/1.5 var(--mono); white-space: pre; overflow: auto; }
+.diff-text .l-add { color: var(--add); background: var(--add-soft); display: block; } .diff-text .l-del { color: var(--del); background: var(--del-soft); display: block; } .diff-text .l-hunk { color: var(--info); display: block; } .diff-text .l-file { color: var(--fg); font-weight: 600; display: block; }
+.tool-sec { border-bottom: 1px solid var(--line); padding: 8px 0; }
+.tool-sec > summary { cursor: pointer; font-weight: 600; font-size: 12px; display: flex; gap: 8px; align-items: center; list-style: none; }
+.tool-sec > summary .count { margin-left: auto; }
+.tool-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
+.tool-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-row .sub { color: var(--muted); font: 11px var(--mono); }
+.tool-form { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; } .tool-form .field { flex: 1; min-width: 100px; height: 24px; }
+.rb-row { display: grid; grid-template-columns: 96px 70px 1fr auto; gap: 8px; align-items: center; padding: 3px 0; font-size: 12px; }
+.rb-row .mono { font: 11px var(--mono); color: var(--muted); }
+.rb-row.dropped .msg { text-decoration: line-through; opacity: .5; }
+.rb-msg { grid-column: 3 / -1; }
+.cmp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cmp-sum { display: flex; gap: 14px; margin: 8px 0; font-size: 12.5px; }
+.lrow.ctx-open { background: var(--hover); }
+.lrow.sel .graph circle, .commit-row.open .graph circle { stroke: var(--accent); stroke-width: 2.5; }
+.graph circle { transition: r .12s; } .lrow:hover .graph circle { r: 4.5; }
+.hunk-head .hacts { margin-left: auto; margin-right: 8px; }

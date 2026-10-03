@@ -64,6 +64,7 @@
         <button data-rail="search" role="tab" title="Search file contents (⌘⇧F)" aria-label="Search"><svg class="i" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></button>
       </div>
     </div>
+    <div id="op-bar" class="op-bar" hidden></div>
     <div class="filter-row">
       <input id="file-filter" class="field" placeholder="Filter paths" autocomplete="off" spellcheck="false">
       <button id="tree-collapse" class="btn icon" title="Collapse all folders" hidden></button>
@@ -128,6 +129,9 @@
         <select id="log-ref" class="field" title="Which history to show"><option value="all">All branches</option><option value="HEAD">Current branch</option></select>
         <input id="log-author" class="field log-f" placeholder="Author" autocomplete="off" spellcheck="false">
         <input id="log-path" class="field log-f" placeholder="Path" autocomplete="off" spellcheck="false">
+        <input id="log-since" class="field log-f" type="date" title="Commits after this date" aria-label="Since">
+        <input id="log-until" class="field log-f" type="date" title="Commits before this date" aria-label="Until">
+        <select id="log-merges" class="field" title="Merge commits" aria-label="Merge commits"><option value="">All commits</option><option value="no">No merges</option><option value="only">Merges only</option></select>
         <span id="log-summary" class="summary"></span>
       </div>
       <div id="file-bar" class="bar-group" hidden>
@@ -154,6 +158,7 @@
     </div>
     <div id="file-crumb" class="crumb" hidden><span id="file-path" class="file-path"></span></div>
     <div id="banner" class="banner" hidden></div>
+    <div id="conflict-bar" class="banner conflict-bar" hidden></div>
     <div class="stage">
       <div id="diff" class="diff-view active"></div>
       <div id="blame-ghost" class="blame-ghost" hidden></div>
@@ -188,6 +193,7 @@
       <div class="seg insp-switch" role="tablist">
         <button data-insp="commit" class="on" role="tab">Commit</button>
         <button data-insp="history" role="tab">History</button>
+        <button data-insp="tools" role="tab" title="Remotes, worktrees, submodules, reflog, compare">Tools</button>
       </div>
       <span id="staged-count" class="dim"></span>
       <button id="git-pin" class="btn quiet icon xs" title="Pin the Git panel beside the review" aria-label="Pin Git panel" aria-pressed="false"><svg class="i" viewBox="0 0 16 16"><path d="M6 2.5h4M7 2.5v4L4.5 9h7L9 6.5v-4M8 9v4.5"/></svg></button>
@@ -197,6 +203,11 @@
       <section class="sec commit-card" data-for="commit">
         <h4>Commit <span id="commit-tally" class="tally"></span></h4>
         <textarea id="commit-message" class="field" placeholder="Summarize the change"></textarea>
+        <div class="commit-extras">
+          <span id="msg-meter" class="meter" title="Subject up to 50 characters, body wrapped at 72"></span>
+          <label class="check" title="Add a Signed-off-by line"><input id="opt-signoff" type="checkbox"> Sign off</label>
+          <input id="opt-coauthor" class="field" placeholder="Co-author: Name &lt;email&gt;" autocomplete="off" spellcheck="false" title="Adds a Co-authored-by line. Separate several with commas.">
+        </div>
         <div class="btn-split">
           <button id="commit" class="btn primary grow"><span id="commit-label">Commit</span> <kbd>⌘↵</kbd></button>
           <button id="commit-more" class="btn primary caret" title="Other ways to commit" aria-haspopup="menu"><svg class="i" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
@@ -212,7 +223,10 @@
         <div class="hrow join"><select id="branch-select" class="field"></select><button id="switch-branch" class="btn">Switch</button></div>
         <div class="hrow join"><input id="new-branch" class="field" placeholder="New branch name" autocomplete="off" spellcheck="false"><button id="create-branch" class="btn">Create</button></div>
         <div class="sync">
-          <button id="pull" class="btn net"><svg class="i" viewBox="0 0 16 16"><path d="M8 2.5v9M4.5 8 8 11.5 11.5 8M3.5 13.5h9"/></svg><span id="pull-label">Pull</span></button>
+          <div class="btn-split pull-split">
+            <button id="pull" class="btn net"><svg class="i" viewBox="0 0 16 16"><path d="M8 2.5v9M4.5 8 8 11.5 11.5 8M3.5 13.5h9"/></svg><span id="pull-label">Pull</span></button>
+            <button id="pull-more" class="btn net caret" title="Pull options" aria-haspopup="menu"><svg class="i" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
+          </div>
           <div class="btn-split push-split">
             <button id="push" class="btn net"><svg class="i" viewBox="0 0 16 16"><path d="M8 13.5v-9M4.5 8 8 4.5 11.5 8M3.5 2.5h9"/></svg>Push</button>
             <button id="push-more" class="btn net caret" title="Force push" aria-haspopup="menu"><svg class="i" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
@@ -227,6 +241,7 @@
         <div class="hrow join"><input id="stash-message" class="field" placeholder="Message (optional)" autocomplete="off"><button id="stash-create" class="btn">Stash</button></div>
         <div id="stashes"></div>
       </details>
+      <section class="sec" data-for="tools"><div id="tools"></div></section>
       <section class="sec" data-for="history">
         <h4>Recent commits <span class="dim">click for details and diff</span></h4>
         <div id="history"></div>
@@ -251,6 +266,9 @@
 <div id="commit-menu" class="menu" role="menu" hidden></div>
 <div id="file-menu" class="menu" role="menu" hidden></div>
 <div id="push-menu" class="menu" role="menu" hidden></div>
+<div id="pull-menu" class="menu" role="menu" hidden></div>
+<div id="xmenu" class="menu" role="menu" hidden></div>
+<div id="xmodal" class="modal" hidden></div>
 
 <div id="toast" class="toast" role="status" hidden></div>
 <div id="dialog" class="modal dialog" hidden>

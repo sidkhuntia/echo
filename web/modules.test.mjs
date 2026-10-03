@@ -56,3 +56,29 @@ test('layoutGraph gives a merge two parents on different lanes', () => {
   assert.notEqual(rows[0].out[0], rows[0].out[1])
   assert.equal(rows.length, 4)
 })
+
+import { findConflicts, resolution, resolveAll } from './conflicts.js'
+
+const CONFLICT = 'top\n<<<<<<< HEAD\nmine 1\nmine 2\n=======\ntheirs\n>>>>>>> feature\nmiddle\n<<<<<<< HEAD\nx\n||||||| base\nb\n=======\ny\n>>>>>>> feature\nend\n'
+
+test('conflict blocks are found with their sides and labels', () => {
+  const cs = findConflicts(CONFLICT)
+  assert.equal(cs.length, 2)
+  assert.deepEqual(cs[0].ours, ['mine 1', 'mine 2'])
+  assert.deepEqual(cs[0].theirs, ['theirs'])
+  assert.equal(cs[0].oursLabel, 'HEAD')
+  assert.equal(cs[0].theirsLabel, 'feature')
+  assert.deepEqual(cs[1].base, ['b'])
+  assert.equal(CONFLICT.slice(cs[0].start, cs[0].end).startsWith('<<<<<<< HEAD'), true)
+  assert.equal(CONFLICT.slice(cs[0].start, cs[0].end).endsWith('>>>>>>> feature\n'), true)
+})
+
+test('each side can be taken, and all at once', () => {
+  const [c] = findConflicts(CONFLICT)
+  assert.equal(resolution(c, 'ours'), 'mine 1\nmine 2\n')
+  assert.equal(resolution(c, 'theirs'), 'theirs\n')
+  assert.equal(resolution(c, 'both'), 'mine 1\nmine 2\ntheirs\n')
+  assert.equal(resolveAll(CONFLICT, 'theirs'), 'top\ntheirs\nmiddle\ny\nend\n')
+  assert.equal(findConflicts('plain text\n').length, 0)
+  assert.equal(findConflicts('<<<<<<< a\nno end\n').length, 0)
+})

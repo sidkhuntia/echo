@@ -4,6 +4,12 @@ import { parseDiff } from './diffparse.js'
 import { splitLines, lineDiff } from './linediff.js'
 import { ctx } from './ctx.js'
 import * as R from './review.js'
+import * as Ops from './ops.js'
+import * as G from './gitui.js'
+import { popMenu } from './ui.js'
+import { rebaseUI } from './rebase.js'
+import { compareUI } from './compare.js'
+import * as T from './tools.js'
 import { wordRanges, pairRuns, injectMarks } from './wordiff.js'
 import { layoutGraph, graphWidth, graphSVG, railSVG, LOG_H, HIST_H } from './graph.js'
 
@@ -144,6 +150,8 @@ function applyStatus(s) {
   if (state.search.res) scheduleSearch()
   syncTabs()
   refreshGutter()
+  Ops.renderOpBar()
+  if (state.mode === 'file') Ops.renderConflictBar()
   if (LIVE.includes(scope())) state.mode === 'diff' ? scheduleDiff() : (state.diffStale = true)
 }
 
@@ -329,6 +337,7 @@ function renderQueue() {
     const acts = [
       c.code[1] !== 'D' && c.code !== 'D ' ? iconBtn('open', ICON.open, 'Open file') : '',
       sec === 'work' ? iconBtn('discard', ICON.discard, c.code === '??' ? 'Delete this untracked file' : 'Discard unstaged changes') : '',
+      sec === 'merge' ? `<button class="btn quiet xs" data-act="ours" title="Take our side of the whole file (the branch you are on; during a rebase, the branch being rebased onto)">Ours</button><button class="btn quiet xs" data-act="theirs" title="Take their side of the whole file">Theirs</button>` : '',
       sec === 'staged' ? iconBtn('unstage', ICON.minus, 'Unstage') : iconBtn('stage', ICON.plus, sec === 'merge' ? 'Mark resolved (stage)' : 'Stage'),
     ].join('')
     const st = sec === 'staged' ? c.index : sec === 'work' ? c.work : null
@@ -369,6 +378,7 @@ function pickBar() {
   const staged = sec === 'staged'
   return `<div class="pickbar"><b>${state.qsel.size} selected</b><span class="grow"></span>`
     + `<button class="btn sm" data-pick="${staged ? 'unstage' : 'stage'}">${staged ? ICON.minus + 'Unstage' : ICON.plus + 'Stage'}</button>`
+    + `<button class="btn quiet sm" data-pick="stash" title="Stash just these files">Stash</button>`
     + `<button class="btn quiet sm" data-pick="clear" title="Clear the selection (Esc)">✕</button></div>`
 }
 
@@ -1114,6 +1124,7 @@ function renderEditor() {
       : `<div class="empty"><b>Binary file</b>Not shown.</div>`
   }
   renderBanner()
+  Ops.renderConflictBar()
   refreshGutter()
   paintSyntax()
   paintFind()
@@ -1809,10 +1820,12 @@ function renderCommit() {
     : nu ? `${plural(nu, 'unstaged change')} stay out of this commit.` : ''
   hint.hidden = !words
   hint.textContent = words
-  $('#revert-bar').hidden = !state.status?.reverting
+  $('#revert-bar').hidden = true
   $('#commit-menu').innerHTML = (nu && (ns || !all)
     ? `<button class="menu-item" data-c="all" role="menuitem">${ns ? `Stage ${plural(nu, 'more file')} & Commit` : 'Stage all & Commit'}</button>` : '')
-    + '<button class="menu-item" data-c="amend" role="menuitem">Amend last commit</button>'
+    + '<button class="menu-item" data-c="amend" role="menuitem">Amend last commit (edit message)</button>'
+    + '<button class="menu-item" data-c="amend-keep" role="menuitem" title="Add the staged changes to the last commit and keep its message">Amend, keep message</button>'
+    + '<button class="menu-item" data-c="undo" role="menuitem" title="Move the branch back one commit; its changes stay staged">Undo last commit</button>'
 }
 
 function toggleCommitMenu(open) {
@@ -1829,7 +1842,7 @@ function toggleCommitMenu(open) {
 // again (or a message typed first) rewrites the commit with what the box holds and whatever is staged.
 async function amend() {
   const box = $('#commit-message')
-  if (box.value.trim()) return gitAction({ action: 'amend', message: box.value })
+  if (box.value.trim()) return gitAction({ action: 'amend', message: box.value, ...G.commitOpts() })
   const head = state.status?.head
   if (!head) return setStatus('There is no commit to amend yet', 'err')
   try {
@@ -1840,11 +1853,19 @@ async function amend() {
   } catch (e) { setStatus(e.message, 'err') }
 }
 
+async function undoLastCommit() {
+  const last = state.hist.commits[0]
+  if (!last) return setStatus('There is no commit to undo', 'err')
+  const pushed = state.status?.tracking && state.status.tracking.ahead === 0 && state.status.tracking.upstream
+  const ok = await ask({ title: 'Undo the last commit', kicker: 'soft reset', tone: pushed ? 'warn' : '', ok: 'Undo commit', html: `<p><span class="mono">${esc(last.short)}</span> ${esc(last.subject)}</p><p>The branch moves back one commit and its changes stay staged.</p>${pushed ? '<p class="note">This commit looks pushed; pushing the branch afterwards needs a force push.</p>' : ''}` })
+  if (ok) gitAction({ action: 'undo:commit' })
+}
+
 // Committing everything is the one commit that reaches past what the user staged, so it always asks.
 async function doCommit(all) {
   const message = $('#commit-message').value
   if (!message.trim()) { setStatus('Write a commit message first', 'err'); $('#commit-message').focus(); return }
-  if (!all) return gitAction({ action: 'commit', message })
+  if (!all) return gitAction({ action: 'commit', message, ...G.commitOpts() })
   const t = changeTally()
   if (t.conflicts) return setStatus('Resolve the merge conflicts before staging everything', 'err')
   if (!t.staged.length && !t.unstaged.length) return setStatus('Nothing to commit')
@@ -1856,7 +1877,7 @@ async function doCommit(all) {
       + `<div class="dialog-quote">${esc(message.trim())}</div>`
       + `<div class="slip-total"><span>${t.staged.length} already staged · ${t.unstaged.length} to stage</span><span>${fresh ? `${fresh} untracked` : ''}</span></div>`,
   })
-  if (ok) gitAction({ action: 'commit:all', message })
+  if (ok) gitAction({ action: 'commit:all', message, ...G.commitOpts() })
 }
 
 // ---------- ledger ----------
@@ -1875,12 +1896,13 @@ function renderGit() {
   const tr = s.tracking
   $('#sum-branch').innerHTML = `${esc(s.branch || '')}${tr && !tr.gone && (tr.ahead || tr.behind) ? ` <span class="track">${tr.behind ? `<span class="in">↓${tr.behind}</span>` : ''}${tr.ahead ? `<span class="out">↑${tr.ahead}</span>` : ''}</span>` : ''}`
   $('#sum-stash').textContent = (s.stashes || []).length || ''
-  $('#stashes').innerHTML = (s.stashes || []).map(x => `<div class="list-row"><span title="${esc(x.subject)}"><b>${esc(x.ref)}</b> ${esc(x.subject)}</span><button class="btn sm" data-act="apply" data-ref="${esc(x.ref)}">Apply</button><button class="btn sm quiet" data-act="drop" data-ref="${esc(x.ref)}" title="Drop this stash; its changes are only in the reflog afterwards">Drop</button></div>`).join('') || '<div class="list-row muted"><span>No stashes</span></div>'
+  $('#stashes').innerHTML = (s.stashes || []).map(x => `<div class="list-row"><span title="${esc(x.subject)}"><b>${esc(x.ref)}</b> ${esc(x.subject)}</span> <button class="btn sm quiet" data-act="show" data-ref="${esc(x.ref)}" title="See what is in this stash">Show</button><button class="btn sm" data-act="apply" data-ref="${esc(x.ref)}">Apply</button><button class="btn sm quiet" data-act="pop" data-ref="${esc(x.ref)}" title="Apply it and drop it">Pop</button><button class="btn sm quiet" data-act="stbranch" data-ref="${esc(x.ref)}" title="Make a branch from this stash">Branch</button><button class="btn sm quiet" data-act="drop" data-ref="${esc(x.ref)}" title="Drop this stash; its changes are only in the reflog afterwards">Drop</button></div>`).join('') || '<div class="list-row muted"><span>No stashes</span></div>'
   // History and the log reload only when HEAD or a ref moved; "contains" answers go stale at the same moment.
   const key = `${s.head || ''}:${s.refsSig || ''}`
   if (key !== state.refsKey) {
     state.refsKey = key
     state.contains.clear()
+    T.toolsShown()
     loadHistory()
     if (state.log.loaded) loadLog()
     if (state.mode === 'file') ensureBlame(activeTab())
@@ -1949,13 +1971,17 @@ function refActions(ref, kind) {
     a.push([kind === 'tag' ? 'Checkout (detached)' : kind === 'remote' && !localNames.has(short) ? `Checkout as ${short}` : 'Checkout', checkout])
   }
   a.push(['New branch from here…', 'new'])
+  if (kind === 'local') a.push(['Rename…', 'rename'])
   if (!isCur && cur) {
-    a.push([`Merge into ${cur}`, { action: 'merge', from: ref }])
+    a.push([`Merge into ${cur}…`, 'merge'])
     a.push([`Rebase ${cur} onto this`, { action: 'rebase', from: ref }])
+    a.push([`Rebase ${cur} onto this interactively…`, 'irebase'])
+    a.push(['Cherry-pick its commits…', 'pickrange'])
     a.push([`Compare with ${cur}`, 'compare'])
   }
   a.push(['Show in Log', 'log'])
-  if (kind === 'local' && !isCur) a.push(['Delete', { action: 'branch:delete', from: ref }, 'danger'])
+  if (kind === 'local' && !isCur) a.push(['Delete', 'delete', 'danger'])
+  if (kind === 'remote') a.push([`Delete on ${ref.slice(0, ref.indexOf('/'))}…`, 'delete-remote', 'danger'])
   return a
 }
 
@@ -1983,12 +2009,24 @@ async function runRefAction(i) {
   if (what === 'new') {
     const name = await ask({ title: 'Name the new branch', ok: 'Create', html: `<p class="note">Starts from <b>${esc(ref)}</b>.</p>`, input: { label: 'Branch name', placeholder: 'feature/name' } })
     if (name) await gitAction({ action: 'branch:create', from: name, to: ref })
-  } else if (what === 'compare') {
-    startCompare(state.status.branch, ref)
-  } else if (what === 'log') {
+  } else if (what === 'rename') await G.renameBranch(ref)
+  else if (what === 'merge') G.mergeInto(ref)
+  else if (what === 'delete') await G.deleteBranch(ref)
+  else if (what === 'delete-remote') await G.deleteRemoteBranch(ref)
+  else if (what === 'irebase') ctx.rebaseUI?.(ref)
+  else if (what === 'pickrange') pickRange(ref)
+  else if (what === 'compare') startCompare(state.status.branch, ref)
+  else if (what === 'log') {
     await setMode('log')
     setLogRef(ref)
   } else await gitAction(what)
+}
+
+// Cherry-pick every commit a branch has that the current one lacks (cur..ref), oldest first.
+async function pickRange(ref) {
+  const cur = state.status?.branch
+  const ok = await ask({ title: `Cherry-pick ${ref}`, kicker: 'new commits', ok: 'Cherry-pick', html: `<p>Applies the commits on <b>${esc(ref)}</b> that <b>${esc(cur)}</b> does not have, as new commits on <b>${esc(cur)}</b>.</p>` })
+  if (ok) gitAction({ action: 'cherry-pick', from: `${cur}..${ref}` })
 }
 
 // setLogRef filters the Log to one ref; tags are not in the branch list, so they get an option on demand.
@@ -2107,7 +2145,7 @@ async function loadLog(append = false) {
   const L = state.log
   L.loaded = true
   const params = new URLSearchParams({ ref: $('#log-ref').value || 'all', skip: append ? L.commits.length : 0 })
-  for (const [k, id] of [['q', '#log-q'], ['author', '#log-author'], ['path', '#log-path']]) {
+  for (const [k, id] of [['q', '#log-q'], ['author', '#log-author'], ['path', '#log-path'], ['since', '#log-since'], ['until', '#log-until'], ['merges', '#log-merges']]) {
     const v = $(id).value.trim()
     if (v) params.set(k, v)
   }
@@ -2249,8 +2287,11 @@ function detailHTML(hash) {
     <div class="c-line mono"><span class="c-hash">${esc(d.hash)}</span><button class="btn quiet sm c-copy" data-copy="${esc(d.hash)}" title="Copy the full commit id">Copy</button></div>
     ${parents ? `<div class="c-line">${d.parents.length > 1 ? 'Parents' : 'Parent'} ${parents}</div>` : '<div class="c-line faint">Root commit</div>'}
     <div class="c-line c-acts">
-      <button class="btn sm" data-act="reset" ${d.hash === state.status?.head ? 'disabled' : ''} title="${d.hash === state.status?.head ? 'The branch is already at this commit; pick an older one to reset to' : 'Move the current branch back to this commit; the undone changes stay staged'}">Reset branch here</button>
+      <button class="btn sm" data-act="reset" ${d.hash === state.status?.head ? 'disabled' : ''} title="${d.hash === state.status?.head ? 'The branch is already at this commit; pick an older one to reset to' : 'Move the current branch back to this commit (soft, mixed or hard)'}">Reset…</button>
       <button class="btn sm" data-act="revert" title="Add a new commit that undoes this one">Revert</button>
+      <button class="btn sm" data-act="pick" title="Apply this commit's changes on the current branch">Cherry-pick</button>
+      <button class="btn sm" data-act="branch" title="Start a new branch at this commit">New branch…</button>
+      <button class="btn sm quiet" data-act="irebase" title="Reorder, squash, reword or drop the commits from here to HEAD">Rebase from here…</button>
     </div>
     <div class="c-line c-refs">${containsHTML(hash)}</div>
     <div class="c-files-head">${d.files.length} file${d.files.length === 1 ? '' : 's'} changed${d.parents.length > 1 ? ' <span class="faint">vs first parent</span>' : ''}</div>
@@ -2357,6 +2398,7 @@ function renderTracking() {
   $('#pull').title = fresh ? `Push ${t?.name || s.branch || 'this branch'} and set its upstream (git push -u)` : 'git pull'
   $('#pull').classList.toggle('primary', fresh)
   document.querySelector('.push-split').hidden = fresh
+  $('#pull-more').hidden = fresh
   $('#sync-label').textContent = tracked ? 'Sync' : 'Publish'
   $('#sync').title = tracked ? `Pull${t.behind ? ` ${t.behind}` : ''}, then push${t.ahead ? ` ${t.ahead}` : ' if ahead'} (${t.upstream})` : `Push ${t?.name || 'this branch'} and set its upstream (git push -u)`
   $('#sync').classList.toggle('attn', tracked && (t.ahead > 0 || t.behind > 0))
@@ -2510,7 +2552,7 @@ $('#toast').addEventListener('click', e => {
   else { clearTimeout(toastTimer); t.hidden = true }
 })
 
-const NET = new Set(['fetch', 'pull', 'push', 'push:lease', 'push:force', 'sync', 'publish'])
+const NET = new Set(['fetch', 'pull', 'push', 'push:lease', 'push:force', 'sync', 'publish', 'branch:delete:remote', 'submodule:update'])
 
 async function gitAction(body, button) {
   const net = NET.has(body.action)
@@ -2521,9 +2563,10 @@ async function gitAction(body, button) {
     // Remote output leads with "To <url>" or progress lines; say what happened and keep Git's text in the tooltip.
     const done = { fetch: 'Fetched all remotes', pull: 'Pulled', push: 'Pushed', 'push:lease': 'Force pushed (with lease)', 'push:force': 'Force pushed', sync: 'Synced', publish: 'Published' }[body.action]
     setStatus(done ? `${done}\n${out.output || ''}` : out.output || `git ${body.action} done`, 'ok')
+    G.showOutput(body.action, out.output, true)
     if (out.pr) showToast('Branch published', out.pr)
-    if (['commit', 'commit:all', 'amend'].includes(body.action)) $('#commit-message').value = ''
-  } catch (e) { setStatus(e.message, 'err') }
+    if (['commit', 'commit:all', 'amend'].includes(body.action)) { $('#commit-message').value = ''; G.fillTemplate(); $('#commit-message').dispatchEvent(new Event('input')) }
+  } catch (e) { setStatus(e.message, 'err'); G.showOutput(body.action, e.message, false) }
   finally { if (net) { document.body.classList.remove('net-busy'); button?.classList.remove('busy') } }
   await refreshAll()
 }
@@ -2656,6 +2699,7 @@ function toggleThemes(open = $('#theme-pop').hidden) {
 
 function setInspector(tab) {
   $('#insp').dataset.insp = tab
+  T.toolsShown()
   document.querySelectorAll('.insp-switch button').forEach(b => b.classList.toggle('on', b.dataset.insp === tab))
   markRail()
 }
@@ -2734,6 +2778,7 @@ $('#queue').addEventListener('click', e => {
     state.qsel.clear()
     if (bar === 'stage') stage(paths)
     else if (bar === 'unstage') unstage(paths)
+    else if (bar === 'stash') G.stashFiles(paths)
     else renderQueue()
     return
   }
@@ -2754,6 +2799,7 @@ $('#queue').addEventListener('click', e => {
   const batch = () => state.qsel.size > 1 && state.qsel.has(qkey(sec, path)) ? pickedIn(sec) : [path]
   if (act === 'stage') stage(batch())
   else if (act === 'unstage') unstage(batch())
+  else if (act === 'ours' || act === 'theirs') gitAction({ action: 'resolve:' + act, paths: batch() })
   else if (act === 'discard') discard([path], true)
   else if (act === 'open') openFile(path)
   else if (!pick(e, sec, path)) goTo(path, sec)
@@ -2761,6 +2807,23 @@ $('#queue').addEventListener('click', e => {
 $('#queue').addEventListener('dblclick', e => {
   const row = e.target.closest('.qrow')
   if (row && !e.target.closest('[data-act]') && state.tree.some(f => f.path === row.dataset.path)) openFile(row.dataset.path)
+})
+$('#queue').addEventListener('contextmenu', e => {
+  const row = e.target.closest('.qrow')
+  if (!row) return
+  e.preventDefault()
+  const { path, sec } = row.dataset, c = state.changes.get(path)
+  const paths = state.qsel.size > 1 && state.qsel.has(qkey(sec, path)) ? pickedIn(sec) : [path]
+  popMenu([
+    sec === 'staged' ? { label: 'Unstage', run: () => unstage(paths) } : { label: sec === 'merge' ? 'Mark resolved (stage)' : 'Stage', run: () => stage(paths) },
+    ...(c?.code === '??' ? [{ label: 'Add intent to add (git add -N)', run: () => G.intentToAdd(paths) }] : []),
+    ...(sec === 'work' ? [{ label: c?.code === '??' ? 'Delete untracked file…' : 'Discard changes…', danger: true, run: () => discard(paths, true) }] : []),
+    { sep: true },
+    { label: 'Open file', run: () => openFile(path) },
+    { label: 'Stash these files…', run: () => G.stashFiles(paths) },
+    { label: 'Add to .gitignore', run: () => G.ignorePaths(paths) },
+    { label: 'Copy path', run: () => copyText(path) },
+  ], e.clientX, e.clientY, basename(path))
 })
 $('#search-input').oninput = () => scheduleSearch()
 $('#search-input').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); scheduleSearch(0) } })
@@ -2932,11 +2995,56 @@ async function revertCommit(hash) {
   await gitAction(body)
 }
 
+const commitAct = (act, hash) => ({
+  reset: () => G.resetChoice(hash, resetHere), revert: () => revertCommit(hash), pick: () => G.cherryPick(hash),
+  branch: () => G.newBranchAt(hash), irebase: () => ctx.rebaseUI?.(hash + '^'),
+}[act]?.())
+
+// Right-click a file in a commit: view it as it was, or put that version back in the working tree.
+function commitFileContext(e, hash) {
+  const row = e.target.closest('.tnode[data-cfile]')
+  if (!row || !hash) return false
+  e.preventDefault()
+  const path = row.dataset.cfile
+  popMenu([
+    { label: 'Show this file in the diff', run: () => goCommitFile(hash, path) },
+    { label: 'View the file at this commit', run: () => viewAtCommit(hash, path) },
+    { label: 'Restore it to the working tree…', danger: true, run: () => restoreFromCommit(hash, path) },
+    { label: 'Show history of this file', run: () => openFileHistory(path) },
+  ], e.clientX, e.clientY, basename(path))
+  return true
+}
+
+async function viewAtCommit(hash, path) {
+  try {
+    const d = await api(`/api/file?path=${encodeURIComponent(path)}&rev=${encodeURIComponent(hash)}`)
+    if (!d.exists) return setStatus(`${path} does not exist at ${hash.slice(0, 7)}`, 'err')
+    const m = await import('./ui.js')
+    m.openModal({ title: `${basename(path)} @ ${hash.slice(0, 7)}`, wide: true, body: `<pre class="diff-text">${d.binary ? 'Binary file' : esc(d.content)}</pre>`, actions: [{ label: 'Close' }] })
+  } catch (e) { setStatus(e.message, 'err') }
+}
+
+async function restoreFromCommit(hash, path) {
+  const ok = await ask({ title: `Restore ${basename(path)}`, kicker: 'overwrites', tone: 'warn', ok: 'Restore', html: `<p>The working-tree copy of <b>${esc(path)}</b> becomes the version from <span class="mono">${esc(hash.slice(0, 7))}</span>. What is there now is snapshotted first, so Restore in the Changes list can bring it back.</p>` })
+  if (ok) gitAction({ action: 'restore:file', from: hash, paths: [path] })
+}
+
+function commitContext(e, hash, subject) {
+  e.preventDefault()
+  G.commitMenu(hash, subject, e.clientX, e.clientY, {
+    diff: () => showCommitDiff(hash, hash.slice(0, 7)), revert: () => revertCommit(hash), soft: resetHere,
+    irebase: () => ctx.rebaseUI?.(hash + '^'), compare: () => ctx.compareUI?.('HEAD', hash),
+  })
+}
+$('#log-detail').addEventListener('contextmenu', e => commitFileContext(e, state.log.sel))
+$('#log-rows').addEventListener('contextmenu', e => { const r = e.target.closest('.lrow'); if (r) commitContext(e, r.dataset.hash, r.querySelector('.ltext')?.textContent || '') })
+$('#history').addEventListener('contextmenu', e => { if (commitFileContext(e, e.target.closest('.c-detail')?.previousElementSibling?.dataset.hash)) return; const r = e.target.closest('.commit-row'); if (r) commitContext(e, r.dataset.hash, r.title.split('\n')[0]) })
+
 function detailClick(e, hash, inLog) {
   const t = e.target, hit = sel => t.closest(sel)
   if (hit('[data-act]')) {
     const b = hit('[data-act]')
-    if (!b.disabled) (b.dataset.act === 'reset' ? resetHere : revertCommit)(hash)
+    if (!b.disabled) commitAct(b.dataset.act, hash)
   } else if (hit('[data-copy]')) {
     const b = hit('[data-copy]')
     copyText(b.dataset.copy).then(() => {
@@ -2980,7 +3088,7 @@ $('#log-rows').addEventListener('scroll', () => {
   if (L.more && !L.loading && v.scrollTop + v.clientHeight > v.scrollHeight - 600) loadLog(true)
 })
 let logTimer
-for (const id of ['#log-q', '#log-author', '#log-path']) $(id).addEventListener('input', () => { clearTimeout(logTimer); logTimer = setTimeout(() => loadLog(), 250) })
+for (const id of ['#log-q', '#log-author', '#log-path', '#log-since', '#log-until', '#log-merges']) $(id).addEventListener('input', () => { clearTimeout(logTimer); logTimer = setTimeout(() => loadLog(), 250) })
 $('#log-ref').onchange = () => { loadLog(); renderBranches() }
 $('#branches').addEventListener('click', e => {
   const dir = e.target.closest('[data-bdir]')
@@ -3053,9 +3161,11 @@ document.addEventListener('click', e => {
   })
 // Only these two stash verbs are reachable from a row, whatever data-act the markup carries.
 // A Map, not an object, so a key like "constructor" cannot reach the prototype.
-const STASH_ACT = new Map([['apply', 'stash:apply'], ['drop', 'stash:drop']])
+const STASH_ACT = new Map([['apply', 'stash:apply'], ['pop', 'stash:pop'], ['drop', 'stash:drop']])
 $('#stashes').addEventListener('click', e => {
   const b = e.target.closest('button[data-ref]')
+  if (b?.dataset.act === 'show') return G.stashShow(b.dataset.ref)
+  if (b?.dataset.act === 'stbranch') return G.stashBranch(b.dataset.ref)
   const action = b && STASH_ACT.get(b.dataset.act)
   if (action) gitAction({ action, stashRef: b.dataset.ref })
 })
@@ -3071,6 +3181,7 @@ $('#editor').addEventListener('input', () => {
   paintGutter()
   paintSyntax()
   paintFind()
+  Ops.renderConflictBar()
   clearTimeout(marksTimer)
   marksTimer = setTimeout(() => { if (t === activeTab()) { computeMarks(t); paintGutter() } }, 120)
 })
@@ -3237,6 +3348,8 @@ $('#commit-menu').addEventListener('click', e => {
   if (act === 'staged') doCommit(false)
   else if (act === 'all') doCommit(true)
   else if (act === 'amend') amend()
+  else if (act === 'amend-keep') gitAction({ action: 'amend:noedit', ...G.commitOpts() })
+  else if (act === 'undo') undoLastCommit()
 })
 document.addEventListener('click', e => { if (!e.target.closest('#commit-menu, #commit-more')) toggleCommitMenu(false) })
 $('#commit-all').onchange = async () => {
@@ -3271,8 +3384,7 @@ function togglePushMenu(open) {
   const m = $('#push-menu')
   m.hidden = !open
   if (!open) return
-  m.innerHTML = '<button class="menu-item" data-p="lease" role="menuitem" title="git push --force-with-lease">Force push with lease</button>'
-    + '<button class="menu-item danger" data-p="force" role="menuitem" title="git push --force">Force push (no lease)</button>'
+  m.innerHTML = G.pushMenuHTML()
   const r = $('#push-more').getBoundingClientRect()
   m.style.left = Math.max(8, r.right - m.offsetWidth) + 'px'
   m.style.top = r.bottom + 4 + 'px'
@@ -3282,7 +3394,9 @@ $('#push-more').onclick = e => { e.stopPropagation(); togglePushMenu($('#push-me
 $('#push-menu').addEventListener('click', e => {
   const p = e.target.closest('[data-p]')?.dataset.p
   togglePushMenu(false)
-  if (p) forcePush(p === 'lease')
+  if (p === 'tags') gitAction({ action: 'push', tags: true }, $('#push'))
+  else if (p?.startsWith('up:')) gitAction({ action: 'push', setUpstream: true, remote: p.slice(3) }, $('#push'))
+  else if (p) forcePush(p === 'lease')
 })
 document.addEventListener('click', e => { if (!e.target.closest('#push-menu, #push-more')) togglePushMenu(false) })
 setInterval(renderTracking, 30000)
@@ -3584,8 +3698,11 @@ async function boot() {
   persistSession()
 }
 syncScopeInputs()
-Object.assign(ctx, { state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
+Object.assign(ctx, { rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
 R.initReview()
+Ops.initOps()
+T.initTools()
+G.init()
 boot()
 // Geist Mono can arrive after the first paint; the editor's measured character width and wrap
 // heights belong to whichever font was showing, so they are measured again once it is in.
