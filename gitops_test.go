@@ -471,3 +471,29 @@ func TestPatchPathsReadsQuotedNames(t *testing.T) {
 		t.Errorf("space name = %q", got)
 	}
 }
+
+func TestRemotesAndResolve(t *testing.T) {
+	a := cleanRepo(t)
+	act(t, a, map[string]any{"action": "remote:add", "from": "origin", "url": "git@github.com:me/echo.git"})
+	var rs []Remote
+	_ = json.Unmarshal(request(a, "GET", "/api/remotes", "").Body.Bytes(), &rs)
+	if len(rs) != 1 || rs[0].Web != "https://github.com/me/echo" || rs[0].Fetch != "git@github.com:me/echo.git" {
+		t.Errorf("remotes = %+v", rs)
+	}
+	// A conflicted file can take either side whole.
+	commitFile(t, a, "c.txt", "base\n", "c")
+	gitIn(t, a, "switch", "-q", "-c", "side")
+	commitFile(t, a, "c.txt", "side\n", "side")
+	gitIn(t, a, "switch", "-q", "main")
+	commitFile(t, a, "c.txt", "main\n", "main")
+	actFails(t, a, map[string]any{"action": "merge", "from": "side"})
+	act(t, a, map[string]any{"action": "resolve:theirs", "paths": []string{"c.txt"}})
+	if readFile(t, a, "c.txt") != "side\n" {
+		t.Errorf("c.txt = %q", readFile(t, a, "c.txt"))
+	}
+	for _, c := range a.gitStatus().Changes {
+		if c.Path == "c.txt" && c.Conflict {
+			t.Error("c.txt should be resolved")
+		}
+	}
+}

@@ -222,6 +222,16 @@ func (a *App) extraGit(req gitRequest) (out string, err error, ok bool) {
 		} else {
 			out, err = a.gitCombined("worktree", "remove", req.From)
 		}
+	case "resolve:ours", "resolve:theirs":
+		// Take one side of a conflicted file wholesale, then mark it resolved.
+		if len(req.Paths) == 0 {
+			err = errors.New("paths required")
+			break
+		}
+		side := "--" + strings.TrimPrefix(req.Action, "resolve:")
+		if out, err = a.gitCombinedPaths(req.Paths, "checkout", side, "--"); err == nil {
+			out, err = a.gitCombinedPaths(req.Paths, "add", "--")
+		}
 	case "restore:file":
 		out, err = a.restoreFromCommit(req.From, req.Paths)
 	default:

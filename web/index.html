@@ -142,6 +142,16 @@
         <button id="save" class="btn primary" hidden disabled>Save <kbd>⌘S</kbd></button>
       </div>
     </div>
+    <div id="diff-filterbar" class="filterbar">
+      <input id="diff-filter" class="field" placeholder="Filter files or text (.go for an extension)" autocomplete="off" spellcheck="false" aria-label="Filter the review">
+      <select id="diff-status" class="field" title="Show only…" aria-label="Show only">
+        <option value="all">All files</option><option value="new">New</option><option value="modified">Modified</option><option value="deleted">Deleted</option><option value="renamed">Renamed</option>
+        <option value="undecided">Not yet decided</option><option value="rejected">Rejected</option><option value="noted">With open notes</option>
+      </select>
+      <button id="diff-collapse" class="btn quiet sm" title="Collapse or expand every file">Collapse all</button>
+      <span class="grow"></span>
+      <span class="faint fb-keys"><kbd>a</kbd> accept <kbd>x</kbd> reject <kbd>c</kbd> note <kbd>[</kbd><kbd>]</kbd> next undecided</span>
+    </div>
     <div id="file-crumb" class="crumb" hidden><span id="file-path" class="file-path"></span></div>
     <div id="banner" class="banner" hidden></div>
     <div class="stage">
@@ -338,6 +348,8 @@
         <h4>Review</h4>
         <div class="set-row"><span class="set-text"><b>Diff layout</b><small>Stacked shows old and new lines in one column; split puts them side by side.</small></span>
           <span class="seg" role="group" aria-label="Diff layout"><button data-set="diffMode" data-val="unified">Stacked</button><button data-set="diffMode" data-val="split">Split</button></span></div>
+        <label class="set-row"><span class="set-text"><b>Detect renames</b><small>Show a moved file as a rename instead of a deletion and a new file (staged renames).</small></span><span class="toggle"><input id="set-renames" type="checkbox" data-cfg="renames"><span class="sw"></span></span></label>
+        <label class="set-row"><span class="set-text"><b>Mark changed words</b><small>Highlight the words that differ inside a changed line.</small></span><span class="toggle"><input id="set-worddiff" type="checkbox" data-cfg="wordDiff"><span class="sw"></span></span></label>
         <label class="set-row"><span class="set-text"><b>Wrap long lines</b><small>In the editor and the diff, instead of scrolling sideways. For this session.</small></span><span class="toggle"><input id="word-wrap" type="checkbox"><span class="sw"></span></span></label>
       </section>
       <section class="set-sec" data-pane="editor" hidden>

@@ -96,6 +96,24 @@ type Config struct {
 	// ShowRail keeps the Git rail (Commit, History, Branches) visible beside the review. Off by
 	// default: the title bar's Git button and ⌘J open the panel, and the button carries the badge.
 	ShowRail bool `json:"showRail"`
+	// Review: rename detection in diffs, and marking the changed words inside a changed line.
+	Renames  bool `json:"renames"`
+	WordDiff bool `json:"wordDiff"`
+	// Editor. TabSize 0 and Indent "auto" follow what the file itself uses.
+	TabSize        int    `json:"tabSize"`
+	Indent         string `json:"indent"`   // auto, tabs, spaces
+	FontSize       int    `json:"fontSize"` // px
+	Ruler          int    `json:"ruler"`    // column of the vertical ruler, 0 for none
+	Whitespace     bool   `json:"whitespace"`
+	Autosave       string `json:"autosave"` // off, delay, blur
+	TrimTrailing   bool   `json:"trimTrailing"`
+	FinalNewline   bool   `json:"finalNewline"`
+	Minimap        bool   `json:"minimap"`
+	IndentGuides   bool   `json:"indentGuides"`
+	Sticky         bool   `json:"sticky"`
+	AutoClose      bool   `json:"autoClose"`
+	Occurrences    bool   `json:"occurrences"`
+	ExternalEditor string `json:"externalEditor"` // "" for the system default, or code, cursor, zed, subl
 }
 
 type App struct {
@@ -606,7 +624,8 @@ func (a *App) shutdown(why string) {
 }
 
 func loadConfig() Config {
-	cfg := Config{DiffMode: "unified", GutterBase: "head", Blame: "line", Panels: []string{"tree", "editor", "git"}, PanelSizes: map[string]int{}}
+	cfg := Config{DiffMode: "unified", GutterBase: "head", Blame: "line", Panels: []string{"tree", "editor", "git"}, PanelSizes: map[string]int{},
+		Renames: true, WordDiff: true, Indent: "auto", FontSize: 12, IndentGuides: true, Sticky: true, AutoClose: true, Occurrences: true}
 	data, err := os.ReadFile(configPath())
 	if err == nil {
 		_ = json.Unmarshal(data, &cfg)
@@ -750,5 +769,21 @@ func (a *App) authorized(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-// validateEditorConfig checks the editor's numeric and enumerated settings (added in v2).
-func validateEditorConfig(c Config) error { return nil }
+// validateEditorConfig checks the editor's numeric and enumerated settings.
+func validateEditorConfig(c Config) error {
+	if !slices.Contains([]string{"", "auto", "tabs", "spaces"}, c.Indent) {
+		return errors.New("invalid indent")
+	}
+	if !slices.Contains([]string{"", "off", "delay", "blur"}, c.Autosave) {
+		return errors.New("invalid autosave")
+	}
+	if c.ExternalEditor != "" {
+		if _, ok := editorCommands[c.ExternalEditor]; !ok {
+			return errors.New("invalid external editor")
+		}
+	}
+	if c.TabSize < 0 || c.TabSize > 16 || c.FontSize < 0 || c.FontSize > 32 || c.Ruler < 0 || c.Ruler > 300 {
+		return errors.New("a number is out of range")
+	}
+	return nil
+}

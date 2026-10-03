@@ -27,6 +27,7 @@ func (a *App) addEndpoints(mux *http.ServeMux) {
 	mux.HandleFunc("/api/review", a.handleReview)
 	mux.HandleFunc("/api/open", a.handleOpen)
 	mux.HandleFunc("/api/drafts", a.handleDrafts)
+	mux.HandleFunc("/api/remotes", a.handleRemotes)
 }
 
 func badRequest(w http.ResponseWriter, err error) { http.Error(w, err.Error(), http.StatusBadRequest) }
@@ -351,3 +352,55 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 }
 
 var dateArg = regexp.MustCompile(`^[0-9A-Za-z .:/+-]{1,40}$`)
+
+// Remote is a configured remote with the URLs fetch and push use.
+type Remote struct {
+	Name  string `json:"name"`
+	Fetch string `json:"fetch"`
+	Push  string `json:"push"`
+	// Web is the repository's page on GitHub, GitLab or Bitbucket when the URL is one of theirs.
+	Web string `json:"web,omitempty"`
+}
+
+var webURLRe = regexp.MustCompile(`^(?:https?://|git@|ssh://git@)(github\.com|gitlab\.com|bitbucket\.org)[/:](.+?)(?:\.git)?/?$`)
+
+func webURL(remote string) string {
+	m := webURLRe.FindStringSubmatch(strings.TrimSpace(remote))
+	if m == nil {
+		return ""
+	}
+	return "https://" + m[1] + "/" + m[2]
+}
+
+func parseRemotes(s string) []Remote {
+	by := map[string]*Remote{}
+	var order []string
+	for _, l := range parseLines(s) {
+		f := strings.Fields(l)
+		if len(f) < 3 {
+			continue
+		}
+		r := by[f[0]]
+		if r == nil {
+			r = &Remote{Name: f[0]}
+			by[f[0]] = r
+			order = append(order, f[0])
+		}
+		if f[2] == "(push)" {
+			r.Push = f[1]
+		} else {
+			r.Fetch = f[1]
+		}
+	}
+	out := []Remote{}
+	for _, n := range order {
+		by[n].Web = webURL(by[n].Fetch)
+		out = append(out, *by[n])
+	}
+	return out
+}
+
+func (a *App) handleRemotes(w http.ResponseWriter, r *http.Request) {
+	out, _ := a.git("remote", "-v")
+	writeJSON(w, parseRemotes(out))
+}

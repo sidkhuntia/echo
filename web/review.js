@@ -302,3 +302,9 @@ async function jumpToNote(n) {
   const el = ctx.$(`#diff [data-note="${CSS.escape(n.id)}"]`)
   if (el) el.scrollIntoView({ block: 'center' })
 }
+
+// What the Review's filter asks of a file.
+const hunkKeys = f => f.hunks.map(h => hunkKey(f.path, h))
+export const hasUndecided = f => hunkKeys(f).some(k => !review.marks[k])
+export const hasRejected = f => hunkKeys(f).some(k => review.marks[k]?.s === 'rejected')
+export const hasNotes = f => review.notes.some(n => n.path === f.path && !n.done)

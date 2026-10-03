@@ -558,13 +558,16 @@ async function loadDiff() {
     params.set('ref', ref)
   }
   if (state.status && !state.status.git) return diffMessage('No repository here', 'Open files from the sidebar to read or edit them.')
+  if (state.config.renames !== false) params.set('renames', '1')
+  state.diffParams = params
   const seq = ++state.diffSeq
   try {
     const data = await api('/api/diff?' + params)
     if (seq !== state.diffSeq) return
-    state.diffFiles = parseDiff(data.text)
+    state.diffAll = parseDiff(data.text)
     // Git lists untracked files last; the sidebar runs in path order, so the review does too.
-    if (LIVE.includes(sc)) state.diffFiles.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+    if (LIVE.includes(sc)) state.diffAll.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+    state.diffFiles = filterFiles(state.diffAll)
     renderDiff()
   } catch (e) {
     if (seq === state.diffSeq) diffMessage('Can’t diff that', e.message)
@@ -586,6 +589,7 @@ function cleanHTML() {
 
 function diffMessage(title, body, extra = '') {
   state.diffFiles = []
+  state.diffAll = []
   state.current = -1
   state.hunk = -1
   $('#diff-summary').textContent = ''
@@ -599,10 +603,59 @@ function isFolded(f) {
   return GENERATED.test(f.path) || f.lines > 1500
 }
 
+// ---------- filtering the review ----------
+// Narrows the changed files by name or content and by what has been decided; the full list stays in
+// state.diffAll so clearing the filter brings every file back.
+function filterFiles(all) {
+  const q = ($('#diff-filter')?.value || '').trim().toLowerCase(), st = $('#diff-status')?.value || 'all'
+  const ext = q.startsWith('.') && !q.slice(1).includes('.') ? q : ''
+  return all.filter(f => {
+    if (q && !(ext ? f.path.toLowerCase().endsWith(ext) : f.path.toLowerCase().includes(q) || (q.length > 1 && f.hunks.some(h => h.lines.some(l => l.text.toLowerCase().includes(q)))))) return false
+    if (st === 'new') return f.isNew
+    if (st === 'deleted') return f.isDeleted
+    if (st === 'renamed') return !!f.renamedFrom
+    if (st === 'modified') return !f.isNew && !f.isDeleted && !f.renamedFrom
+    if (st === 'undecided') return R.hasUndecided(f)
+    if (st === 'rejected') return R.hasRejected(f)
+    if (st === 'noted') return R.hasNotes(f)
+    return true
+  })
+}
+
+function refilter() {
+  if (!state.diffAll) return
+  state.diffFiles = filterFiles(state.diffAll)
+  renderDiff()
+}
+
+// The next step of "show more context" for a file: 3 lines, then 12, then the whole file, then back.
+async function expandFile(i) {
+  const f = state.diffFiles[i]
+  if (!f || !state.diffParams) return
+  const next = !f.ctx || f.ctx === 3 ? 12 : f.ctx === 12 ? 100000 : 3
+  const p = new URLSearchParams(state.diffParams)
+  p.set('path', f.path); p.set('context', String(next))
+  try {
+    const nf = parseDiff((await api('/api/diff?' + p)).text)[0]
+    if (!nf) return
+    nf.ctx = next
+    state.diffFiles[i] = nf
+    const j = state.diffAll.findIndex(x => x.path === f.path)
+    if (j >= 0) state.diffAll[j] = nf
+    rerenderFile(i)
+    setStatus(next === 100000 ? `${f.path}: whole file` : `${f.path}: ${next} lines of context`)
+  } catch (e) { setStatus(e.message, 'err') }
+}
+
 function renderDiff() {
   const files = state.diffFiles
   const added = files.reduce((s, f) => s + f.added, 0), deleted = files.reduce((s, f) => s + f.deleted, 0)
-  $('#diff-summary').innerHTML = files.length ? `${files.length} file${files.length === 1 ? '' : 's'}  <span class="add">+${added}</span> <span class="del">−${deleted}</span>` : ''
+  const total = state.diffAll?.length ?? files.length
+  $('#diff-summary').innerHTML = files.length ? `${files.length}${total !== files.length ? ` of ${total}` : ''} file${total === 1 ? '' : 's'}  <span class="add">+${added}</span> <span class="del">−${deleted}</span>` : ''
+  if (!files.length && total) {
+    state.cleanShown = false
+    return diffMessage('No file matches the filter', 'Clear the filter above to see all changed files again.')
+  }
   if (!files.length) {
     const why = { head: ['Nothing to review', 'The working tree matches HEAD. When an agent writes something, it shows up here.'], worktree: ['No unstaged changes', 'Everything is staged or clean.'], staged: ['Nothing staged', 'Stage files from the sidebar to build a commit.'] }[scope()] || ['No differences', 'These refs point at the same content.']
     state.cleanShown = scope() === 'head'
@@ -687,6 +740,19 @@ function blocksHTML(f) {
   return `<span class="blocks">${[0, 1, 2, 3, 4].map(k => `<i class="${k < a ? 'a' : 'd'}"></i>`).join('')}</span>`
 }
 
+// Images show before and after side by side; the "before" side is wherever the old version lives for
+// the view being shown.
+const IMAGE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i
+function imageDiffHTML(f) {
+  if (!IMAGE.test(f.path)) return ''
+  const sc = scope(), url = rev => `/api/raw?path=${encodeURIComponent(f.path)}${rev ? '&rev=' + encodeURIComponent(rev) : ''}`
+  const commit = $('#diff-commit').value.trim(), from = $('#diff-from').value.trim(), to = $('#diff-to').value.trim()
+  const sides = { head: ['head', ''], worktree: ['index', ''], staged: ['head', 'index'], commit: [commit + '^', commit], range: [from, to] }[sc]
+  if (!sides) return ''
+  const fig = (label, src) => `<figure><figcaption>${label}</figcaption><img src="${esc(src)}" alt="${esc(label)} version of ${esc(f.path)}" loading="lazy"></figure>`
+  return `<div class="dimg">${f.isNew ? '' : fig('before', url(sides[0]))}${f.isDeleted ? '' : fig('after', url(sides[1]))}</div>`
+}
+
 function fileHTML(f, i) {
   const sc = scope()
   const c = LIVE.includes(sc) ? state.changes.get(f.path) : null
@@ -698,6 +764,7 @@ function fileHTML(f, i) {
   // Discard sits alone at the far left, away from Stage, and is an icon that only turns red on hover.
   const acts = [
     c ? `<button class="btn quiet icon xs danger" data-act="discard" aria-label="Discard" title="${sc === 'worktree' ? 'Discard unstaged changes' : 'Discard every change since HEAD, staged or not'}">${ICON.discard}</button><span class="vr"></span>` : '',
+    f.hunks.length ? `<button class="btn quiet sm" data-act="context" title="Show more lines around the changes: 3, 12, the whole file">${f.ctx === 100000 ? 'Whole file' : `±${f.ctx || 3}`}</button>` : '',
     !f.isDeleted ? '<button class="btn quiet sm" data-act="open" title="Open the file (o)">Open</button>' : '',
     state.status?.git ? '<button class="btn quiet sm" data-act="history" title="Commits that changed this file">History</button>' : '',
     canUnstage ? `<button class="btn quiet sm" data-act="unstage" title="Unstage (u)">${ICON.minus}Unstage</button>` : '',
@@ -706,13 +773,14 @@ function fileHTML(f, i) {
   let body = ''
   if (!folded) {
     if (f.note) body = `<div class="dnote">${esc(f.note)}</div>`
-    else if (f.binary) body = `<div class="dnote">Binary file — not shown.</div>`
-    else if (!f.hunks.length) body = `<div class="dnote">${f.isNew ? 'Empty new file.' : 'Mode or metadata change only.'}</div>`
+    else if (f.binary) body = imageDiffHTML(f) || `<div class="dnote">Binary file — not shown.</div>`
+    else if (!f.hunks.length) body = `<div class="dnote">${f.renamedFrom ? `Renamed from <b>${esc(f.renamedFrom)}</b>${f.mode ? '; ' : '.'}` : ''}${f.mode ? `Mode changed ${esc(f.mode.from)} → ${esc(f.mode.to)}.` : ''}${!f.renamedFrom && !f.mode ? (f.isNew ? 'Empty new file.' : 'Metadata change only.') : ''}</div>`
     else body = f.hunks.map((h, hi) => hunkHTML(h, hi, f.path, f.hunks.length, f)).join('')
   }
   const unsaved = state.tabs.some(t => t.path === f.path && t.content !== t.saved)
   const why = folded && !state.folded.has(f.path) ? (GENERATED.test(f.path) ? 'generated' : f.lines > 1500 ? 'large' : '') : ''
-  const stat = f.binary ? '' : `${f.added ? `<span class="add">+${f.added}</span>` : ''}${f.deleted ? `<span class="del">−${f.deleted}</span>` : ''}${blocksHTML(f)}`
+  const chips = `${f.renamedFrom ? `<span class="note" title="Renamed from ${esc(f.renamedFrom)}">· renamed from ${esc(basename(f.renamedFrom))}</span>` : ''}${f.mode ? `<span class="note" title="${esc(f.mode.from)} → ${esc(f.mode.to)}">· mode ${esc((f.mode.from || '').slice(-3))}→${esc((f.mode.to || '').slice(-3))}</span>` : ''}`
+  const stat = chips + (f.binary ? '' : `${f.added ? `<span class="add">+${f.added}</span>` : ''}${f.deleted ? `<span class="del">−${f.deleted}</span>` : ''}${blocksHTML(f)}`)
   return `<section class="dfile ${folded ? 'folded' : ''}" data-i="${i}">
     <header class="dfile-head"><span class="fold">▶</span>${badge(letter, kind)}<span class="dpath" title="${esc(f.path)}">${fullPath(f.path)}</span><span class="dstat">${stat}${why ? `<span class="note">· ${why}</span>` : ''}${unsaved ? '<span class="note unsaved" title="The diff shows the file on disk; save with ⌘S in the editor">· unsaved edits</span>' : ''}</span><span class="spacer"></span><span class="dacts">${acts}</span></header>
     <div class="dbody">${body}</div>
@@ -1693,6 +1761,7 @@ function setMode(m) {
   state.mode = m
   document.querySelectorAll('.mode-switch button').forEach(b => b.classList.toggle('on', b.dataset.mode === m))
   $('#diff-bar').hidden = m !== 'diff'
+  $('#diff-filterbar').hidden = m !== 'diff'
   $('#file-bar').hidden = m !== 'file'
   $('#log-bar').hidden = m !== 'log'
   $('#log').classList.toggle('active', m === 'log')
@@ -2638,6 +2707,12 @@ function showSettingsPane(pane) {
 function renderSettings() {
   const cur = { gitPinned: gitPinned() ? '1' : '0', swapPanels: state.config.swapPanels ? '1' : '0', showRail: state.config.showRail ? '1' : '0', diffMode: state.config.diffMode }
   document.querySelectorAll('#settings [data-set]').forEach(b => b.classList.toggle('on', cur[b.dataset.set] === b.dataset.val))
+  // Plain settings: an element with data-cfg shows and edits the config key it names.
+  document.querySelectorAll('#settings [data-cfg]').forEach(el => {
+    const v = state.config[el.dataset.cfg]
+    if (el.type === 'checkbox') el.checked = !!v
+    else el.value = v ?? ''
+  })
   const id = themeId()
   const card = (tid, name, sw) => `<button class="set-theme ${id === tid ? 'on' : ''}" data-theme-id="${tid}" title="${esc(name)}">${swatchHTML(sw)}<span>${esc(name)}</span></button>`
   const group = kind => `<h5>${kind === 'light' ? 'Light' : 'Dark'}</h5><div class="set-grid">${THEMES.filter(t => t[2] === kind).map(t => card(t[0], t[1], t[0])).join('')}</div>`
@@ -2768,6 +2843,7 @@ $('#diff').addEventListener('click', e => {
   else if (act === 'unstage') unstage([f.path])
   else if (act === 'discard') discard([f.path], scope() === 'worktree')
   else if (act === 'history') openFileHistory(f.path)
+  else if (act === 'context') expandFile(i)
   else if (e.target.closest('.dfile-head')) toggleFold(i)
 })
 $('#diff').addEventListener('click', e => { if (e.target.closest('[data-empty="sync"]')) $('#sync').click() })
@@ -3062,6 +3138,18 @@ $('#settings').addEventListener('click', e => {
   saveSetting({ [k]: v === '1' })
   applyLayout()
 })
+$('#settings').addEventListener('change', async e => {
+  const el = e.target.closest('[data-cfg]')
+  if (!el) return
+  const key = el.dataset.cfg
+  let v = el.type === 'checkbox' ? el.checked : el.dataset.type === 'int' ? Math.round(Number(el.value) || 0) : el.value
+  await saveSetting({ [key]: v })
+  ctx.onConfig?.(key)
+  if (key === 'renames' || key === 'wordDiff') {
+    for (const f of state.diffAll || []) for (const h of f.hunks) h.colored = false
+    loadDiff()
+  }
+})
 $('#git-rail').onclick = e => {
   const tab = e.target.closest('[data-open]')?.dataset.open
   if (tab === 'branches') { e.stopPropagation(); toggleBranchPop() }
@@ -3204,6 +3292,15 @@ $('#stash-create').onclick = () => gitAction({ action: 'stash:create', message: 
 $('#file-filter').oninput = () => { renderQueue(); renderTree(); renderBranches() }
 $('#diff-scope').onchange = () => { syncScopeInputs(); $('#diff').scrollTop = 0; loadDiff() }
 $('#ignore-ws').onchange = loadDiff
+let filterTimer
+$('#diff-filter').addEventListener('input', () => { clearTimeout(filterTimer); filterTimer = setTimeout(refilter, 150) })
+$('#diff-status').onchange = refilter
+$('#diff-collapse').onclick = () => {
+  const collapse = state.diffFiles.some(f => !isFolded(f))
+  for (const f of state.diffFiles) state.folded.set(f.path, collapse)
+  $('#diff-collapse').textContent = collapse ? 'Expand all' : 'Collapse all'
+  renderDiff()
+}
 document.querySelectorAll('.layout-switch button').forEach(b => b.onclick = () => setDiffMode(b.dataset.layout))
 for (const id of ['#diff-from', '#diff-to', '#diff-commit']) $(id).addEventListener('keydown', e => { if (e.key === 'Enter') loadDiff() })
 $('#help-open').onclick = () => { $('#help').hidden = false }

@@ -300,9 +300,26 @@ func TestSigCacheIsPruned(t *testing.T) {
 func TestConfigRejectsJunk(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	a := newApp(t.TempDir(), 6030)
-	for _, body := range []string{`{"theme":"../../x"}`, `{"diffMode":"sideways"}`, `{"panelSizes":{"tree":99999}}`, `{"gutterBase":"x"}`} {
+	for _, body := range []string{`{"theme":"../../x"}`, `{"diffMode":"sideways"}`, `{"panelSizes":{"tree":99999}}`, `{"gutterBase":"x"}`, `{"indent":"x"}`, `{"autosave":"always"}`, `{"externalEditor":"rm -rf"}`, `{"fontSize":500}`} {
 		if w := request(a, "POST", "/api/config", body); w.Code != 400 {
 			t.Errorf("%s: %d, want 400", body, w.Code)
 		}
+	}
+}
+
+func TestConfigDefaultsAndEditorSettings(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	a := newApp(t.TempDir(), 6030)
+	var cfg Config
+	_ = json.Unmarshal(request(a, "GET", "/api/config", "").Body.Bytes(), &cfg)
+	if !cfg.Renames || !cfg.WordDiff || cfg.FontSize != 12 || cfg.Indent != "auto" || !cfg.AutoClose {
+		t.Errorf("defaults = %+v", cfg)
+	}
+	if w := request(a, "POST", "/api/config", `{"renames":false,"tabSize":2,"indent":"spaces","autosave":"delay","externalEditor":"code","ruler":80}`); w.Code != 200 {
+		t.Fatalf("editor settings: %d %s", w.Code, w.Body)
+	}
+	got := loadConfig()
+	if got.Renames || got.TabSize != 2 || got.Indent != "spaces" || got.Autosave != "delay" || got.ExternalEditor != "code" || got.Ruler != 80 || !got.WordDiff {
+		t.Errorf("saved = %+v", got)
 	}
 }
