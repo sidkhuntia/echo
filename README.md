@@ -50,8 +50,8 @@ It opens your browser at `http://127.0.0.1:6030`. Each process serves one reposi
 ## The review loop
 
 1. An agent changes files. echo shows them as they change: the **Review** is one scrolling diff with a trace of every file and hunk in the title bar.
-2. Go hunk by hunk (`j`/`k`). **Accept** (`a`) or **Reject** (`x`) each one, leave a **note** (`c`, or click the sign column of a line), **stage a hunk or just some of its lines** (click line numbers to pick lines), or **discard** a hunk. Changed words are marked inside changed lines. `[` and `]` jump to the next hunk you have not decided.
-3. **Notes → Copy for agent** puts every open note on the clipboard with its file, line and the code you were looking at, wrapped in instructions that tell the agent to change only what each note asks, answer questions instead of guessing, and leave staging and commits to you. **Copy notes** gives just the list. Rejected and accepted hunks are listed too.
+2. Go hunk by hunk (`j`/`k`). leave a **note** (`c`, or click the sign column of a line), **stage a hunk or just some of its lines** (click line numbers to pick lines, `c` then notes exactly those), or **discard** a hunk. Changed words are marked inside changed lines. Notes can also go on a whole file (a to-do, from its header), or on lines you select in the editor (**Note**, `⌘⌥M`); a dot in the editor gutter shows where they are. Notes describe your working tree, so they are written on All changes or Unstaged, not on a commit.
+3. **Notes → Copy for agent** puts every open note on the clipboard with its file, line and the code you were looking at, wrapped in instructions that tell the agent to change only what each note asks, answer questions instead of guessing, and leave staging and commits to you. **Copy notes** gives just the list.
 4. Commit what you accept. Anything you discard is snapshotted first, and **Restore** in the Changes list brings it back.
 
 ![Log: the commit graph with branch and tag labels](docs/img/log.png)
@@ -73,8 +73,8 @@ Syntax highlighting, change bars against HEAD or the index, inline blame, find a
 | `⌘K` / `⌘P` | Go to file (recent first) |
 | `⌘⇧P` | Command palette |
 | `j` `k` / `n` `p` | Next hunk / file in the review |
-| `a` `x` `c` | Accept / reject / comment on the hunk |
-| `[` `]` | Previous / next undecided hunk |
+| `c` | Note on the hunk (or the lines you picked) |
+| `⌘⌥M` | Note on the selected lines in the editor |
 | `s` `u` | Stage (and move on) / unstage the file |
 | `e` `o` | Edit at the hunk / open the file |
 | `⌘F` `⌘⌥F` `⌘⇧F` | Find · find and replace · search all files |

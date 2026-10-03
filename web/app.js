@@ -681,7 +681,7 @@ function renderNextLazy(dir) {
 }
 
 // ---------- filtering the review ----------
-// Narrows the changed files by name or content and by what has been decided; the full list stays in
+// Narrows the changed files by name or content and by notes; the full list stays in
 // state.diffAll so clearing the filter brings every file back.
 function filterFiles(all) {
   const q = ($('#diff-filter')?.value || '').trim().toLowerCase(), st = $('#diff-status')?.value || 'all'
@@ -692,8 +692,6 @@ function filterFiles(all) {
     if (st === 'deleted') return f.isDeleted
     if (st === 'renamed') return !!f.renamedFrom
     if (st === 'modified') return !f.isNew && !f.isDeleted && !f.renamedFrom
-    if (st === 'undecided') return R.hasUndecided(f)
-    if (st === 'rejected') return R.hasRejected(f)
     if (st === 'noted') return R.hasNotes(f)
     return true
   })
@@ -796,8 +794,7 @@ async function goHunk(i, hi) {
 
 function renderPos() {
   const f = state.mode === 'diff' && state.diffFiles[state.current]
-  const pr = f ? R.reviewProgress() : null
-  $('#pos').innerHTML = f ? `file <b>${state.current + 1}</b>/${state.diffFiles.length}${state.hunk >= 0 ? ` · hunk <b>${state.hunk + 1}</b>/${f.hunks.length}` : ''}${pr.total ? ` · decided <b>${pr.decided}</b>/${pr.total}` : ''}` : ''
+  $('#pos').innerHTML = f ? `file <b>${state.current + 1}</b>/${state.diffFiles.length}${state.hunk >= 0 ? ` · hunk <b>${state.hunk + 1}</b>/${f.hunks.length}` : ''}` : ''
 }
 
 function rerenderFile(i) {
@@ -847,12 +844,14 @@ function fileHTML(f, i) {
   // Discard sits alone at the far left, away from Stage, and is an icon that only turns red on hover.
   const acts = [
     c ? `<button class="btn quiet icon xs danger" data-act="discard" aria-label="Discard" title="${sc === 'worktree' ? 'Discard unstaged changes' : 'Discard every change since HEAD, staged or not'}">${ICON.discard}</button><span class="vr"></span>` : '',
+    R.notable() ? '<button class="btn quiet sm" data-act="note" title="Add a note for the agent on this whole file">Note</button>' : '',
     f.hunks.length ? `<button class="btn quiet sm" data-act="context" title="Show more lines around the changes: 3, 12, the whole file">${f.ctx === 100000 ? 'Whole file' : `±${f.ctx || 3}`}</button>` : '',
     !f.isDeleted ? '<button class="btn quiet sm" data-act="open" title="Open the file (o)">Open</button>' : '',
     state.status?.git ? '<button class="btn quiet sm" data-act="history" title="Commits that changed this file">History</button>' : '',
     canUnstage ? `<button class="btn quiet sm" data-act="unstage" title="Unstage (u)">${ICON.minus}Unstage</button>` : '',
     canStage ? `<button class="btn sm do-stage" data-act="stage" title="Stage and go to the next file (s)">${ICON.plus}Stage</button>` : '',
   ].join('')
+  const fnotes = !folded && f.path ? R.fileNotesHTML(f) : ''
   let body = ''
   const lazy = !folded && state.lazy && !f.rendered && f.hunks.length && !f.note && !f.binary
   if (lazy) body = ''
@@ -868,7 +867,7 @@ function fileHTML(f, i) {
   const stat = chips + (f.binary ? '' : `${f.added ? `<span class="add">+${f.added}</span>` : ''}${f.deleted ? `<span class="del">−${f.deleted}</span>` : ''}${blocksHTML(f)}`)
   return `<section class="dfile ${folded ? 'folded' : ''}" data-i="${i}">
     <header class="dfile-head"><span class="fold">▶</span>${badge(letter, kind)}<span class="dpath" title="${esc(f.path)}">${fullPath(f.path)}</span><span class="dstat">${stat}${why ? `<span class="note">· ${why}</span>` : ''}${unsaved ? '<span class="note unsaved" title="The diff shows the file on disk; save with ⌘S in the editor">· unsaved edits</span>' : ''}</span><span class="spacer"></span><span class="dacts">${acts}</span></header>
-    <div class="dbody"${lazy ? ` data-lazy style="min-height:${f.lines * 20 + f.hunks.length * 44}px"` : ''}>${body}</div>
+    <div class="dbody"${lazy ? ` data-lazy style="min-height:${f.lines * 20 + f.hunks.length * 44}px"` : ''}>${fnotes}${body}</div>
   </section>`
 }
 
@@ -926,7 +925,7 @@ function hunkHTML(h, hi, path, total, f) {
   const span = (a, b, word) => a === b ? `${word} ${a}` : `${word}s ${a}–${b}`
   const where = nums.length ? span(nums[0].n, nums.at(-1).n, 'line') : olds.length ? span(olds[0].o, olds.at(-1).o, 'old line') : ''
   const size = `${h.add ? `<span class="add">+${h.add}</span>` : ''}${h.del ? `<span class="del">−${h.del}</span>` : ''}`
-  return `<div class="hunk ${split ? 'split' : ''}${f ? R.hunkClass(f, h) : ''}" data-h="${hi}"><div class="hunk-head" title="${esc(`${h.range} ${h.context}`.trim())}"><span class="hpill"><b>${hi + 1}/${total}</b>${label ? `<span class="hctx">${esc(label)}</span>` : ''}</span>${f ? R.hunkActsHTML(f, h, hi) : ''}<span class="hmeta">${size}<span>${where}</span></span></div>${split ? splitRows(h, f, hi) : stackedRows(h, f, hi)}</div>`
+  return `<div class="hunk ${split ? 'split' : ''}" data-h="${hi}"><div class="hunk-head" title="${esc(`${h.range} ${h.context}`.trim())}"><span class="hpill"><b>${hi + 1}/${total}</b>${label ? `<span class="hctx">${esc(label)}</span>` : ''}</span>${f ? R.hunkActsHTML(f, h, hi) : ''}<span class="hmeta">${size}<span>${where}</span></span></div>${split ? splitRows(h, f, hi) : stackedRows(h, f, hi)}</div>`
 }
 
 function stackedRows(h, f, hi) {
@@ -1218,6 +1217,7 @@ function renderEditor() {
   paintFind()
   Ed.onRender()
   $('#open-ext').hidden = !file || !tab
+  $('#note-add').hidden = !text
   FO.paintSide()
 }
 
@@ -1767,6 +1767,7 @@ function paintGutter() {
   const [first, last] = visibleRange(tab)
   // The blame column labels the first line of each run of lines from the same commit.
   const bl = state.blameGutter && freshBlame(tab)
+  const noteLines = R.noteLinesFor(tab.path)
   let h = ''
   for (let i = first; i < last; i++) {
     const kind = mk?.kinds[i], del = mk?.dels.get(i), end = i === n - 1 ? mk?.dels.get(n) : undefined
@@ -1776,7 +1777,8 @@ function paintGutter() {
       if (c && (i === first || bl.lines[i - 1] !== k)) who = uncommitted(c) ? '<span class="gbl new">Not committed yet</span>'
         : `<span class="gbl" data-hash="${esc(c.hash)}" title="${esc(c.summary)}\n${esc(c.author)}, ${esc(new Date(c.time * 1000).toLocaleString())}\n${esc(c.hash.slice(0, 7))} · click to see the commit">${esc(c.author)} · ${ago(c.time).replace(' ago', '')}</span>`
     }
-    h += `<div class="gl" style="top:${lineTop(i) - ed.scrollTop}px${state.wrap ? `;height:${wrap.h[i]}px` : ''}">${who}${i + 1}`
+    const nid = noteLines.get(i + 1)
+    h += `<div class="gl" style="top:${lineTop(i) - ed.scrollTop}px${state.wrap ? `;height:${wrap.h[i]}px` : ''}">${who}${nid ? `<i class="gn" data-nid="${esc(nid)}" title="A note is here. Click to edit."></i>` : ''}${i + 1}`
       + (kind ? `<i class="gb ${kind}${mk.staged[i] ? ' staged' : ''}" title="${kind === 'add' ? 'Added' : 'Modified'}${mk.staged[i] ? ', staged' : ''}"></i>` : '')
       + (del !== undefined ? `<i class="gd${del ? ' staged' : ''}"></i>` : '')
       + (end !== undefined ? `<i class="gd end${end ? ' staged' : ''}"></i>` : '')
@@ -3043,6 +3045,7 @@ $('#diff').addEventListener('click', e => {
   else if (act === 'discard') discard([f.path], scope() === 'worktree')
   else if (act === 'history') openFileHistory(f.path)
   else if (act === 'context') expandFile(i)
+  else if (act === 'note') R.addFileNote(f.path)
   else if (e.target.closest('.dfile-head')) toggleFold(i)
 })
 $('#diff').addEventListener('click', e => { if (e.target.closest('[data-empty="sync"]')) $('#sync').click() })
@@ -3401,7 +3404,12 @@ $('#editor').addEventListener('input', () => {
   clearTimeout(blameTimer)
   blameTimer = setTimeout(() => ensureBlame(activeTab()), 600)
 })
-$('#gutter').addEventListener('click', e => { const b = e.target.closest('.gbl[data-hash]'); if (b) showCommitInLog(b.dataset.hash) })
+$('#gutter').addEventListener('click', e => {
+  const n = e.target.closest('.gn[data-nid]')
+  if (n) return R.openNoteById(n.dataset.nid)
+  const b = e.target.closest('.gbl[data-hash]'); if (b) showCommitInLog(b.dataset.hash)
+})
+$('#note-add').onclick = () => R.addEditorNote()
 $('#file-history').onclick = () => { const t = activeTab(); if (t) openFileHistory(t.path) }
 $('#blame-toggle').onclick = () => { state.blameGutter = !state.blameGutter; renderEditor(); paintGutter() }
 // Wrapping changes every line's width and height, so the measured offsets belong to the old mode and
@@ -3668,6 +3676,7 @@ document.addEventListener('keydown', e => {
       if (sel) { $('#search-input').value = sel; scheduleSearch(0) }
       $('#search-input').select()
     }
+    else if (e.altKey && e.code === 'KeyM') { if (inEditor()) { e.preventDefault(); R.addEditorNote() } }
     else if (e.altKey && e.code === 'KeyT') { e.preventDefault(); reopenClosedTab() }
     else if (k === 'f' && e.altKey) { if (inEditor()) { e.preventDefault(); const sel = editorSelection(); showFind(sel || null); Rp.toggleReplace(true) } }
     else if (k === 'f' && !e.altKey) { if (inEditor()) { e.preventDefault(); const sel = editorSelection(); showFind(sel || null) } }
@@ -3907,7 +3916,7 @@ async function boot() {
   persistSession()
 }
 syncScopeInputs()
-Object.assign(ctx, { rerenderAll: () => { if (state.diffFiles.length) renderDiff() }, undoLastCommit, openPalette, reopenClosedTab, openFileHistory, closeTab, showFind, stepFind, renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => Ed.applySettings(), rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
+Object.assign(ctx, { currentPath, rerenderAll: () => { if (state.diffFiles.length) renderDiff() }, undoLastCommit, openPalette, reopenClosedTab, openFileHistory, closeTab, showFind, stepFind, renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => Ed.applySettings(), rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
 R.initReview()
 Ops.initOps()
 Pv.initPreview()

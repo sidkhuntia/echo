@@ -1229,3 +1229,12 @@ label.set-row { cursor: pointer; }
 .lnote-ico { color: var(--muted); display: inline-grid; padding-top: 2px; }
 .lnote-ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
 .dacts .btn { flex: none; }
+
+/* notes on files, ranges and the editor gutter */
+.gn { position: absolute; left: 8px; top: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); pointer-events: auto; cursor: pointer; }
+.lnote-range { display: inline-block; margin-right: 8px; font: 11px var(--mono); color: var(--muted); }
+.lnote-row.file { padding-left: 14px; padding-top: 6px; }
+.note-quote { margin: 0 0 10px; padding: 8px 10px; background: var(--sunk); border-radius: 6px; font: 12px/1.5 var(--mono); color: var(--fg-2); white-space: pre-wrap; max-height: 120px; overflow: auto; }
+.note-ta { width: 100%; resize: vertical; height: auto; padding: 8px; font: 13px/1.5 var(--sans); }
+.nrow .nacts { display: none; gap: 2px; margin-left: auto; }
+.nrow:hover .nacts { display: inline-flex; }

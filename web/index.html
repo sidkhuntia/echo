@@ -163,6 +163,7 @@
         <span id="stage-count" class="summary"></span>
         <button id="eol" class="btn quiet sm" hidden title="Line endings. Click to convert the file.">LF</button>
         <button id="json-format" class="btn quiet sm" hidden title="Pretty-print this JSON (Shift-click to minify)">Format JSON</button>
+        <button id="note-add" class="btn quiet sm" hidden title="Add a note for the agent on the selected lines (⌘⌥M)">Note</button>
         <button id="open-ext" class="btn quiet sm" hidden title="Open this file in another app">Open in…</button>
         <button id="file-history" class="btn quiet sm" hidden title="Commits that changed this file, across renames">History</button>
         <button id="blame-toggle" class="btn quiet sm" hidden title="Show who last changed each line; click an entry to see its commit">Blame</button>
@@ -173,11 +174,11 @@
       <input id="diff-filter" class="field" placeholder="Filter files or text (.go for an extension)" autocomplete="off" spellcheck="false" aria-label="Filter the review">
       <select id="diff-status" class="field" title="Show only…" aria-label="Show only">
         <option value="all">All files</option><option value="new">New</option><option value="modified">Modified</option><option value="deleted">Deleted</option><option value="renamed">Renamed</option>
-        <option value="undecided">Not yet decided</option><option value="rejected">Rejected</option><option value="noted">With open notes</option>
+        <option value="noted">With open notes</option>
       </select>
       <button id="diff-collapse" class="btn quiet sm" title="Collapse or expand every file">Collapse all</button>
       <span class="grow"></span>
-      <span class="faint fb-keys"><kbd>a</kbd> accept <kbd>x</kbd> reject <kbd>c</kbd> note <kbd>[</kbd><kbd>]</kbd> next undecided</span>
+      <span class="faint fb-keys"><kbd>c</kbd> note on the hunk</span>
     </div>
     <div id="log-extra" class="filterbar" hidden>
       <label class="faint">Since <input id="log-since" class="field" type="date" aria-label="Since"></label>
@@ -359,8 +360,8 @@
       <dt><kbd>Esc</kbd></dt><dd>In the editor: back to the review line you came from</dd>
       <dt><kbd>↑</kbd> <kbd>↓</kbd> <kbd>j</kbd> <kbd>k</kbd></dt><dd>In Log: previous / next commit</dd>
       <dt><kbd>↵</kbd></dt><dd>In Log: show the commit's diff (<kbd>Esc</kbd> comes back)</dd>
-      <dt><kbd>a</kbd> <kbd>x</kbd> <kbd>c</kbd></dt><dd>Review: accept / reject / comment on the current hunk</dd>
-      <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Review: previous / next hunk not yet decided</dd>
+      <dt><kbd>c</kbd></dt><dd>Review: add a note on the current hunk (or on the lines you picked)</dd>
+      <dt><kbd>⌘⌥M</kbd></dt><dd>Editor: add a note on the selected lines</dd>
       <dt><kbd>⌘/</kbd></dt><dd>Editor: toggle comment</dd>
       <dt><kbd>⌥↑</kbd> <kbd>⌥↓</kbd></dt><dd>Editor: move line (<kbd>⇧</kbd> duplicates)</dd>
       <dt><kbd>⌘⇧K</kbd></dt><dd>Editor: delete line</dd>

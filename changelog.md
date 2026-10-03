@@ -14,7 +14,8 @@
 - Switching repositories no longer loses unsaved edits or your place: the session is also kept on the server, per repository.
 
 **Review**
-- Stage, unstage or discard a hunk or selected lines. Accept or reject hunks; leave notes on lines. **Copy for agent** builds a ready-to-paste prompt (file, line, quoted code, note, plus rules for the agent); **Copy notes** is the plain list.
+- No accept/reject marks: a note says what to change, Discard removes a hunk.
+- Stage, unstage or discard a hunk or selected lines. Leave notes on a line, a run of lines or a whole file (from a diff or the editor). **Copy for agent** builds a ready-to-paste prompt (file, line, quoted code, note, plus rules for the agent); **Copy notes** is the plain list.
 - Changed words are marked inside changed lines. Show more context per file. Filter by name, content, extension or decision. Next undecided hunk (`[` `]`). Images before/after, renames, mode changes. Huge diffs draw lazily.
 
 **Git**

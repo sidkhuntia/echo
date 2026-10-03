@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { parseDiff } from './diffparse.js'
 import { hunkPatch, filePatch, quotePath } from './patch.js'
 import { wordRanges, pairRuns, injectMarks } from './wordiff.js'
-import { hunkKey, reviewPrompt, noteRef, notesText } from './notes.js'
+import { reviewPrompt, noteRef, notesText } from './notes.js'
 
 const git = (cwd, input, ...args) => execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, input, encoding: 'utf8' })
 
@@ -118,28 +118,25 @@ test('marks nest properly around highlight tags and entities', () => {
   assert.equal(injectMarks('plain', []), 'plain')
 })
 
-test('hunk keys ignore context and survive a shift', () => {
-  const a = parseDiff('diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n c1\n-old\n+new\n c2\n')[0].hunks[0]
-  const b = parseDiff('diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -9,5 +9,5 @@\n z\n c1\n-old\n+new\n c2\n y\n')[0].hunks[0]
-  assert.equal(hunkKey('x', a), hunkKey('x', b))
-  assert.notEqual(hunkKey('x', a), hunkKey('y', a))
-})
-
 test('the review prompt carries paths, lines, notes and ground rules', () => {
   const notes = [
     { path: 'src/b.go', line: 7, text: 'Why a global?', code: 'var cache = map[string]int{}' },
     { path: 'src/a.go', line: 42, text: 'Handle the error.\nDo not ignore it.', code: 'x, _ := f()' },
     { path: 'src/a.go', line: 3, side: 'old', text: 'Put this back', done: false },
+    { path: 'src/a.go', line: 10, end: 14, text: 'Extract this block', code: 'for ...' },
+    { path: 'src/d.go', line: 0, text: 'Add tests for this file' },
     { path: 'src/c.go', line: 1, text: 'resolved already', done: true },
   ]
-  const p = reviewPrompt({ repo: 'echo', branch: 'main', notes, rejected: ['src/d.go:10-20'], accepted: ['src/e.go:5'] })
-  assert.match(p, /left 3 comments and rejected 1 change/)
+  const p = reviewPrompt({ repo: 'echo', branch: 'main', notes })
+  assert.match(p, /left 5 comments/)
   assert.match(p, /1\. src\/a\.go:3 \(removed line\)/)
-  assert.match(p, /2\. src\/a\.go:42/)
+  assert.match(p, /2\. src\/a\.go:10-14/)
+  assert.match(p, /3\. src\/a\.go:42/)
   assert.match(p, /> x, _ := f\(\)/)
-  assert.match(p, /3\. src\/b\.go:7/)
+  assert.match(p, /src\/b\.go:7/)
+  assert.match(p, /src\/d\.go \(whole file\)\n   Add tests/)
   assert.doesNotMatch(p, /resolved already/)
-  assert.match(p, /Rejected changes[\s\S]*src\/d\.go:10-20/)
+  assert.doesNotMatch(p, /Rejected|Accepted/)
   assert.match(p, /Do not commit, stage, unstage or discard/)
   assert.equal(noteRef({ path: 'a', line: 4, end: 6 }), 'a:4-6')
   assert.match(notesText([notes[0]]), /^1\. src\/b\.go:7\n   > var cache/)

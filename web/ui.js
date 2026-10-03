@@ -60,7 +60,9 @@ export function popMenu(items, x, y, head = '') {
     const b = e.target.closest('.menu-item')
     if (!b || b.disabled) return
     m.hidden = true
-    items[+b.dataset.i].run?.()
+    // After this click has finished bubbling: a popover the action opens would otherwise be closed by the same click.
+    const run = items[+b.dataset.i].run
+    setTimeout(() => run?.(), 0)
   }
   m.querySelector('.menu-item')?.focus()
 }
