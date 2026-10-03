@@ -130,9 +130,7 @@
         <select id="log-ref" class="field" title="Which history to show"><option value="all">All branches</option><option value="HEAD">Current branch</option></select>
         <input id="log-author" class="field log-f" placeholder="Author" autocomplete="off" spellcheck="false">
         <input id="log-path" class="field log-f" placeholder="Path" autocomplete="off" spellcheck="false">
-        <input id="log-since" class="field log-f" type="date" title="Commits after this date" aria-label="Since">
-        <input id="log-until" class="field log-f" type="date" title="Commits before this date" aria-label="Until">
-        <select id="log-merges" class="field" title="Merge commits" aria-label="Merge commits"><option value="">All commits</option><option value="no">No merges</option><option value="only">Merges only</option></select>
+        <button id="log-more" class="btn quiet sm" title="Dates and merge commits" aria-expanded="false">Filters <span id="log-more-n" class="count"></span></button>
         <span id="log-summary" class="summary"></span>
       </div>
       <div id="file-bar" class="bar-group" hidden>
@@ -159,6 +157,12 @@
       <button id="diff-collapse" class="btn quiet sm" title="Collapse or expand every file">Collapse all</button>
       <span class="grow"></span>
       <span class="faint fb-keys"><kbd>a</kbd> accept <kbd>x</kbd> reject <kbd>c</kbd> note <kbd>[</kbd><kbd>]</kbd> next undecided</span>
+    </div>
+    <div id="log-extra" class="filterbar" hidden>
+      <label class="faint">Since <input id="log-since" class="field" type="date" aria-label="Since"></label>
+      <label class="faint">Until <input id="log-until" class="field" type="date" aria-label="Until"></label>
+      <select id="log-merges" class="field" title="Merge commits" aria-label="Merge commits"><option value="">All commits</option><option value="no">No merges</option><option value="only">Merges only</option></select>
+      <button id="log-clear" class="btn quiet sm">Clear filters</button>
     </div>
     <div id="file-crumb" class="crumb" hidden><span id="file-path" class="file-path"></span><span id="crumb-sym" class="crumb-sym"></span></div>
     <div id="banner" class="banner" hidden></div>

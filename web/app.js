@@ -1869,6 +1869,7 @@ function setMode(m) {
   document.querySelectorAll('.mode-switch button').forEach(b => b.classList.toggle('on', b.dataset.mode === m))
   $('#diff-bar').hidden = m !== 'diff'
   $('#diff-filterbar').hidden = m !== 'diff'
+  $('#log-extra').hidden = m !== 'log' || $('#log-more').getAttribute('aria-expanded') !== 'true'
   $('#file-bar').hidden = m !== 'file'
   $('#log-bar').hidden = m !== 'log'
   $('#log').classList.toggle('active', m === 'log')
@@ -2263,6 +2264,7 @@ async function loadLog(append = false) {
       return renderLog()
     }
     L.groups = null
+    $('#log-more-n').textContent = logFilterCount() || ''
     const data = await api('/api/history?' + params)
     if (seq !== L.seq) return
     L.commits = append ? L.commits.concat(data.commits) : data.commits
@@ -3227,6 +3229,13 @@ $('#log-rows').addEventListener('scroll', () => {
   const v = $('#log-rows'), L = state.log
   if (L.more && !L.loading && v.scrollTop + v.clientHeight > v.scrollHeight - 600) loadLog(true)
 })
+$('#log-more').onclick = () => {
+  const open = $('#log-more').getAttribute('aria-expanded') !== 'true'
+  $('#log-more').setAttribute('aria-expanded', open)
+  $('#log-extra').hidden = !open
+}
+$('#log-clear').onclick = () => { for (const id of ['#log-since', '#log-until', '#log-merges']) $(id).value = ''; loadLog() }
+const logFilterCount = () => ['#log-since', '#log-until', '#log-merges'].filter(id => $(id).value).length
 let logTimer
 for (const id of ['#log-q', '#log-author', '#log-path', '#log-since', '#log-until', '#log-merges']) $(id).addEventListener('input', () => { clearTimeout(logTimer); logTimer = setTimeout(() => loadLog(), 250) })
 $('#log-ref').onchange = () => { loadLog(); renderBranches() }

@@ -1192,3 +1192,6 @@ label.set-row { cursor: pointer; }
 .pitem.cmd i { margin-left: auto; }
 .pitem kbd { margin-left: 8px; }
 .recent-tag { margin-left: auto; font: 10px var(--mono); color: var(--faint); text-transform: uppercase; letter-spacing: .06em; font-style: normal; }
+#staged-count { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 11px; }
+#log-extra label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+#log-extra .field { height: 24px; }
