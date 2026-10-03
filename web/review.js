@@ -275,7 +275,7 @@ export function renderNotesPane() {
   for (const n of [...review.notes].sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line)) byFile.has(n.path) ? byFile.get(n.path).push(n) : byFile.set(n.path, [n])
   const progress = reviewProgress()
   let h = `<div class="notes-head"><b>${open.length}</b> open · ${done} addressed · <span class="ok-t">${accepted.length} accepted</span> · <span class="no-t">${rejected.length} rejected</span></div>`
-  h += `<div class="notes-acts"><button class="btn sm primary" data-notes="prompt" ${open.length || rejected.length ? '' : 'disabled'} title="Copy the notes with instructions an agent can follow">Copy for agent</button><button class="btn sm" data-notes="plain" ${review.notes.length ? '' : 'disabled'} title="Copy only the file, line and note of each">Copy notes</button><button class="btn sm quiet" data-notes="clear" ${done ? '' : 'disabled'} title="Remove addressed notes">Clear done</button></div>`
+  h += `<div class="notes-acts"><button class="btn sm primary" data-notes="prompt" ${open.length || rejected.length ? '' : 'disabled'} title="Copy the notes with instructions an agent can follow">Copy for agent</button><button class="btn sm" data-notes="plain" ${review.notes.length ? '' : 'disabled'} title="Copy only the file, line and note of each">Copy notes</button><button class="btn sm quiet" data-notes="clear" ${done ? '' : 'disabled'} title="Remove the notes marked Done">Clear done</button><button class="btn sm quiet" data-notes="clear-all" ${review.notes.length ? '' : 'disabled'} title="Delete every note">Clear all notes</button><button class="btn sm quiet" data-notes="clear-marks" ${rejected.length + accepted.length ? '' : 'disabled'} title="Forget every accept and reject mark">Reset accept/reject</button></div>`
   if (progress.total) h += `<div class="notes-prog" title="Hunks in the diff you are looking at">${progress.decided}/${progress.total} hunks decided</div>`
   if (!review.notes.length) h += `<div class="empty"><b>No notes yet</b>Click the sign column of a diff line, or press <kbd>c</kbd> on a hunk, to leave a note for the agent.</div>`
   for (const [path, ns] of byFile) {
@@ -290,6 +290,16 @@ export function initReview() {
     const b = e.target.closest('[data-notes]')
     if (b) {
       if (b.dataset.notes === 'clear') { review.notes = review.notes.filter(n => !n.done); return saveReview() }
+      if (b.dataset.notes === 'clear-all') {
+        const ok = await ctx.ask({ title: `Delete ${review.notes.length} note${review.notes.length === 1 ? '' : 's'}`, kicker: 'no undo', tone: 'danger', ok: 'Delete all', html: '<p>Every note for this repository is removed, including the ones not yet addressed. Accept and reject marks stay.</p>' })
+        if (!ok) return
+        review.notes = []; review.editing = null; saveReview(); return ctx.rerenderAll?.()
+      }
+      if (b.dataset.notes === 'clear-marks') {
+        const ok = await ctx.ask({ title: 'Reset accept and reject marks', ok: 'Reset', html: '<p>Every hunk goes back to undecided. Notes stay.</p>' })
+        if (!ok) return
+        review.marks = {}; saveReview(); return ctx.rerenderAll?.()
+      }
       const text = b.dataset.notes === 'prompt' ? promptText() : notesText(review.notes).replace(/^/, '')
       try { await ctx.copyText(text); ctx.setStatus(b.dataset.notes === 'prompt' ? 'Copied the review prompt for your agent' : 'Copied the notes', 'ok') } catch (err) { ctx.setStatus(err.message, 'err') }
       return

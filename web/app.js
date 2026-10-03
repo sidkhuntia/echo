@@ -3907,7 +3907,7 @@ async function boot() {
   persistSession()
 }
 syncScopeInputs()
-Object.assign(ctx, { undoLastCommit, openPalette, reopenClosedTab, openFileHistory, closeTab, showFind, stepFind, renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => Ed.applySettings(), rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
+Object.assign(ctx, { rerenderAll: () => { if (state.diffFiles.length) renderDiff() }, undoLastCommit, openPalette, reopenClosedTab, openFileHistory, closeTab, showFind, stepFind, renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => Ed.applySettings(), rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
 R.initReview()
 Ops.initOps()
 Pv.initPreview()
