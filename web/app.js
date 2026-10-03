@@ -2,6 +2,9 @@ import { renderMarkdown, sanitize } from './markdown.js'
 import { highlight, highlightLines } from './highlight.js'
 import { parseDiff } from './diffparse.js'
 import { splitLines, lineDiff } from './linediff.js'
+import { ctx } from './ctx.js'
+import * as R from './review.js'
+import { wordRanges, pairRuns, injectMarks } from './wordiff.js'
 import { layoutGraph, graphWidth, graphSVG, railSVG, LOG_H, HIST_H } from './graph.js'
 
 const $ = s => document.querySelector(s)
@@ -178,11 +181,13 @@ function setRail(rail) {
   $('#files-pane').hidden = rail !== 'files'
   $('#branches').hidden = rail !== 'branches'
   $('#search-pane').hidden = rail !== 'search'
-  $('.filter-row').hidden = rail === 'search'
+  $('#notes').hidden = rail !== 'notes'
+  $('.filter-row').hidden = rail === 'search' || rail === 'notes'
   $('#file-filter').placeholder = rail === 'branches' ? 'Filter branches' : 'Filter paths'
   if (rail === 'files') ensureTree().then(renderTree)
   else if (rail === 'branches') renderBranches()
   else if (rail === 'search') $('#search-input').focus()
+  else if (rail === 'notes') R.renderNotesPane()
   else renderQueue()
 }
 
@@ -656,7 +661,8 @@ async function goHunk(i, hi) {
 
 function renderPos() {
   const f = state.mode === 'diff' && state.diffFiles[state.current]
-  $('#pos').innerHTML = f ? `file <b>${state.current + 1}</b>/${state.diffFiles.length}${state.hunk >= 0 ? ` · hunk <b>${state.hunk + 1}</b>/${f.hunks.length}` : ''}` : ''
+  const pr = f ? R.reviewProgress() : null
+  $('#pos').innerHTML = f ? `file <b>${state.current + 1}</b>/${state.diffFiles.length}${state.hunk >= 0 ? ` · hunk <b>${state.hunk + 1}</b>/${f.hunks.length}` : ''}${pr.total ? ` · decided <b>${pr.decided}</b>/${pr.total}` : ''}` : ''
 }
 
 function rerenderFile(i) {
@@ -702,7 +708,7 @@ function fileHTML(f, i) {
     if (f.note) body = `<div class="dnote">${esc(f.note)}</div>`
     else if (f.binary) body = `<div class="dnote">Binary file — not shown.</div>`
     else if (!f.hunks.length) body = `<div class="dnote">${f.isNew ? 'Empty new file.' : 'Mode or metadata change only.'}</div>`
-    else body = f.hunks.map((h, hi) => hunkHTML(h, hi, f.path, f.hunks.length)).join('')
+    else body = f.hunks.map((h, hi) => hunkHTML(h, hi, f.path, f.hunks.length, f)).join('')
   }
   const unsaved = state.tabs.some(t => t.path === f.path && t.content !== t.saved)
   const why = folded && !state.folded.has(f.path) ? (GENERATED.test(f.path) ? 'generated' : f.lines > 1500 ? 'large' : '') : ''
@@ -715,7 +721,7 @@ function fileHTML(f, i) {
 
 const rowClass = l => l.t === 'add' ? 'r-add' : l.t === 'del' ? 'r-del' : l.t === 'meta' ? 'r-meta' : ''
 // data-n is the line in the new version; double-clicking any line opens the editor there.
-const textCell = (l, cls) => `<span class="tx ${cls}" data-n="${l.n ?? l.at}">${l.html || esc(l.text) || ' '}</span>`
+const textCell = (l, cls) => `<span class="tx ${cls}" data-n="${l.n ?? l.at}"${R.lineAttr(l)}>${l.html || esc(l.text) || ' '}</span>`
 
 // Each hunk is colored as two streams, old (context + deleted) and new (context + added), so a
 // comment or string that opens above a line still colors it. Context rows take the new stream's color.
@@ -726,6 +732,15 @@ function colorHunk(h, path) {
   for (const side of [old, cur]) {
     const rows = highlightLines(side.map(l => l.text).join('\n'), path)
     if (rows) side.forEach((l, i) => { if (side === cur || l.t === 'del') l.html = rows[i] })
+  }
+  // Inside a changed line, mark the words that differ from the line it replaced.
+  if (state.config.wordDiff !== false) {
+    for (const [d, a] of pairRuns(h.lines)) {
+      const r = wordRanges(d.text, a.text)
+      if (!r) continue
+      d.html = injectMarks(d.html ?? esc(d.text), r.a, 'wd wd-del')
+      a.html = injectMarks(a.html ?? esc(a.text), r.b, 'wd wd-add')
+    }
   }
 }
 
@@ -750,7 +765,7 @@ function hunkLabel(line) {
 
 // The header reads as a place, not Git's @@ line: which hunk of how many, the enclosing function Git
 // found, its size, and the lines it covers in the new version. The raw @@ range stays as the tooltip.
-function hunkHTML(h, hi, path, total) {
+function hunkHTML(h, hi, path, total, f) {
   if (!h.colored) colorHunk(h, path)
   const split = state.config.diffMode === 'split'
   const label = hunkLabel(h.context)
@@ -758,34 +773,36 @@ function hunkHTML(h, hi, path, total) {
   const span = (a, b, word) => a === b ? `${word} ${a}` : `${word}s ${a}–${b}`
   const where = nums.length ? span(nums[0].n, nums.at(-1).n, 'line') : olds.length ? span(olds[0].o, olds.at(-1).o, 'old line') : ''
   const size = `${h.add ? `<span class="add">+${h.add}</span>` : ''}${h.del ? `<span class="del">−${h.del}</span>` : ''}`
-  return `<div class="hunk ${split ? 'split' : ''}" data-h="${hi}"><div class="hunk-head" title="${esc(`${h.range} ${h.context}`.trim())}"><span class="hpill"><b>${hi + 1}/${total}</b>${label ? `<span class="hctx">${esc(label)}</span>` : ''}</span><span class="hmeta">${size}<span>${where}</span></span></div>${split ? splitRows(h) : stackedRows(h)}</div>`
+  return `<div class="hunk ${split ? 'split' : ''}${f ? R.hunkClass(f, h) : ''}" data-h="${hi}"><div class="hunk-head" title="${esc(`${h.range} ${h.context}`.trim())}"><span class="hpill"><b>${hi + 1}/${total}</b>${label ? `<span class="hctx">${esc(label)}</span>` : ''}</span>${f ? R.hunkActsHTML(f, h, hi) : ''}<span class="hmeta">${size}<span>${where}</span></span></div>${split ? splitRows(h, f, hi) : stackedRows(h, f, hi)}</div>`
 }
 
-function stackedRows(h) {
+function stackedRows(h, f, hi) {
   return h.lines.map(l => {
     const cls = rowClass(l)
     const sign = l.t === 'add' ? '+' : l.t === 'del' ? '−' : ''
-    return `<span class="no ${cls}">${l.o ?? ''}</span><span class="no ${cls}">${l.n ?? ''}</span><span class="sg ${cls}">${sign}</span>${textCell(l, cls)}`
+    const da = R.lineAttr(l)
+    return `<span class="no ${cls}"${da} title="Select this line to stage or discard just it">${l.o ?? ''}</span><span class="no ${cls}"${da}>${l.n ?? ''}</span><span class="sg ${cls}"${da} title="Add a note on this line">${sign}</span>${textCell(l, cls)}${f && l.t !== 'meta' ? R.noteRowsHTML(f, hi, l) : ''}`
   }).join('')
 }
 
 // Split view: old on the left, new on the right. A run of deletions followed by additions is paired
 // row by row; the shorter side is padded with empty cells.
-function splitRows(h) {
+function splitRows(h, f, hi) {
   const side = (l, isNew) => {
     if (!l) return `<span class="no r-none ${isNew ? 'ns' : ''}"></span><span class="tx r-none"></span>`
     const cls = rowClass(l)
-    return `<span class="no ${cls} ${isNew ? 'ns' : ''}">${isNew ? l.n : l.o}</span>${textCell(l, cls)}`
+    return `<span class="no ${cls} ${isNew ? 'ns' : ''}"${R.lineAttr(l)}>${isNew ? l.n : l.o}</span>${textCell(l, cls)}`
   }
+  const notes = l => (f && l ? R.noteRowsHTML(f, hi, l) : '')
   let out = '', dels = [], adds = []
   const flush = () => {
-    for (let k = 0; k < Math.max(dels.length, adds.length); k++) out += side(dels[k], false) + side(adds[k], true)
+    for (let k = 0; k < Math.max(dels.length, adds.length); k++) out += side(dels[k], false) + side(adds[k], true) + notes(dels[k]) + notes(adds[k])
     dels = []; adds = []
   }
   for (const l of h.lines) {
     if (l.t === 'del') { if (adds.length) flush(); dels.push(l) }
     else if (l.t === 'add') adds.push(l)
-    else { flush(); out += l.t === 'meta' ? `<span class="meta">${esc(l.text)}</span>` : side(l, false) + side(l, true) }
+    else { flush(); out += l.t === 'meta' ? `<span class="meta">${esc(l.text)}</span>` : side(l, false) + side(l, true) + notes(l) }
   }
   flush()
   return out
@@ -2736,6 +2753,12 @@ $('#tree').addEventListener('click', e => {
   if (row) { state.selected = row.dataset.path; openFile(row.dataset.path) }
 })
 $('#diff').addEventListener('click', e => {
+  if (e.altKey) {
+    const cell = e.target.closest('.tx[data-l]'), sec = cell?.closest('.dfile'), hunk = cell?.closest('.hunk')
+    const f = sec && state.diffFiles[+sec.dataset.i]
+    if (f && hunk) { e.preventDefault(); return R.noteAt(f, +hunk.dataset.h, f.hunks[+hunk.dataset.h].lines[+cell.dataset.l]) }
+  }
+  if (R.handleDiffClick(e)) return
   const sec = e.target.closest('.dfile')
   if (!sec) return
   const i = +sec.dataset.i, f = state.diffFiles[i]
@@ -3275,7 +3298,7 @@ document.addEventListener('keydown', e => {
       break
     }
     case 'o': { const p = currentPath(); if (p && state.mode === 'diff' && !state.diffFiles[state.current]?.isDeleted) openFile(p, { fromReview: true }); break }
-    default: return
+    default: if (R.handleKey(e)) break; return
   }
   e.preventDefault()
 })
@@ -3464,6 +3487,8 @@ async function boot() {
   persistSession()
 }
 syncScopeInputs()
+Object.assign(ctx, { state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
+R.initReview()
 boot()
 // Geist Mono can arrive after the first paint; the editor's measured character width and wrap
 // heights belong to whichever font was showing, so they are measured again once it is in.

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -77,13 +78,19 @@ func patchPaths(patch string) []string {
 			continue
 		}
 		rest := strings.TrimPrefix(line, "diff --git ")
-		// "a/x b/x": the two names are equal unless renamed; take the b side after the last " b/".
-		if i := strings.LastIndex(rest, " b/"); i >= 0 {
-			p := strings.Trim(rest[i+3:], "\"")
-			if !seen[p] {
-				seen[p] = true
-				out = append(out, p)
+		// "a/x b/x": the two names are equal unless renamed; take the b side. A name with unusual bytes is
+		// C-quoted by Git ("a/\303\251" "b/\303\251"), and Go's string syntax reads the same escapes.
+		p := ""
+		if i := strings.LastIndex(rest, ` "b/`); i >= 0 && strings.HasSuffix(rest, `"`) {
+			if s, err := strconv.Unquote(rest[i+1:]); err == nil {
+				p = strings.TrimPrefix(s, "b/")
 			}
+		} else if i := strings.LastIndex(rest, " b/"); i >= 0 {
+			p = rest[i+3:]
+		}
+		if p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
 		}
 	}
 	return out

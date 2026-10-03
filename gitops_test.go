@@ -461,3 +461,13 @@ func TestOpenRefusesGitDirAndUnknownEditors(t *testing.T) {
 		t.Errorf("unknown editor: %d", code)
 	}
 }
+
+func TestPatchPathsReadsQuotedNames(t *testing.T) {
+	got := patchPaths("diff --git a/plain.txt b/plain.txt\n--- a/plain.txt\ndiff --git \"a/\\303\\251.txt\" \"b/\\303\\251.txt\"\n")
+	if len(got) != 2 || got[0] != "plain.txt" || got[1] != "\u00e9.txt" {
+		t.Errorf("patchPaths = %q", got)
+	}
+	if got := patchPaths("diff --git a/with space.txt b/with space.txt\n"); len(got) != 1 || got[0] != "with space.txt" {
+		t.Errorf("space name = %q", got)
+	}
+}

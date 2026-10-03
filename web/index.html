@@ -60,6 +60,7 @@
         <button data-rail="changes" class="on" role="tab">Changes <span id="change-count" class="count"></span></button>
         <button data-rail="files" role="tab">Files</button>
         <button data-rail="branches" role="tab">Branches</button>
+        <button data-rail="notes" role="tab" title="Review notes for the agent">Notes <span id="note-count" class="count"></span></button>
         <button data-rail="search" role="tab" title="Search file contents (⌘⇧F)" aria-label="Search"><svg class="i" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></button>
       </div>
     </div>
@@ -78,6 +79,7 @@
       </div>
     </div>
     <div id="branches" class="list" hidden></div>
+    <div id="notes" class="list notes-pane" hidden></div>
     <div id="search-pane" class="search-pane" hidden>
       <div class="search-box">
         <input id="search-input" class="field" placeholder="Search file contents" autocomplete="off" spellcheck="false">
