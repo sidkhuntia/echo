@@ -23,6 +23,10 @@
 **Editor**
 - Auto-indent, closing brackets and quotes, Tab/Shift-Tab, comment toggle, line move/duplicate/delete, matching bracket, multi-cursor, find and replace (and across files), indent detection and settings, EOL indicator and conversion, trim trailing whitespace and final newline on save, autosave, minimap, indent guides, ruler, whitespace, sticky scroll, breadcrumbs, other-uses highlighting, Vim mode, CSV/image previews, JSON format, side view, file rename/duplicate/delete/move/reveal/open-in, recent files, reopen closed tab, command palette. The file tree is windowed.
 
+**Layout pass**
+- Calmer title bar (breadcrumb, one Sync button with Fetch/Pull/Push behind its caret, a **⋯** menu); the middle "Files" mode is now **Editor**; layout is an icon pair and a **View** menu holds the review switches; the commit box moved under the Changes list.
+- History: clicking a commit only expands it; its diff opens from a file in it. Commits that are not pushed show an amber **↑** and a hollow node in History and Log; pushed ones show a quiet **✓**.
+
 **Project**
 - Linux builds and installer; CI on macOS and Linux with race tests, pinned tools and a release gated on CI; optional macOS notarization; `main.go` and the web code split into modules; README rewritten with screenshots; tests for the new code including a real-binary smoke test.
 

@@ -16,7 +16,7 @@ export function commands() {
   const list = [
     ['Go to file…', 'Navigate', () => ctx.openPalette(''), '⌘K'],
     ['Switch repository…', 'Navigate', () => document.querySelector('#repo').click(), '⌘⇧O'],
-    ['Show Review', 'Navigate', () => ctx.setMode('diff')], ['Show Files', 'Navigate', () => ctx.setMode('file')], ['Show Log', 'Navigate', () => ctx.setMode('log')],
+    ['Show Review', 'Navigate', () => ctx.setMode('diff')], ['Show Editor', 'Navigate', () => ctx.setMode('file')], ['Show Log', 'Navigate', () => ctx.setMode('log')],
     ['Toggle sidebar', 'View', () => document.querySelector('#tree-toggle').click(), '⌘B'],
     ['Toggle Git panel', 'View', () => ctx.toggleGit(), '⌘J'],
     ['Open Git tools (remotes, worktrees, reflog…)', 'View', () => ctx.toggleGit(true, 'tools')],
@@ -32,7 +32,7 @@ export function commands() {
     ['Compare branches…', 'Git', () => compareUI()],
     ['Restore the last discard', 'Git', git({ action: 'discard:restore' })],
     ['Undo the last commit', 'Git', () => ctx.undoLastCommit()],
-    ['Write a commit message', 'Git', () => { ctx.toggleGit(true, 'commit'); setTimeout(() => ctx.$('#commit-message').focus(), 50) }],
+    ['Write a commit message', 'Git', () => { ctx.setRail('changes'); ctx.$('.desk').classList.remove('no-tree'); setTimeout(() => ctx.$('#commit-message').focus(), 50) }],
     ['Stash all changes', 'Git', () => G.stashFiles([...s.changes.keys()])],
     ...(st.operation ? [[`Continue the ${st.operation}`, 'Git', git({ action: `${st.operation}:continue` })], [`Abort the ${st.operation}`, 'Git', git({ action: `${st.operation}:abort` })]] : []),
     ['Save file', 'Editor', () => ctx.saveFile(), '⌘S'],

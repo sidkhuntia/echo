@@ -21,17 +21,18 @@
     <span class="sep">/</span>
     <button id="branch" class="branch" title="Branches: checkout, merge, rebase, delete">—</button>
     <span id="track" class="track" hidden></span>
-    <button id="fetch" class="btn quiet sm net" title="Fetch all remotes (git fetch --all --prune)" hidden><svg class="i" viewBox="0 0 16 16"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Fetch <span id="fetched" class="faint"></span></button>
-    <button id="sync" class="btn quiet sm net" hidden><svg class="i" viewBox="0 0 16 16"><path d="M13 6.5A5 5 0 0 0 4 4.5M3 9.5a5 5 0 0 0 9 2"/><path d="M4 1.8v2.9h2.9M12 14.2v-2.9H9.1"/></svg><span id="sync-label">Sync</span></button>
+    <button id="fetch" class="btn quiet sm net" title="Fetch all remotes (git fetch --all --prune)" hidden data-folded><svg class="i" viewBox="0 0 16 16"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Fetch <span id="fetched" class="faint"></span></button>
+    <button id="sync" class="btn quiet sm net" hidden><svg class="i" viewBox="0 0 16 16"><path d="M13 6.5A5 5 0 0 0 4 4.5M3 9.5a5 5 0 0 0 9 2"/><path d="M4 1.8v2.9h2.9M12 14.2v-2.9H9.1"/></svg><span id="sync-label">Sync</span></button><button id="sync-more" class="btn quiet icon xs net" title="Fetch, pull and push" aria-haspopup="menu" aria-label="Sync options" hidden><svg class="i" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
   </div>
   <div id="trace" class="trace" aria-label="Change trace: every changed file and its hunks"></div>
   <div class="tb-right">
     <button id="search-open" class="btn quiet sm search" title="Go to file (⌘K)"><svg class="i" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><kbd>⌘K</kbd></button>
-    <button id="tree-toggle" class="btn quiet icon" title="Toggle sidebar (⌘B)"><svg class="i" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6 3v10"/></svg></button>
-    <button id="git-toggle" class="btn quiet icon" title="Git panel (⌘J)" aria-pressed="false"><svg class="i" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M10 3v10"/></svg><em id="tb-staged" class="badge" hidden></em></button>
-    <button id="theme-open" class="btn quiet icon" title="Theme"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11z" fill="currentColor"/></svg></button>
-    <button id="settings-open" class="btn quiet icon" title="Settings (⌘,)" aria-label="Settings"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M3.6 12.4l1.2-1.2M11.2 4.8l1.2-1.2"/></svg></button>
-    <button id="help-open" class="btn quiet icon" title="Shortcuts (?)">?</button>
+    <span class="tb-group"><button id="tree-toggle" class="btn quiet icon" title="Toggle sidebar (⌘B)"><svg class="i" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6 3v10"/></svg></button>
+    <button id="git-toggle" class="btn quiet icon" title="Git panel: history and tools (⌘J)" aria-pressed="false"><svg class="i" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M10 3v10"/></svg><em id="tb-staged" class="badge" hidden></em></button></span>
+    <button id="more-open" class="btn quiet icon" title="Theme, settings, shortcuts, switch repository" aria-haspopup="menu" aria-label="More"><svg class="i" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="12.5" cy="8" r="1"/></svg></button>
+    <button id="theme-open" class="btn quiet icon" hidden title="Theme"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11z" fill="currentColor"/></svg></button>
+    <button id="settings-open" class="btn quiet icon" hidden title="Settings (⌘,)" aria-label="Settings"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M3.6 12.4l1.2-1.2M11.2 4.8l1.2-1.2"/></svg></button>
+    <button id="help-open" class="btn quiet icon" hidden title="Shortcuts (?)">?</button>
   </div>
   <div id="repo-pop" class="pop repo-pop" hidden>
     <input id="repo-filter" class="field" placeholder="Search open repositories" autocomplete="off" spellcheck="false">
@@ -61,16 +62,35 @@
         <button data-rail="files" role="tab">Files</button>
         <button data-rail="branches" role="tab">Branches</button>
         <button data-rail="notes" role="tab" title="Review notes for the agent">Notes <span id="note-count" class="count"></span></button>
-        <button data-rail="search" role="tab" title="Search file contents (⌘⇧F)" aria-label="Search"><svg class="i" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></button>
+        <button data-rail="search" role="tab" title="Search file contents (⌘⇧F)" hidden>Search</button>
       </div>
     </div>
     <div id="op-bar" class="op-bar" hidden></div>
     <div class="filter-row">
       <input id="file-filter" class="field" placeholder="Filter paths" autocomplete="off" spellcheck="false">
       <button id="tree-collapse" class="btn icon" title="Collapse all folders" hidden></button>
+      <button id="search-contents" class="btn icon" title="Search inside files for this text (⌘⇧F)" aria-label="Search file contents"><svg class="i" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></button>
       <button id="refresh" class="btn icon" title="Refresh">↻</button>
     </div>
     <div id="queue" class="list"></div>
+    <section id="commit-dock" class="sec commit-card dock">
+        <h4>Commit <span id="commit-tally" class="tally"></span></h4>
+        <textarea id="commit-message" class="field" placeholder="Summarize the change"></textarea>
+        <div class="commit-extras">
+          <span id="msg-meter" class="meter" title="Subject up to 50 characters, body wrapped at 72"></span>
+          <label class="check" title="Add a Signed-off-by line"><input id="opt-signoff" type="checkbox"> Sign off</label>
+          <input id="opt-coauthor" class="field" placeholder="Co-author: Name &lt;email&gt;" autocomplete="off" spellcheck="false" title="Adds a Co-authored-by line. Separate several with commas.">
+        </div>
+        <div class="btn-split">
+          <button id="commit" class="btn primary grow"><span id="commit-label">Commit</span> <kbd>⌘↵</kbd></button>
+          <button id="commit-more" class="btn primary caret" title="Other ways to commit" aria-haspopup="menu"><svg class="i" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
+        </div>
+        <div id="commit-hint" class="hint" hidden></div>
+        <div id="revert-bar" class="revert-bar" hidden>
+          <span>A revert stopped on conflicts. Fix and stage the files, then continue.</span>
+          <span class="btn-split"><button class="btn sm" data-revert="revert:continue">Continue</button><button class="btn sm" data-revert="revert:abort">Abort</button></span>
+        </div>
+      </section>
     <div id="files-pane" class="files-pane" hidden>
       <div id="tree" class="list"></div>
       <div class="tree-acts">
@@ -100,7 +120,7 @@
     <div class="toolbar">
       <div class="seg mode-switch" role="tablist">
         <button data-mode="diff" class="on" role="tab">Review</button>
-        <button data-mode="file" role="tab">Files</button>
+        <button data-mode="file" role="tab" title="Edit files (⌘D toggles Review and Editor)">Editor</button>
         <button data-mode="log" role="tab" title="Commit graph of every branch">Log</button>
       </div>
       <div class="vr"></div>
@@ -118,12 +138,13 @@
           <input id="diff-to" class="field ref" placeholder="to ref" autocomplete="off" spellcheck="false">
         </span>
         <input id="diff-commit" class="field ref" placeholder="commit" autocomplete="off" spellcheck="false" hidden>
-        <div class="seg layout-switch" role="tablist" title="Diff layout">
-          <button data-layout="unified" class="on" role="tab" title="Old and new lines stacked in one column">Stacked</button>
-          <button data-layout="split" role="tab" title="Old version on the left, new version on the right">Split</button>
-        </div>
-        <label class="toggle"><input id="ignore-ws" type="checkbox"><span class="sw"></span>Hide whitespace</label>
         <span id="diff-summary" class="summary"></span>
+        <div class="seg layout-switch" role="tablist" title="Diff layout">
+          <button data-layout="unified" class="on" role="tab" title="Stacked: old and new lines in one column" aria-label="Stacked layout"><svg class="i" viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h10"/></svg></button>
+          <button data-layout="split" role="tab" title="Split: old version left, new version right" aria-label="Split layout"><svg class="i" viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M8 3v10"/></svg></button>
+        </div>
+        <button id="view-open" class="btn quiet icon" title="View options: whitespace, wrapping, word marks" aria-haspopup="menu" aria-label="View options"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M3.6 12.4l1.2-1.2M11.2 4.8l1.2-1.2"/></svg></button>
+        <label class="toggle" hidden><input id="ignore-ws" type="checkbox"><span class="sw"></span>Hide whitespace</label>
       </div>
       <div id="log-bar" class="bar-group" hidden>
         <input id="log-q" class="field log-q" placeholder="Search messages or paste a hash" autocomplete="off" spellcheck="false">
@@ -213,33 +234,16 @@
     <div id="grip-git" class="grip" role="separator" aria-orientation="vertical" aria-label="Resize Git panel" tabindex="0"></div>
     <div class="pane-head">
       <div class="seg insp-switch" role="tablist">
-        <button data-insp="commit" class="on" role="tab">Commit</button>
-        <button data-insp="history" role="tab">History</button>
+        <button data-insp="history" class="on" role="tab">History</button>
+        <button data-insp="commit" role="tab" title="Branch, sync and stash">Sync</button>
         <button data-insp="tools" role="tab" title="Remotes, worktrees, submodules, reflog, compare">Tools</button>
       </div>
       <span id="staged-count" class="dim"></span>
       <button id="git-pin" class="btn quiet icon xs" title="Pin the Git panel beside the review" aria-label="Pin Git panel" aria-pressed="false"><svg class="i" viewBox="0 0 16 16"><path d="M6 2.5h4M7 2.5v4L4.5 9h7L9 6.5v-4M8 9v4.5"/></svg></button>
       <button id="git-close" class="btn quiet icon xs" title="Close (⌘J)" aria-label="Close Git panel">✕</button>
     </div>
-    <div id="insp" class="insp" data-insp="commit">
-      <section class="sec commit-card" data-for="commit">
-        <h4>Commit <span id="commit-tally" class="tally"></span></h4>
-        <textarea id="commit-message" class="field" placeholder="Summarize the change"></textarea>
-        <div class="commit-extras">
-          <span id="msg-meter" class="meter" title="Subject up to 50 characters, body wrapped at 72"></span>
-          <label class="check" title="Add a Signed-off-by line"><input id="opt-signoff" type="checkbox"> Sign off</label>
-          <input id="opt-coauthor" class="field" placeholder="Co-author: Name &lt;email&gt;" autocomplete="off" spellcheck="false" title="Adds a Co-authored-by line. Separate several with commas.">
-        </div>
-        <div class="btn-split">
-          <button id="commit" class="btn primary grow"><span id="commit-label">Commit</span> <kbd>⌘↵</kbd></button>
-          <button id="commit-more" class="btn primary caret" title="Other ways to commit" aria-haspopup="menu"><svg class="i" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
-        </div>
-        <div id="commit-hint" class="hint" hidden></div>
-        <div id="revert-bar" class="revert-bar" hidden>
-          <span>A revert stopped on conflicts. Fix and stage the files, then continue.</span>
-          <span class="btn-split"><button class="btn sm" data-revert="revert:continue">Continue</button><button class="btn sm" data-revert="revert:abort">Abort</button></span>
-        </div>
-      </section>
+    <div id="insp" class="insp" data-insp="history">
+
       <details class="sec fold-sec" data-for="commit">
         <summary><span>Branch &amp; sync</span><span id="sum-branch" class="sum"></span></summary>
         <div class="hrow join"><select id="branch-select" class="field"></select><button id="switch-branch" class="btn">Switch</button></div>
@@ -265,13 +269,13 @@
       </details>
       <section class="sec" data-for="tools"><div id="tools"></div></section>
       <section class="sec" data-for="history">
-        <h4>Recent commits <span class="dim">click for details and diff</span></h4>
+        <h4>Recent commits <span class="dim"><span class="pm up">↑</span>not pushed</span></h4>
         <div id="history"></div>
       </section>
     </div>
   </aside>
   <nav id="git-rail" class="git-rail" aria-label="Git">
-    <button data-open="commit" title="Commit (⌘J)" aria-label="Commit"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.6"/><path d="M1.5 8h4M10.5 8h4"/></svg><em id="rail-staged" hidden></em></button>
+    <button data-open="commit" title="Commit: jump to the message box" aria-label="Commit"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.6"/><path d="M1.5 8h4M10.5 8h4"/></svg><em id="rail-staged" hidden></em></button>
     <button data-open="history" title="History" aria-label="History"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg><em id="rail-out" hidden></em></button>
     <button data-open="branches" title="Branches" aria-label="Branches"><svg class="i" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="6" r="1.6"/><path d="M4.5 5v6M11.5 7.6c0 2.4-7 1.6-7 3.3"/></svg></button>
   </nav>
@@ -337,7 +341,7 @@
       <dt><kbd>⌘K</kbd> <kbd>⌘P</kbd></dt><dd>Go to file (recent files first)</dd>
       <dt><kbd>⌘⇧P</kbd></dt><dd>Command palette: every action by name</dd>
       <dt><kbd>⌘⌥T</kbd></dt><dd>Reopen the last closed tab</dd>
-      <dt><kbd>⌘D</kbd></dt><dd>Switch Review / Files</dd>
+      <dt><kbd>⌘D</kbd></dt><dd>Switch Review / Editor</dd>
       <dt><kbd>⌘⇧O</kbd></dt><dd>Switch repository</dd>
       <dt><kbd>⌘F</kbd></dt><dd>Find in the open file (<kbd>↵</kbd> next, <kbd>⇧↵</kbd> previous, <kbd>Esc</kbd> close)</dd>
       <dt><kbd>⌘⇧F</kbd></dt><dd>Search file contents (a selection in the editor is the query)</dd>

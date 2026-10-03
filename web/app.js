@@ -150,6 +150,7 @@ function applyStatus(s) {
   if (first && !s.git) setRail('files')
   state.treeStale = true
   document.body.classList.toggle('no-git-repo', !s.git)
+  $('#commit-dock').hidden = state.rail !== 'changes' || !s.git
   renderGit(); renderQueue()
   if (state.rail === 'files') ensureTree().then(renderTree)
   // Files changed on disk, so shown line numbers may be stale.
@@ -197,6 +198,8 @@ function setRail(rail) {
   $('#branches').hidden = rail !== 'branches'
   $('#search-pane').hidden = rail !== 'search'
   $('#notes').hidden = rail !== 'notes'
+  $('#commit-dock').hidden = rail !== 'changes' || state.status?.git === false
+  $('[data-rail="search"]').hidden = rail !== 'search'
   $('.filter-row').hidden = rail === 'search' || rail === 'notes'
   $('#file-filter').placeholder = rail === 'branches' ? 'Filter branches' : 'Filter paths'
   if (rail === 'files') ensureTree().then(renderTree)
@@ -1082,7 +1085,6 @@ async function goTo(path, sec = '') {
 function syncScopeInputs() {
   $('#range-inputs').hidden = scope() !== 'range'
   $('#diff-commit').hidden = scope() !== 'commit'
-  $('#ignore-ws').closest('label').hidden = false
   if (scope() !== 'commit') state.commit = ''
   renderHistoryCurrent()
   // The clean-tree screen quotes the last commit, which may arrive after the diff.
@@ -2286,7 +2288,7 @@ function renderLog() {
     return
   }
   const top = view.scrollTop
-  const rowsHTML = (from, to) => L.commits.slice(from, to).map((c, k) => { const i = from + k; return `<div class="lrow ${c.hash === L.sel ? 'sel' : ''}" data-hash="${esc(c.hash)}">${graphSVG(L.rows[i], LOG_H, w)}<span class="lsub" title="${esc(c.subject)}">${refChips(c.refs)}<span class="ltext">${esc(c.subject)}</span></span><span class="lauth">${esc(c.author)}</span><span class="ltime" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div>` }).join('')
+  const rowsHTML = (from, to) => L.commits.slice(from, to).map((c, k) => { const i = from + k; return `<div class="lrow ${c.hash === L.sel ? 'sel' : ''}${c.unpushed ? ' unpushed' : ''}" data-hash="${esc(c.hash)}">${graphSVG(L.rows[i], LOG_H, w)}<span class="lsub" title="${esc(c.subject)}">${pushMark(c)}${refChips(c.refs)}<span class="ltext">${esc(c.subject)}</span></span><span class="lauth">${esc(c.author)}</span><span class="ltime" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div>` }).join('')
   const head = g => `<div class="lgroup">${esc(g.title)}<span class="faint">${g.n}${g.more ? '+' : ''} commit${g.n === 1 ? '' : 's'}</span></div>${g.n ? '' : '<div class="lmore faint">Nothing — the other side already has all of it.</div>'}`
   view.innerHTML = L.groups ? head(L.groups[0]) + rowsHTML(0, L.groups[0].n) + head(L.groups[1]) + rowsHTML(L.groups[0].n)
     : rowsHTML(0) + (L.more ? '<div class="lmore faint">Loading more…</div>' : '')
@@ -2362,12 +2364,21 @@ async function loadHistory() {
 }
 
 // ---------- history ----------
+// Whether a commit is on a remote: an amber ↑ for one that only exists locally, a quiet ✓ for one that is
+// pushed. Nothing is drawn for a repository with no remote, since nothing could have been pushed.
+function pushMark(c) {
+  if (!state.status?.remotes?.length) return ''
+  return c.unpushed
+    ? '<span class="pm up" title="Not pushed: no remote branch has this commit yet">↑</span>'
+    : '<span class="pm ok" title="Pushed: a remote branch has this commit">✓</span>'
+}
+
 function renderHistory() {
   const { commits, rows } = state.hist, w = graphWidth(rows)
-  $('#history').innerHTML = commits.map((c, i) => `<div class="commit-row ${c.hash === state.expanded ? 'open' : ''}" data-hash="${esc(c.hash)}" data-short="${esc(c.short)}" title="${esc(c.subject)}\nClick to show details and the diff">
+  $('#history').innerHTML = commits.map((c, i) => `<div class="commit-row ${c.hash === state.expanded ? 'open' : ''}${c.unpushed ? ' unpushed' : ''}" data-hash="${esc(c.hash)}" data-short="${esc(c.short)}" title="${esc(c.subject)}\nClick to expand. Click a file in it to see its diff.">
       <span class="c-graph">${graphSVG(rows[i], HIST_H, w)}</span>
       <div class="c-main"><div class="c-subject">${refChips(c.refs)}${esc(c.subject)}</div>
-      <div class="c-meta"><b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div></div>
+      <div class="c-meta">${pushMark(c)}<b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div></div>
     </div>${c.hash === state.expanded ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(rows[i].after, w)}</span><div class="c-dbody">${detailHTML(c.hash)}</div></div>` : ''}`).join('')
     || `<div class="list-row muted"><span>${state.hist.error ? `Couldn’t load history (${esc(state.hist.error)}). Retrying…` : 'No commits yet'}</span></div>`
   renderHistoryCurrent()
@@ -2449,7 +2460,7 @@ function selectCommit(hash, short = hash.slice(0, 7)) {
   renderHistory()
   if (state.expanded) loadDetail(hash)
   $(`#history .commit-row[data-hash="${CSS.escape(hash)}"]`)?.scrollIntoView({ block: 'nearest' })
-  return showCommitDiff(hash, short)
+  // Expanding a commit only shows its details; the diff opens when one of its files is clicked.
 }
 
 async function showCommitDiff(hash, short) {
@@ -2478,7 +2489,8 @@ async function goCommitFile(hash, path) {
 function renderTracking() {
   const s = state.status || {}, t = s.tracking
   const remote = (s.remotes || []).length > 0
-  $('#fetch').hidden = !remote
+  $('#fetch').hidden = true
+  $('#sync-more').hidden = !remote
   $('#sync').hidden = !remote || !t
   $('#fetched').textContent = s.fetchedAt ? ago(s.fetchedAt) : 'never'
   $('#fetch').title = `Fetch all remotes (git fetch --all --prune)\nLast fetched: ${s.fetchedAt ? new Date(s.fetchedAt * 1000).toLocaleString() : 'never'}`
@@ -2497,7 +2509,7 @@ function renderTracking() {
   $('#pull').classList.toggle('primary', fresh)
   document.querySelector('.push-split').hidden = fresh
   $('#pull-more').hidden = fresh
-  $('#sync-label').textContent = tracked ? 'Sync' : 'Publish'
+  $('#sync-label').textContent = tracked ? (t.ahead || t.behind ? `Sync ${t.behind ? t.behind + '↓' : ''}${t.ahead ? t.ahead + '↑' : ''}` : 'Sync') : 'Publish'
   $('#sync').title = tracked ? `Pull${t.behind ? ` ${t.behind}` : ''}, then push${t.ahead ? ` ${t.ahead}` : ' if ahead'} (${t.upstream})` : `Push ${t?.name || 'this branch'} and set its upstream (git push -u)`
   $('#sync').classList.toggle('attn', tracked && (t.ahead > 0 || t.behind > 0))
   $('#rail-out').hidden = !(tracked && t.ahead > 0)
@@ -3093,7 +3105,49 @@ $('#banner').addEventListener('click', async e => {
 document.querySelectorAll('.mode-switch button').forEach(b => b.onclick = () => setMode(b.dataset.mode))
 document.querySelectorAll('.rail-switch button').forEach(b => b.onclick = () => setRail(b.dataset.rail))
 document.querySelectorAll('.insp-switch button').forEach(b => b.onclick = () => setInspector(b.dataset.insp))
-$('#search-open').onclick = openPalette
+$('#search-open').onclick = () => openPalette()
+$('#search-contents').onclick = () => { const q = $('#file-filter').value.trim(); setRail('search'); if (q) { $('#search-input').value = q; scheduleSearch(0) } $('#search-input').focus() }
+
+// The "⋯" menu holds what is used rarely, so the title bar can stay quiet.
+$('#more-open').onclick = e => {
+  e.stopPropagation()
+  const r = e.currentTarget.getBoundingClientRect()
+  popMenu([
+    { label: 'Choose theme…', run: () => $('#theme-open').click() },
+    { label: 'Settings', kbd: '⌘,', run: () => $('#settings-open').click() },
+    { label: 'Keyboard shortcuts', kbd: '?', run: () => $('#help-open').click() },
+    { sep: true },
+    { label: 'Command palette…', kbd: '⌘⇧P', run: () => openPalette('>') },
+    { label: 'Switch repository…', kbd: '⌘⇧O', run: () => $('#repo').click() },
+    { label: 'Fetch all remotes', run: () => gitAction({ action: 'fetch' }, $('#sync')) },
+  ], r.right - 220, r.bottom + 6)
+}
+
+// Sync is one button; fetching, pulling and pushing on their own live behind its caret.
+$('#sync-more').onclick = e => {
+  e.stopPropagation()
+  const r = e.currentTarget.getBoundingClientRect(), s = state.status || {}
+  popMenu([
+    { label: `Fetch all remotes${s.fetchedAt ? ` · last ${ago(s.fetchedAt)}` : ''}`, run: () => gitAction({ action: 'fetch' }, $('#sync')) },
+    { label: 'Pull', run: () => gitAction({ action: 'pull' }, $('#sync')) },
+    { label: 'Push', run: () => gitAction({ action: 'push' }, $('#sync')) },
+  ], r.left, r.bottom + 6)
+}
+
+// View options: what used to be loose switches in the review toolbar.
+$('#view-open').onclick = e => {
+  e.stopPropagation()
+  const r = e.currentTarget.getBoundingClientRect(), on = v => (v ? '✓  ' : '    ')
+  const cfg = (k, label) => ({ label: on(state.config[k] !== false) + label, run: () => { state.config[k] = state.config[k] === false; post('/api/config', { [k]: state.config[k] }); for (const f of state.diffAll || []) for (const h of f.hunks) h.colored = false; loadDiff() } })
+  popMenu([
+    { label: on($('#ignore-ws').checked) + 'Hide whitespace changes', run: () => { $('#ignore-ws').checked = !$('#ignore-ws').checked; loadDiff() } },
+    { label: on(state.wrap) + 'Wrap long lines', run: () => { const b = $('#word-wrap'); b.checked = !b.checked; b.dispatchEvent(new Event('change')) } },
+    cfg('wordDiff', 'Mark changed words'),
+    cfg('renames', 'Detect renames'),
+    { sep: true },
+    { label: 'Collapse or expand all files', run: () => $('#diff-collapse').click() },
+  ], r.right - 220, r.bottom + 6)
+}
 $('#theme-open').onclick = e => { e.stopPropagation(); toggleThemes() }
 $('#theme-filter').oninput = renderThemes
 $('#theme-filter').addEventListener('keydown', e => {
@@ -3413,6 +3467,7 @@ $('#settings').addEventListener('change', async e => {
 })
 $('#git-rail').onclick = e => {
   const tab = e.target.closest('[data-open]')?.dataset.open
+  if (tab === 'commit') { $('.desk').classList.remove('no-tree'); setRail('changes'); $('#commit-message').focus(); return }
   if (tab === 'branches') { e.stopPropagation(); toggleBranchPop() }
   else if (tab) toggleGit(!(gitOpen() && $('#insp').dataset.insp === tab), tab)
 }

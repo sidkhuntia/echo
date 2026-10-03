@@ -578,6 +578,15 @@ Everything below was proposed in a review of the v1 code and accepted item by it
 - **Accepted:** settings are plain config keys with a validated range (`/api/config`), edited in Settings › Editor. Opening a file in another app uses a fixed list of editors (`code`, `cursor`, `zed`, `subl`), never a command from the page.
 - **Accepted:** unsaved edits and the rest of the session are also mirrored to the server per repository (`drafts/`), and boot takes the newer of the browser's and the server's copy, so a repository that returns on another port, a cleared browser or another browser still restores them.
 
+### Layout pass (from the "echo Layout Pass" design: changes 1, 2, 3 and commit option B)
+
+- **Accepted:** the title bar is `repo / branch ↑n`, the change trace, one **Sync** button, ⌘K, a joined sidebar/Git-panel toggle pair and a **⋯** menu (theme, settings, shortcuts, command palette, switch repository, fetch). Fetch lives behind Sync's caret with pull and push; Sync turns amber and shows `2↑`/`1↓` only when something is waiting.
+- **Accepted:** one vocabulary. The left column is *where things are* (Changes, Files, Branches, Notes), the middle is *what you are doing* (Review, **Editor**, Log; the old second "Files" is renamed, `⌘D` unchanged), the right is Git (History, Sync, Tools). The search icon is no longer a tab: it sits in the filter field's row and searches file contents for the text typed there (`⌘⇧F` as before; a Search tab appears while it is open).
+- **Accepted:** the review toolbar keeps the scope picker and the summary; layout is an icon pair (stacked, split) and a gear **View** menu holds hide whitespace, wrap, changed-word marks, rename detection and collapse-all.
+- **Accepted (option B):** the commit box sits under the Changes list in the left column, so staging and committing are one column. The Git panel is History, Sync (branch, pull and push, stash) and Tools, and can stay closed. The rail's Commit button and the "Write a commit message" command focus the box.
+- **Accepted:** in History, clicking a commit only expands its details; the diff opens when one of its files is clicked. (The Log view still opens a commit's diff on click, as before.)
+- **Accepted:** History and Log mark which commits are on a remote: an amber **↑** and a hollow graph node for a commit no remote-tracking branch contains, a quiet **✓** for a pushed one. Nothing is marked in a repository with no remote. The server computes it with one `git rev-list --branches --not --remotes`.
+
 ### Declined (do not re-propose without asking)
 
 Server-side timeouts on commit, revert and reset; a server cap on the file list; renaming `vendor/`; artifact attestation; creating tags; bisect; checkpoints; patch export/import; code symbols and go to symbol; an agent activity feed; the accessibility pass (the Ctrl-M Tab escape is the one concession).

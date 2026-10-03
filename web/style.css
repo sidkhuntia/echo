@@ -1195,3 +1195,24 @@ label.set-row { cursor: pointer; }
 #staged-count { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 11px; }
 #log-extra label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
 #log-extra .field { height: 24px; }
+
+/* ---------- layout pass: title bar, view menu, commit under the staged list ---------- */
+.tb-group { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; margin: 0 4px; }
+.tb-group .btn { border-radius: 0; border: 0; } .tb-group .btn + .btn { border-left: 1px solid var(--line); }
+#sync { color: var(--muted); } #sync.attn { color: var(--accent); }
+#sync-more { margin-left: -4px; }
+.layout-switch button { padding: 0 8px; }
+.layout-switch .i { width: 14px; height: 14px; }
+#diff-summary { margin-left: auto; }
+.commit-card.dock { flex: none; padding: 8px 10px 10px; border: 0; border-top: 1px solid var(--line); background: var(--surface); }
+.commit-card.dock[hidden] { display: none; }
+.commit-card.dock h4 { margin: 0 0 6px; }
+.commit-card.dock #commit-message { min-height: 54px; max-height: 120px; }
+
+/* pushed or not: an amber arrow and a hollow graph node for commits no remote has; a quiet check otherwise */
+.pm { display: inline-grid; place-items: center; width: 14px; margin-right: 6px; font: 600 11px var(--mono); flex: none; }
+.pm.up { color: var(--accent); }
+.pm.ok { color: var(--faint); opacity: .55; }
+.lrow.unpushed, .commit-row.unpushed { box-shadow: inset 2px 0 0 var(--accent); }
+.lrow.unpushed .graph circle, .commit-row.unpushed .graph circle { fill: var(--sunk); stroke-width: 2; }
+.c-meta { display: flex; align-items: center; }

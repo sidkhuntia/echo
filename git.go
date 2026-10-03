@@ -37,6 +37,9 @@ type Commit struct {
 	Author  string   `json:"author"`
 	Time    int64    `json:"time"`
 	Subject string   `json:"subject"`
+	// Unpushed is true for a commit no remote-tracking branch contains. It is only set when the
+	// repository has a remote, so a repository with none does not mark everything.
+	Unpushed bool `json:"unpushed,omitempty"`
 }
 
 // CommitDetail is everything the History and Log views show about one commit.
@@ -797,6 +800,7 @@ func (a *App) handleLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	commits := parseCommits(out)
+	a.markUnpushed(commits)
 	more := limit > 0 && len(commits) > limit
 	if more {
 		commits = commits[:limit]
@@ -1255,5 +1259,27 @@ func (a *App) forgetSigs(changes []Change) {
 		if !keep[p] {
 			delete(a.sigs, p)
 		}
+	}
+}
+
+// markUnpushed flags the commits that exist only locally: reachable from a local branch but from no
+// remote-tracking branch. Nothing is flagged when there is no remote to have pushed to.
+func (a *App) markUnpushed(commits []Commit) {
+	if len(commits) == 0 {
+		return
+	}
+	if remotes, err := a.git("remote"); err != nil || strings.TrimSpace(remotes) == "" {
+		return
+	}
+	out, err := a.git("rev-list", "--branches", "--not", "--remotes")
+	if err != nil {
+		return
+	}
+	local := map[string]bool{}
+	for _, h := range parseLines(out) {
+		local[h] = true
+	}
+	for i := range commits {
+		commits[i].Unpushed = local[commits[i].Hash]
 	}
 }

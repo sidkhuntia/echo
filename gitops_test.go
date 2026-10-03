@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -495,5 +496,32 @@ func TestRemotesAndResolve(t *testing.T) {
 		if c.Path == "c.txt" && c.Conflict {
 			t.Error("c.txt should be resolved")
 		}
+	}
+}
+
+func TestLogMarksUnpushedCommits(t *testing.T) {
+	a := cleanRepo(t)
+	// No remote: nothing is flagged.
+	var lg struct{ Commits []Commit }
+	_ = json.Unmarshal(request(a, "GET", "/api/history?ref=HEAD", "").Body.Bytes(), &lg)
+	for _, c := range lg.Commits {
+		if c.Unpushed {
+			t.Fatalf("%s flagged with no remote", c.Short)
+		}
+	}
+	bare := filepath.Join(t.TempDir(), "remote.git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", bare).CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	act(t, a, map[string]any{"action": "remote:add", "from": "origin", "url": bare})
+	gitIn(t, a, "push", "-q", "-u", "origin", "main")
+	pushed := commitFile(t, a, "later.txt", "x\n", "local only")
+	_ = json.Unmarshal(request(a, "GET", "/api/history?ref=HEAD", "").Body.Bytes(), &lg)
+	flags := map[string]bool{}
+	for _, c := range lg.Commits {
+		flags[c.Subject] = c.Unpushed
+	}
+	if !flags["local only"] || flags["init"] {
+		t.Errorf("flags = %v (head %s)", flags, pushed[:7])
 	}
 }
