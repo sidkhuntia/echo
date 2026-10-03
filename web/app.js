@@ -14,6 +14,7 @@ import * as Ed from './editor.js'
 import * as Rp from './replace.js'
 import * as Pv from './preview.js'
 import * as FO from './fileops.js'
+import { commands } from './commands.js'
 import { wordRanges, pairRuns, injectMarks } from './wordiff.js'
 import { layoutGraph, graphWidth, graphSVG, railSVG, LOG_H, HIST_H } from './graph.js'
 
@@ -45,6 +46,7 @@ const state = {
   // widths: the side panels' dragged widths, written to the desk grid as --tree-w and --git-w.
   widths: { tree: 272, git: 300 },
   // search: the Search rail. ran is the query and options the shown results came from; ctl aborts the one in flight.
+  closed: [], recent: (() => { try { return JSON.parse(localStorage.getItem('echo:recent')) || [] } catch { return [] } })(),
   search: { opts: { case: false, word: false, regex: false }, ran: null, res: null, err: '', ctl: null, timer: 0, closed: new Set() },
 }
 const mod = e => e.metaKey || e.ctrlKey
@@ -1047,6 +1049,8 @@ async function openFile(path, { line = 0, fromReview = false, find: hit = null }
   if (line) state.tabs[i].preview = false
   state.active = i
   state.selected = path
+  state.recent = [path, ...state.recent.filter(p => p !== path)].slice(0, 30)
+  try { localStorage.setItem('echo:recent', JSON.stringify(state.recent)) } catch {}
   state.returnTo = fromReview ? path : ''
   setMode('file')
   renderTabs()
@@ -1072,16 +1076,26 @@ function placeCaret(line) {
   paintGutter()
 }
 
-async function closeTab(i) {
+async function closeTab(i, force = false) {
   const t = state.tabs[i]
-  if (t.content !== t.saved) {
+  if (t.content !== t.saved && !force) {
     const ok = await ask({ title: 'Close without saving', kicker: 'unsaved', tone: 'danger', ok: 'Discard edits', html: `<p><b>${esc(t.path)}</b> has changes that were never saved.</p>` })
     if (!ok || state.tabs[i] !== t) return
   }
+  state.closed.unshift({ path: t.path, caret: t.caret || 0, scroll: t.scroll || 0 })
+  state.closed.length = Math.min(state.closed.length, 20)
   state.tabs.splice(i, 1)
   if (state.active >= state.tabs.length || state.active > i) state.active--
   if (state.active < 0 && state.tabs.length) state.active = 0
   renderTabs(); renderEditor()
+}
+
+async function reopenClosedTab() {
+  const c = state.closed.shift()
+  if (!c) return setStatus('No closed tab to reopen')
+  await openFile(c.path)
+  const t = activeTab()
+  if (t && t.path === c.path) { t.caret = c.caret; t.scroll = c.scroll; renderEditor() }
 }
 
 function renderTabs() {
@@ -2609,20 +2623,31 @@ function highlightHits(s, hits) {
   return [...s].map((ch, i) => set.has(i) ? `<mark>${esc(ch)}</mark>` : esc(ch)).join('')
 }
 
-async function openPalette() {
+async function openPalette(initial = '') {
   await ensureTree()
   $('#palette').hidden = false
-  $('#palette-input').value = ''
+  $('#palette-input').value = initial
   renderPalette()
   $('#palette-input').focus()
 }
 
 function renderPalette() {
-  const q = $('#palette-input').value.trim().toLowerCase().replace(/\s+/g, '')
+  const raw = $('#palette-input').value
+  $('#palette-input').placeholder = raw.startsWith('>') ? 'Run a command…' : 'Go to file…  (type > for commands)'
+  if (raw.startsWith('>')) {
+    const q = raw.slice(1).trim().toLowerCase().replace(/\s+/g, '')
+    const items = commands().map(c => { if (!q) return { cmd: c, hits: [], score: 0 }; const m = fuzzy(q, c.title); return m && { cmd: c, hits: m.hits, score: m.score } }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 60)
+    state.palette = { items, sel: 0 }
+    return paintPalette()
+  }
+  const q = raw.trim().toLowerCase().replace(/\s+/g, '')
   const paths = [...new Set([...state.changes.keys(), ...state.tree.map(f => f.path)])]
   let items
-  if (!q) items = paths.slice(0, 60).map(p => ({ p, hits: [] }))
-  else items = paths.map(p => { const m = fuzzy(q, p); return m && { p, hits: m.hits, score: m.score + (state.changes.has(p) ? 2 : 0) } }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 60)
+  if (!q) {
+    // Nothing typed: the files you were just in come first.
+    const recent = state.recent.filter(p => paths.includes(p)), rest = paths.filter(p => !recent.includes(p))
+    items = [...recent.map(p => ({ p, hits: [], recent: true })), ...rest.map(p => ({ p, hits: [] }))].slice(0, 60)
+  } else items = paths.map(p => { const m = fuzzy(q, p); return m && { p, hits: m.hits, score: m.score + (state.changes.has(p) ? 2 : 0) + (state.recent.includes(p) ? 1.5 : 0) } }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 60)
   state.palette = { items, sel: 0 }
   paintPalette()
 }
@@ -2630,12 +2655,13 @@ function renderPalette() {
 function paintPalette() {
   const { items, sel } = state.palette
   $('#palette-list').innerHTML = items.map((it, i) => {
+    if (it.cmd) return `<div class="pitem cmd ${i === sel ? 'sel' : ''}" data-i="${i}"><span>${highlightHits(it.cmd.title, it.hits)}</span><i>${esc(it.cmd.group)}</i>${it.cmd.kbd ? `<kbd>${esc(it.cmd.kbd)}</kbd>` : ''}</div>`
     const c = state.changes.get(it.p)
     const cut = it.p.lastIndexOf('/') + 1
     const name = highlightHits(it.p.slice(cut), it.hits.filter(h => h >= cut).map(h => h - cut))
     const dir = highlightHits(it.p.slice(0, cut), it.hits.filter(h => h < cut))
-    return `<div class="pitem ${i === sel ? 'sel' : ''}" data-i="${i}"><span>${name}</span><i>${dir}</i>${c ? codeTag(c) : ''}</div>`
-  }).join('') || '<div class="empty">No path matches.</div>'
+    return `<div class="pitem ${i === sel ? 'sel' : ''}" data-i="${i}"><span>${name}</span><i>${dir}</i>${it.recent ? '<em class="recent-tag">recent</em>' : ''}${c ? codeTag(c) : ''}</div>`
+  }).join('') || '<div class="empty">No match.</div>'
   $('#palette-list .sel')?.scrollIntoView({ block: 'nearest' })
 }
 
@@ -2643,6 +2669,7 @@ function choosePalette(i) {
   const it = state.palette.items[i]
   if (!it) return
   $('#palette').hidden = true
+  if (it.cmd) return void setTimeout(() => it.cmd.run(), 0)
   if (state.tree.some(f => f.path === it.p)) openFile(it.p)
   else goTo(it.p)
 }
@@ -3512,9 +3539,11 @@ document.addEventListener('keydown', e => {
       if (sel) { $('#search-input').value = sel; scheduleSearch(0) }
       $('#search-input').select()
     }
+    else if (e.altKey && e.code === 'KeyT') { e.preventDefault(); reopenClosedTab() }
     else if (k === 'f' && e.altKey) { if (inEditor()) { e.preventDefault(); const sel = editorSelection(); showFind(sel || null); Rp.toggleReplace(true) } }
     else if (k === 'f' && !e.altKey) { if (inEditor()) { e.preventDefault(); const sel = editorSelection(); showFind(sel || null) } }
     else if (k === 'g' && find.open && inEditor()) { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1) }
+    else if (k === 'p' && e.shiftKey) { e.preventDefault(); openPalette('>') }
     else if (k === 'k' || k === 'p') { e.preventDefault(); openPalette() }
     else if (k === 'b') { e.preventDefault(); toggleTree() }
     else if (k === 'j') { e.preventDefault(); toggleGit() }
@@ -3749,7 +3778,7 @@ async function boot() {
   persistSession()
 }
 syncScopeInputs()
-Object.assign(ctx, { renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => Ed.applySettings(), rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
+Object.assign(ctx, { undoLastCommit, openPalette, reopenClosedTab, openFileHistory, closeTab, showFind, stepFind, renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => Ed.applySettings(), rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
 R.initReview()
 Ops.initOps()
 Pv.initPreview()

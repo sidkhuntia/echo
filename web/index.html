@@ -184,6 +184,7 @@
       <textarea id="editor" class="editor" spellcheck="false" wrap="off"></textarea>
       <div id="occ" class="syntax findmarks occ" aria-hidden="true"></div>
       <div id="findmarks" class="syntax findmarks" aria-hidden="true"></div>
+      <div id="vimcur" class="syntax findmarks vim" aria-hidden="true"></div>
       <div id="mcmarks" class="syntax findmarks mc" aria-hidden="true"></div>
       <div id="ruler" class="ruler" hidden></div>
       <div id="sticky" class="sticky" hidden></div>
@@ -276,6 +277,8 @@
   <span class="live"></span>
   <span id="status">Ready</span>
   <span id="pos" class="pos"></span>
+  <span id="vim-mode-badge" class="vim-badge" hidden></span>
+  <input id="vim-cmd" class="vim-cmd" placeholder=":" hidden autocomplete="off" spellcheck="false" aria-label="Editor command">
   <span class="console-help"><span><kbd>j</kbd><kbd>k</kbd> hunk</span><span><kbd>n</kbd><kbd>p</kbd> file</span><span><kbd>s</kbd> stage</span><span><kbd>e</kbd> edit</span><span><kbd>⌘J</kbd> Git</span><span><kbd>?</kbd> keys</span></span>
 </footer>
 
@@ -327,7 +330,9 @@
   <div class="modal-card">
     <div class="modal-head"><span>Keyboard shortcuts</span><button class="btn quiet icon" data-close>×</button></div>
     <dl class="keys">
-      <dt><kbd>⌘K</kbd> <kbd>⌘P</kbd></dt><dd>Go to file</dd>
+      <dt><kbd>⌘K</kbd> <kbd>⌘P</kbd></dt><dd>Go to file (recent files first)</dd>
+      <dt><kbd>⌘⇧P</kbd></dt><dd>Command palette: every action by name</dd>
+      <dt><kbd>⌘⌥T</kbd></dt><dd>Reopen the last closed tab</dd>
       <dt><kbd>⌘D</kbd></dt><dd>Switch Review / Files</dd>
       <dt><kbd>⌘⇧O</kbd></dt><dd>Switch repository</dd>
       <dt><kbd>⌘F</kbd></dt><dd>Find in the open file (<kbd>↵</kbd> next, <kbd>⇧↵</kbd> previous, <kbd>Esc</kbd> close)</dd>
@@ -346,6 +351,16 @@
       <dt><kbd>Esc</kbd></dt><dd>In the editor: back to the review line you came from</dd>
       <dt><kbd>↑</kbd> <kbd>↓</kbd> <kbd>j</kbd> <kbd>k</kbd></dt><dd>In Log: previous / next commit</dd>
       <dt><kbd>↵</kbd></dt><dd>In Log: show the commit's diff (<kbd>Esc</kbd> comes back)</dd>
+      <dt><kbd>a</kbd> <kbd>x</kbd> <kbd>c</kbd></dt><dd>Review: accept / reject / comment on the current hunk</dd>
+      <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Review: previous / next hunk not yet decided</dd>
+      <dt><kbd>⌘/</kbd></dt><dd>Editor: toggle comment</dd>
+      <dt><kbd>⌥↑</kbd> <kbd>⌥↓</kbd></dt><dd>Editor: move line (<kbd>⇧</kbd> duplicates)</dd>
+      <dt><kbd>⌘⇧K</kbd></dt><dd>Editor: delete line</dd>
+      <dt><kbd>⌘⇧\</kbd></dt><dd>Editor: jump to the matching bracket</dd>
+      <dt><kbd>⌘⌥D</kbd> <kbd>⌘⇧L</kbd></dt><dd>Editor: add the next match as a cursor / select every match</dd>
+      <dt><kbd>⌘⌥↑</kbd> <kbd>⌘⌥↓</kbd></dt><dd>Editor: add a cursor above / below</dd>
+      <dt><kbd>⌘⌥F</kbd></dt><dd>Editor: find and replace</dd>
+      <dt><kbd>Tab</kbd> <kbd>⇧Tab</kbd></dt><dd>Editor: indent / outdent (<kbd>Ctrl-M</kbd> makes Tab move focus instead)</dd>
       <dt><kbd>?</kbd></dt><dd>Show this card</dd>
       <dt><kbd>⌘,</kbd></dt><dd>Settings</dd>
       <dt><kbd>Esc</kbd></dt><dd>Close overlays</dd>
@@ -410,7 +425,7 @@
         <div class="set-row"><span class="set-text"><b>Open in</b><small>The editor the Open in… button and menus use. It must be on your PATH.</small></span>
           <select class="field" data-cfg="externalEditor"><option value="">System default</option><option value="code">VS Code</option><option value="cursor">Cursor</option><option value="zed">Zed</option><option value="subl">Sublime Text</option></select></div>
         <label class="set-row"><span class="set-text"><b>Inline blame</b><small>Who last changed the caret line, shown at the end of it.</small></span><span class="toggle"><input id="inline-blame" type="checkbox"><span class="sw"></span></span></label>
-        <label class="set-row"><span class="set-text"><b>Vim keys in Files</b><small><kbd>j</kbd> and <kbd>k</kbd> scroll the file when the editor is not focused.</small></span><span class="toggle"><input id="vim-mode" type="checkbox"><span class="sw"></span></span></label>
+        <label class="set-row"><span class="set-text"><b>Vim mode</b><small>Modal editing in the editor: motions, operators, visual mode, <kbd>.</kbd> repeat, <kbd>/</kbd> search and <kbd>:w</kbd> <kbd>:q</kbd>. <kbd>j</kbd> and <kbd>k</kbd> still scroll when the editor is not focused.</small></span><span class="toggle"><input id="vim-mode" type="checkbox"><span class="sw"></span></span></label>
       </section>
       <section class="set-sec" data-pane="commit" hidden>
         <h4>Commit</h4>

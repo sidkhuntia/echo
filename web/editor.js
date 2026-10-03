@@ -5,6 +5,7 @@ import { ctx } from './ctx.js'
 import * as E from './editing.js'
 import { replaceRange, applyText } from './edit.js'
 import * as MC from './multicursor.js'
+import * as Vim from './vimui.js'
 
 const ed = () => ctx.$('#editor')
 const cfg = () => ctx.state.config
@@ -270,7 +271,7 @@ function minimapScroll(ev) {
 
 // ---------- the one entry point app.js calls after it paints the text ----------
 export function paintExtras() {
-  paintRuler(); paintGuides(); paintOccurrences(); paintScopes(); paintMinimapView(); MC.paint()
+  paintRuler(); paintGuides(); paintOccurrences(); paintScopes(); paintMinimapView(); MC.paint(); Vim.refreshVim()
 }
 
 export function onRender() {
@@ -301,6 +302,7 @@ export function decorateRow(html) {
 
 export function initEditor() {
   const e = ed()
+  Vim.initVim()
   MC.initMulti()
   ctx.indentUnit = () => unitFor(tab())
   e.addEventListener('keydown', onKeyDown)

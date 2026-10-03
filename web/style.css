@@ -1184,3 +1184,11 @@ label.set-row { cursor: pointer; }
 .img-meta { display: flex; gap: 12px; align-items: center; color: var(--muted); font: 12px var(--mono); }
 .csv-doc { max-width: none; }
 .tnode.drop { background: var(--accent-soft); outline: 1px dashed var(--accent); }
+.vim { z-index: 1; }
+.vim mark.vcur { background: var(--accent); color: var(--on-accent); border-radius: 1px; }
+.vim-badge { margin-left: auto; margin-right: 12px; font: 600 11px var(--mono); color: var(--accent); }
+.vim-cmd { position: absolute; left: 18px; right: 18px; bottom: 2px; height: 20px; border: 0; background: var(--surface); color: var(--fg); font: 12px var(--mono); padding: 0 6px; border-radius: 4px; outline: 1px solid var(--accent); z-index: 5; }
+.statusbar { position: relative; }
+.pitem.cmd i { margin-left: auto; }
+.pitem kbd { margin-left: 8px; }
+.recent-tag { margin-left: auto; font: 10px var(--mono); color: var(--faint); text-transform: uppercase; letter-spacing: .06em; font-style: normal; }
