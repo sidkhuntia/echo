@@ -27,3 +27,17 @@ export function lineIndex(text, offset) {
   for (let k = text.indexOf('\n'); k >= 0 && k < offset; k = text.indexOf('\n', k + 1)) n++
   return n
 }
+
+// applyText makes the textarea hold newText by replacing only the part that differs, so undo history
+// and the caret survive (used to trim whitespace on save, format JSON and similar whole-text edits).
+export function applyText(ed, newText) {
+  const old = ed.value
+  if (old === newText) return
+  let a = 0
+  while (a < old.length && a < newText.length && old[a] === newText[a]) a++
+  let bo = old.length, bn = newText.length
+  while (bo > a && bn > a && old[bo - 1] === newText[bn - 1]) { bo--; bn-- }
+  const caret = ed.selectionStart, delta = newText.length - old.length
+  const next = caret <= a ? caret : caret >= bo ? caret + delta : a + (bn - a)
+  replaceRange(ed, a, bo, newText.slice(a, bn), next)
+}

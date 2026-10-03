@@ -1129,3 +1129,25 @@ label.set-row { cursor: pointer; }
 .lrow.sel .graph circle, .commit-row.open .graph circle { stroke: var(--accent); stroke-width: 2.5; }
 .graph circle { transition: r .12s; } .lrow:hover .graph circle { r: 4.5; }
 .hunk-head .hacts { margin-left: auto; margin-right: 8px; }
+
+/* ---------- editor extras ---------- */
+.code-view, .editor { font: var(--ed-fs, 12.5px)/20px var(--mono); tab-size: var(--ed-tab, 4); }
+.syntax, .wrap-mirror { font: var(--ed-fs, 12.5px)/20px var(--mono); tab-size: var(--ed-tab, 4); }
+.guides { background: transparent; z-index: 0; }
+.guides i { position: absolute; left: 0; height: 20px; background-image: linear-gradient(90deg, var(--guide, color-mix(in srgb, var(--fg) 14%, transparent)) 1px, transparent 1px); background-repeat: repeat-x; }
+.occ { z-index: 1; background: transparent; color: transparent; }
+.occ mark { background: color-mix(in srgb, var(--fg) 14%, transparent); color: transparent; border-radius: 2px; }
+.ruler { position: absolute; top: 0; bottom: 0; width: 1px; z-index: 1; pointer-events: none; background: color-mix(in srgb, var(--fg) 16%, transparent); }
+.ws-t, .ws-s { position: relative; }
+.ws-t::before { content: "→"; position: absolute; left: 0; opacity: .3; }
+.ws-s::before { content: "·"; position: absolute; left: 0; right: 0; opacity: .35; letter-spacing: 0; white-space: pre; overflow: hidden; }
+.sticky { position: absolute; z-index: 3; top: 0; left: 0; right: 14px; background: var(--sunk); border-bottom: 1px solid var(--line-2); box-shadow: 0 4px 10px -6px rgba(0,0,0,.4); }
+.sticky-row { height: 20px; padding-left: 72px; font: var(--ed-fs, 12.5px)/20px var(--mono); color: var(--fg-2); white-space: pre; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.sticky-row:hover { background: var(--hover); color: var(--fg); }
+.minimap { position: absolute; z-index: 2; top: 0; right: 14px; width: 80px; opacity: .85; cursor: pointer; }
+.mm-view { position: absolute; z-index: 2; right: 14px; width: 80px; background: color-mix(in srgb, var(--fg) 10%, transparent); pointer-events: none; }
+.stage.mm-on .editor { padding-right: 104px; }
+.crumb-sym { margin-left: 8px; color: var(--muted); font-size: 12px; }
+.crumb-sym .sym { cursor: pointer; } .crumb-sym .sym:hover { color: var(--accent); }
+.crumb-sym i { font-style: normal; margin: 0 5px; color: var(--faint); }
+.set-pair { display: inline-flex; gap: 6px; }

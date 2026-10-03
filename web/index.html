@@ -141,6 +141,8 @@
           <button data-md="edit" role="tab">Edit</button>
         </div>
         <span id="stage-count" class="summary"></span>
+        <button id="eol" class="btn quiet sm" hidden title="Line endings. Click to convert the file.">LF</button>
+        <button id="json-format" class="btn quiet sm" hidden title="Pretty-print this JSON (Shift-click to minify)">Format JSON</button>
         <button id="file-history" class="btn quiet sm" hidden title="Commits that changed this file, across renames">History</button>
         <button id="blame-toggle" class="btn quiet sm" hidden title="Show who last changed each line; click an entry to see its commit">Blame</button>
         <button id="save" class="btn primary" hidden disabled>Save <kbd>⌘S</kbd></button>
@@ -156,7 +158,7 @@
       <span class="grow"></span>
       <span class="faint fb-keys"><kbd>a</kbd> accept <kbd>x</kbd> reject <kbd>c</kbd> note <kbd>[</kbd><kbd>]</kbd> next undecided</span>
     </div>
-    <div id="file-crumb" class="crumb" hidden><span id="file-path" class="file-path"></span></div>
+    <div id="file-crumb" class="crumb" hidden><span id="file-path" class="file-path"></span><span id="crumb-sym" class="crumb-sym"></span></div>
     <div id="banner" class="banner" hidden></div>
     <div id="conflict-bar" class="banner conflict-bar" hidden></div>
     <div class="stage">
@@ -170,10 +172,16 @@
       <div id="highlight" class="code-view"></div>
       <div id="md" class="md-view"></div>
       <div id="syntax" class="syntax" aria-hidden="true"></div>
+      <div id="guides" class="syntax guides" aria-hidden="true"></div>
       <div id="wrap-mirror" class="wrap-mirror" aria-hidden="true"></div>
       <div id="gutter" class="gutter" aria-hidden="true"></div>
       <textarea id="editor" class="editor" spellcheck="false" wrap="off"></textarea>
+      <div id="occ" class="syntax findmarks occ" aria-hidden="true"></div>
       <div id="findmarks" class="syntax findmarks" aria-hidden="true"></div>
+      <div id="ruler" class="ruler" hidden></div>
+      <div id="sticky" class="sticky" hidden></div>
+      <canvas id="minimap" class="minimap" width="80" hidden></canvas>
+      <div id="mm-view" class="mm-view" hidden></div>
       <div id="findbar" class="findbar" role="search" hidden>
         <input id="find-input" class="field" placeholder="Find" autocomplete="off" spellcheck="false" aria-label="Find in file">
         <button class="btn quiet icon xs" data-fopt="case" title="Match case" aria-pressed="false">Aa</button>
@@ -374,6 +382,24 @@
         <h4>Editor</h4>
         <div class="set-row"><span class="set-text"><b>Change bars compare against</b><small>HEAD draws staged lines hollow; the index shows only unstaged changes.</small></span>
           <select id="gutter-base" class="field"><option value="head">HEAD</option><option value="index">Index</option></select></div>
+        <div class="set-row"><span class="set-text"><b>Font size</b><small>The editor's text size. Line height stays fixed.</small></span>
+          <select class="field" data-cfg="fontSize" data-type="int"><option>11</option><option>12</option><option>13</option><option>14</option><option>15</option><option>16</option></select></div>
+        <div class="set-row"><span class="set-text"><b>Indentation</b><small>Auto follows what the file already uses.</small></span>
+          <span class="set-pair"><select class="field" data-cfg="indent"><option value="auto">Auto</option><option value="spaces">Spaces</option><option value="tabs">Tabs</option></select><select class="field" data-cfg="tabSize" data-type="int"><option value="0">Detect</option><option value="2">2</option><option value="4">4</option><option value="8">8</option></select></span></div>
+        <div class="set-row"><span class="set-text"><b>Ruler</b><small>A vertical line at this column.</small></span>
+          <select class="field" data-cfg="ruler" data-type="int"><option value="0">None</option><option value="72">72</option><option value="80">80</option><option value="100">100</option><option value="120">120</option></select></div>
+        <label class="set-row"><span class="set-text"><b>Show whitespace</b><small>Tabs and the spaces at the ends of lines, drawn faintly.</small></span><span class="toggle"><input type="checkbox" data-cfg="whitespace"><span class="sw"></span></span></label>
+        <label class="set-row"><span class="set-text"><b>Indent guides</b><small>Vertical lines at each indentation level.</small></span><span class="toggle"><input type="checkbox" data-cfg="indentGuides"><span class="sw"></span></span></label>
+        <label class="set-row"><span class="set-text"><b>Minimap</b><small>A thin overview of the file at the right edge.</small></span><span class="toggle"><input type="checkbox" data-cfg="minimap"><span class="sw"></span></span></label>
+        <label class="set-row"><span class="set-text"><b>Sticky scroll</b><small>Keep the enclosing function and class headers at the top while you scroll.</small></span><span class="toggle"><input type="checkbox" data-cfg="sticky"><span class="sw"></span></span></label>
+        <label class="set-row"><span class="set-text"><b>Close brackets and quotes</b><small>Typing ( [ { or a quote adds its partner.</small></span><span class="toggle"><input type="checkbox" data-cfg="autoClose"><span class="sw"></span></span></label>
+        <label class="set-row"><span class="set-text"><b>Highlight other uses of a word</b><small>Mark the word under the caret wherever it appears on screen.</small></span><span class="toggle"><input type="checkbox" data-cfg="occurrences"><span class="sw"></span></span></label>
+        <label class="set-row"><span class="set-text"><b>Trim trailing whitespace on save</b></span><span class="toggle"><input type="checkbox" data-cfg="trimTrailing"><span class="sw"></span></span></label>
+        <label class="set-row"><span class="set-text"><b>End files with a newline on save</b></span><span class="toggle"><input type="checkbox" data-cfg="finalNewline"><span class="sw"></span></span></label>
+        <div class="set-row"><span class="set-text"><b>Autosave</b><small>Off saves only with ⌘S.</small></span>
+          <select class="field" data-cfg="autosave"><option value="off">Off</option><option value="delay">After a pause</option><option value="blur">When focus leaves</option></select></div>
+        <div class="set-row"><span class="set-text"><b>Open in</b><small>The editor the Open in… button and menus use. It must be on your PATH.</small></span>
+          <select class="field" data-cfg="externalEditor"><option value="">System default</option><option value="code">VS Code</option><option value="cursor">Cursor</option><option value="zed">Zed</option><option value="subl">Sublime Text</option></select></div>
         <label class="set-row"><span class="set-text"><b>Inline blame</b><small>Who last changed the caret line, shown at the end of it.</small></span><span class="toggle"><input id="inline-blame" type="checkbox"><span class="sw"></span></span></label>
         <label class="set-row"><span class="set-text"><b>Vim keys in Files</b><small><kbd>j</kbd> and <kbd>k</kbd> scroll the file when the editor is not focused.</small></span><span class="toggle"><input id="vim-mode" type="checkbox"><span class="sw"></span></span></label>
       </section>

@@ -10,6 +10,7 @@ import { popMenu } from './ui.js'
 import { rebaseUI } from './rebase.js'
 import { compareUI } from './compare.js'
 import * as T from './tools.js'
+import * as Ed from './editor.js'
 import { wordRanges, pairRuns, injectMarks } from './wordiff.js'
 import { layoutGraph, graphWidth, graphSVG, railSVG, LOG_H, HIST_H } from './graph.js'
 
@@ -1128,6 +1129,7 @@ function renderEditor() {
   refreshGutter()
   paintSyntax()
   paintFind()
+  Ed.onRender()
 }
 
 // ---------- syntax highlighting ----------
@@ -1141,11 +1143,12 @@ function paintSyntax() {
   const rows = editing && tab.hl.rows
   ed.classList.toggle('hl', !!rows)
   layer.classList.toggle('active', !!rows)
-  if (!rows) { layer.innerHTML = ''; return }
+  if (!rows) { layer.innerHTML = ''; Ed.paintExtras(); return }
   const [first, last] = visibleRange(tab)
   let h = ''
-  for (let i = first; i < last; i++) h += `<div class="sl" style="top:${lineTop(i) - ed.scrollTop}px">${rows[i] ?? ''}</div>`
+  for (let i = first; i < last; i++) h += `<div class="sl" style="top:${lineTop(i) - ed.scrollTop}px">${Ed.decorateRow(rows[i] ?? '')}</div>`
   layer.innerHTML = `<div style="transform:translateX(${-ed.scrollLeft}px)">${h}</div>`
+  Ed.paintExtras()
 }
 
 // ---------- markdown preview ----------
@@ -1728,6 +1731,7 @@ async function syncTabs() {
 async function saveFile(force = false) {
   const tab = activeTab()
   if (!tab || tab.binary || tab.tooLarge || state.mode !== 'file') return
+  Ed.beforeSave()
   tab.content = $('#editor').value
   try {
     const content = tab.eol === '\r\n' ? tab.content.replace(/\n/g, '\r\n') : tab.content
@@ -3182,6 +3186,7 @@ $('#editor').addEventListener('input', () => {
   paintSyntax()
   paintFind()
   Ops.renderConflictBar()
+  Ed.onInput()
   clearTimeout(marksTimer)
   marksTimer = setTimeout(() => { if (t === activeTab()) { computeMarks(t); paintGutter() } }, 120)
 })
@@ -3532,6 +3537,7 @@ async function loadConfig() {
   document.querySelectorAll('.layout-switch button').forEach(b => b.classList.toggle('on', b.dataset.layout === state.config.diffMode))
   if (state.diffFiles.length) renderDiff()
   applyTheme()
+  Ed.applySettings()
 }
 
 // ---------- session ----------
@@ -3698,9 +3704,10 @@ async function boot() {
   persistSession()
 }
 syncScopeInputs()
-Object.assign(ctx, { rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
+Object.assign(ctx, { visibleRange, lineTop, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => Ed.applySettings(), rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
 R.initReview()
 Ops.initOps()
+Ed.initEditor()
 T.initTools()
 G.init()
 boot()
