@@ -131,6 +131,26 @@ type gitRequest struct {
 	Parent int `json:"parent"`
 	// Worktree limits discard to unstaged changes, so staged work survives.
 	Worktree bool `json:"worktree"`
+	// Patch, Target and Reverse drive "apply": stage, unstage or discard the hunks in a patch.
+	Patch   string `json:"patch"`
+	Target  string `json:"target"`
+	Reverse bool   `json:"reverse"`
+	// Signoff and CoAuthors are the commit box's toggles.
+	Signoff   bool     `json:"signoff"`
+	CoAuthors []string `json:"coAuthors"`
+	// NoFF and Squash choose how a merge is made.
+	NoFF   bool `json:"noff"`
+	Squash bool `json:"squash"`
+	// Remote, Strategy, Tags and SetUpstream shape fetch, pull and push.
+	Remote      string `json:"remote"`
+	Strategy    string `json:"strategy"` // pull: ff-only, rebase, merge
+	Tags        bool   `json:"tags"`
+	SetUpstream bool   `json:"setUpstream"`
+	// Todo is an interactive rebase plan.
+	Todo []TodoItem `json:"todo"`
+	// URL and Name serve remote and worktree actions.
+	URL  string `json:"url"`
+	Name string `json:"name"`
 }
 
 func (a *App) handleGitStatus(w http.ResponseWriter, r *http.Request) {
@@ -219,10 +239,15 @@ func (a *App) handleGit(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if req.Action == "discard" {
 		out, err = a.discard(req.Paths, req.Worktree)
+	} else if o, e, ok := a.extraGit(req); ok {
+		out, err = o, e
 	} else if req.Action == "discard:restore" {
 		out, err = a.restoreDiscard()
 	} else if req.Action == "commit:all" {
-		out, err = a.commitAll(req.Message)
+		var opts []string
+		if opts, err = commitOpts(req); err == nil {
+			out, err = a.commitAll(req.Message, opts...)
+		}
 	} else if req.Action == "reset:soft" {
 		out, err = a.resetSoft(req.From)
 	} else if req.Action == "revert" {
@@ -233,7 +258,7 @@ func (a *App) handleGit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer a.net.Unlock()
-		out, err = a.network(req.Action)
+		out, err = a.network(req)
 	} else {
 		args, argErr := a.gitArgs(req)
 		if argErr != nil {
@@ -316,12 +341,20 @@ func (a *App) gitArgs(req gitRequest) ([]string, error) {
 		if strings.TrimSpace(req.Message) == "" {
 			return nil, errors.New("commit message required")
 		}
-		return []string{"commit", "-m", req.Message}, nil
+		opts, err := commitOpts(req)
+		if err != nil {
+			return nil, err
+		}
+		return append([]string{"commit", "-m", req.Message}, opts...), nil
 	case "amend":
 		if strings.TrimSpace(req.Message) == "" {
 			return nil, errors.New("commit message required")
 		}
-		return []string{"commit", "--amend", "-m", req.Message}, nil
+		opts, err := commitOpts(req)
+		if err != nil {
+			return nil, err
+		}
+		return append([]string{"commit", "--amend", "-m", req.Message}, opts...), nil
 	case "rebase", "merge", "branch:create", "branch:switch", "branch:track", "branch:detach", "branch:delete":
 		if err := validRef(req.From); err != nil {
 			return nil, err
@@ -347,6 +380,16 @@ func (a *App) gitArgs(req gitRequest) ([]string, error) {
 			// -d, not -D: Git refuses to delete a branch whose commits are not merged anywhere.
 			return []string{"branch", "-d", req.From}, nil
 		}
+		if req.Action == "merge" {
+			args := []string{"merge"}
+			if req.NoFF {
+				args = append(args, "--no-ff")
+			}
+			if req.Squash {
+				args = append(args, "--squash")
+			}
+			return append(args, req.From), nil
+		}
 		return []string{req.Action, req.From}, nil
 	case "revert:abort":
 		return []string{"revert", "--abort"}, nil
@@ -357,7 +400,12 @@ func (a *App) gitArgs(req gitRequest) ([]string, error) {
 		if strings.TrimSpace(req.Message) == "" {
 			req.Message = "echo stash"
 		}
-		return []string{"stash", "push", "-u", "-m", req.Message}, nil
+		args := []string{"stash", "push", "-u", "-m", req.Message}
+		if len(paths) > 0 {
+			args = append(args, "--")
+			args = append(args, paths...)
+		}
+		return args, nil
 	case "stash:apply", "stash:pop", "stash:drop":
 		if err := validRef(req.StashRef); err != nil {
 			return nil, err
@@ -368,7 +416,7 @@ func (a *App) gitArgs(req gitRequest) ([]string, error) {
 	}
 }
 
-var netActions = map[string]bool{"fetch": true, "pull": true, "push": true, "push:lease": true, "push:force": true, "sync": true, "publish": true}
+var netActions = map[string]bool{"branch:delete:remote": true, "submodule:update": true, "fetch": true, "pull": true, "push": true, "push:lease": true, "push:force": true, "sync": true, "publish": true}
 
 // forcePush overwrites the current branch's upstream with the local branch. The remote and ref are
 // spelled out so a push.default of "matching" cannot drag other branches into a force push. With a
@@ -393,16 +441,65 @@ func (a *App) forcePush(ctx context.Context, lease bool) (string, error) {
 
 // network runs the actions that talk to a remote. Pull respects the user's pull.rebase/pull.ff
 // config, so a diverged branch with no config stops with Git's own explanation.
-func (a *App) network(action string) (string, error) {
+func (a *App) network(req gitRequest) (string, error) {
+	action := req.Action
 	ctx, cancel := context.WithTimeout(context.Background(), netTimeout)
 	defer cancel()
+	if req.Remote != "" {
+		if err := validRemote(req.Remote, ""); err != nil {
+			return "", err
+		}
+	}
 	switch action {
 	case "fetch":
+		if req.Remote != "" {
+			return a.gitNet(ctx, "fetch", "--prune", req.Remote)
+		}
 		return a.gitNet(ctx, "fetch", "--all", "--prune")
 	case "pull":
-		return a.gitNet(ctx, "pull")
+		args := []string{"pull"}
+		switch req.Strategy {
+		case "":
+		case "ff-only":
+			args = append(args, "--ff-only")
+		case "rebase":
+			args = append(args, "--rebase")
+		case "merge":
+			args = append(args, "--no-rebase")
+		default:
+			return "", fmt.Errorf("unknown pull strategy %q", req.Strategy)
+		}
+		if req.Remote != "" {
+			args = append(args, req.Remote)
+		}
+		return a.gitNet(ctx, args...)
 	case "push":
-		return a.gitNet(ctx, "push")
+		args := []string{"push"}
+		if req.Tags {
+			args = append(args, "--tags")
+		}
+		if req.SetUpstream {
+			branch, err := a.git("branch", "--show-current")
+			branch = strings.TrimSpace(branch)
+			if err != nil || branch == "" || req.Remote == "" {
+				return "", errors.New("set-upstream needs a checked-out branch and a remote")
+			}
+			args = append(args, "-u", req.Remote, branch)
+		} else if req.Remote != "" {
+			args = append(args, req.Remote)
+		}
+		return a.gitNet(ctx, args...)
+	case "branch:delete:remote":
+		if err := validRef(req.From); err != nil {
+			return "", err
+		}
+		remote := req.Remote
+		if remote == "" {
+			return "", errors.New("remote required")
+		}
+		return a.gitNet(ctx, "push", remote, "--delete", req.From)
+	case "submodule:update":
+		return a.gitNet(ctx, "submodule", "update", "--init", "--recursive")
 	case "push:lease", "push:force":
 		return a.forcePush(ctx, action == "push:lease")
 	case "sync":
@@ -422,10 +519,13 @@ func (a *App) network(action string) (string, error) {
 		if err != nil || branch == "" {
 			return "", errors.New("publish needs a checked-out branch")
 		}
-		remotes, _ := a.git("remote")
-		remote, err := pickRemote(parseLines(remotes))
-		if err != nil {
-			return "", err
+		remote := req.Remote
+		if remote == "" {
+			remotes, _ := a.git("remote")
+			var err error
+			if remote, err = pickRemote(parseLines(remotes)); err != nil {
+				return "", err
+			}
 		}
 		return a.gitNet(ctx, "push", "-u", remote, branch)
 	}
@@ -466,7 +566,7 @@ func validRef(ref string) error {
 
 // commitAll stages every change under the root, then commits. It refuses while a conflict is
 // unresolved, because staging would mark it resolved with its markers still in the file.
-func (a *App) commitAll(message string) (string, error) {
+func (a *App) commitAll(message string, opts ...string) (string, error) {
 	if strings.TrimSpace(message) == "" {
 		return "", errors.New("commit message required")
 	}
@@ -480,7 +580,7 @@ func (a *App) commitAll(message string) (string, error) {
 	if out, err := a.gitCombined("add", "-A", "--", "."); err != nil {
 		return out, err
 	}
-	return a.gitCombined("commit", "-m", message)
+	return a.gitCombined(append([]string{"commit", "-m", message}, opts...)...)
 }
 
 // discard restores tracked paths and deletes untracked ones, so files an agent created can be rejected too.
