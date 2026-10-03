@@ -1,10 +1,12 @@
 # echo
 
-A small local-first proof desk for reviewing code written by coding agents, on macOS.
+A small local-first proof desk for reviewing code written by coding agents, on macOS and Linux.
+
+![Review: hunks with word-level marks, a note for the agent, and per-hunk Stage, Discard, Accept and Reject](docs/img/review.png)
 
 ## Install
 
-macOS only (Apple Silicon and Intel). The command is `echo-desk`, so it never collides with your shell's `echo`.
+macOS and Linux (arm64 and amd64). The command is `echo-desk`, so it never collides with your shell's `echo`.
 
 ```sh
 # Homebrew
@@ -14,7 +16,7 @@ brew install sidkhuntia/tap/echo-desk
 curl -fsSL https://raw.githubusercontent.com/sidkhuntia/echo/main/install.sh | sh
 ```
 
-Or download `echo-desk_<version>_darwin_<arch>.tar.gz` from [Releases](https://github.com/sidkhuntia/echo/releases), check it against `checksums.txt`, and put `echo-desk` on your `PATH`.
+Or download `echo-desk_<version>_<darwin|linux>_<arch>.tar.gz` from [Releases](https://github.com/sidkhuntia/echo/releases), check it against `checksums.txt`, and put `echo-desk` on your `PATH`.
 
 From source (Go 1.25+):
 
@@ -33,7 +35,7 @@ cd ~/code/my-project && echo-desk
 echo-desk ~/code/my-project
 ```
 
-It opens your browser at `http://127.0.0.1:6030`. Each process serves one repository. Start echo in another repository and it takes the next free port (up to 6049) in a new tab; start it in a repository that is already open and it just opens that tab. Click the repository name in the title bar (`⌘⇧O`) to switch between open repositories.
+It opens your browser at `http://127.0.0.1:6030`. Each process serves one repository. Start echo in another repository and it takes the next free port (up to 6049) in a new tab; start it in a repository that is already open and it just opens that tab. Click the repository name in the title bar (`⌘⇧O`) to switch between open repositories. What you were doing in each (open files, unsaved edits, scroll positions, review notes) is kept and comes back when you return.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -41,45 +43,62 @@ It opens your browser at `http://127.0.0.1:6030`. Each process serves one reposi
 | `-no-open` | off | Print the URL instead of opening the browser |
 
 - A directory that is not a Git repository still opens, as a plain file browser and editor.
-- Theme and layout settings are global and shared by every repository.
-- Each repository remembers its port, so its tab and browser-side settings survive restarts unless you pass a different `-port`.
+- Theme, editor and layout settings are global and shared by every repository.
+- The printed link carries a per-user secret (`?t=…`, stored `0600` in echo's config directory). It becomes a cookie, so other users and processes on the machine cannot call echo's API.
 - While developing echo itself, `go run . -no-open` runs it from source in the current directory.
 
-## v1
+## The review loop
 
-- collapsible folder tree with path filter
-- multi-file tabs with in-memory unsaved edits
-- plain textarea editor, always editable, syntax-highlighted in the editor and in both diff views
-- Markdown files open rendered, with a Preview / Edit switch (`⌘⇧V`)
-- Changes sidebar grouped like VS Code: staged and unstaged changes (and conflicts) listed separately, with `+`/`−` to stage or unstage a file and Stage all / Unstage all on each group
-- per-file diffs including untracked files; all-changes, unstaged, staged, ref-range, and single-commit scopes
-- stacked or split diff layout
-- double-click a diff line to edit the file there; the editor gutter shows changes vs HEAD (staged hollow) or the index
-- title bar with incoming ↓ / outgoing ↑ commits, Fetch, and Sync (or Publish for a branch with no upstream)
-- Log view: commit graph of every branch with branch and tag labels, filters (message or hash, branch, author, path), and a details pane with the full message, containing branches, and changed files
-- History tab: the current branch's graph; commits expand to show their details and files
-- file history (follows renames), inline blame on the caret line, and a blame column in the editor
-- compare two branches: commits only on each side, and the merge-base diff
-- Branches: a sidebar tree (local, remote, tags) that filters the Log, and a branches popup on the branch name with checkout, new branch, merge, rebase, compare, and delete
-- saves never overwrite a file an agent changed after you opened it
-- keys: `n`/`p` file, `j`/`k` hunk, `e` edit at hunk, `o` open, `⌘K` find a file
-- file create, rename, delete
-- stage, unstage, discard (discarding from the unstaged list keeps staged work)
-- test 2
-- commit, amend, rebase, pull, push (plus force push, with or without lease), branch create/switch, merge
-- stash create/apply
-- live Git status over SSE
-- 32 open-source themes (12 light, 20 dark) plus a System theme that follows macOS appearance
-- a change trace in the title bar: every changed file and hunk at a glance, with the current hunk as the playhead
-- Geist and Geist Mono embedded, so the app never fetches fonts
-- global config file for theme, editor, and panel preferences
+1. An agent changes files. echo shows them as they change: the **Review** is one scrolling diff with a trace of every file and hunk in the title bar.
+2. Go hunk by hunk (`j`/`k`). **Accept** (`a`) or **Reject** (`x`) each one, leave a **note** (`c`, or click the sign column of a line), **stage a hunk or just some of its lines** (click line numbers to pick lines), or **discard** a hunk. Changed words are marked inside changed lines. `[` and `]` jump to the next hunk you have not decided.
+3. **Notes → Copy for agent** puts every open note on the clipboard with its file, line and the code you were looking at, wrapped in instructions that tell the agent to change only what each note asks, answer questions instead of guessing, and leave staging and commits to you. **Copy notes** gives just the list. Rejected and accepted hunks are listed too.
+4. Commit what you accept. Anything you discard is snapshotted first, and **Restore** in the Changes list brings it back.
+
+![Log: the commit graph with branch and tag labels](docs/img/log.png)
+
+## Git
+
+Stage, unstage and discard by file, hunk or line · commit, amend (or amend keeping the message), undo the last commit, sign-off and co-author trailers, a message length meter and your `commit.template` · merge (fast-forward, `--no-ff` or squash), rebase, **interactive rebase** (reorder, squash, fixup, reword, drop), cherry-pick, revert · a bar for any merge, rebase, cherry-pick or revert in progress with Continue, Skip and Abort · **conflict resolution** (accept current, incoming or both per conflict, or take a whole file's side) · branches (create, rename, delete with a list of what a force delete would lose, delete on the remote), stash (selected files, show, branch, pop), reset soft, mixed or hard · fetch, pull (fast-forward only, rebase or merge), push (tags, set upstream, force with or without lease), publish · remotes, worktrees, submodules, reflog and a PR-style **Compare** in the Git panel's Tools tab · Log filters (message, author, path, dates, merges), a right-click menu on every commit, and files restored from any commit.
+
+## Editor
+
+Syntax highlighting, change bars against HEAD or the index, inline blame, find and **replace** (and replace across files) · auto-indent, bracket and quote closing, comment toggle, move, duplicate and delete lines, jump to the matching bracket, **multiple cursors** · indent detection and settings, line-ending indicator and conversion, trim trailing whitespace and final newline on save, autosave · minimap, indent guides, ruler, visible whitespace, sticky scroll, breadcrumbs, highlighting of other uses of a word · **Vim mode** · Markdown, CSV and image previews, JSON formatting, a read-only side view · rename, duplicate, delete, drag-to-move, reveal and open in another editor from the tree · recent files, reopen closed tab, and a **command palette** (`⌘⇧P`) with every action.
+
+![Editor with minimap, indent guides and breadcrumbs](docs/img/editor.png)
+
+## Keyboard
+
+| Key | Does |
+| --- | --- |
+| `⌘K` / `⌘P` | Go to file (recent first) |
+| `⌘⇧P` | Command palette |
+| `j` `k` / `n` `p` | Next hunk / file in the review |
+| `a` `x` `c` | Accept / reject / comment on the hunk |
+| `[` `]` | Previous / next undecided hunk |
+| `s` `u` | Stage (and move on) / unstage the file |
+| `e` `o` | Edit at the hunk / open the file |
+| `⌘F` `⌘⌥F` `⌘⇧F` | Find · find and replace · search all files |
+| `⌘/` | Toggle comment |
+| `⌥↑` `⌥↓` (`⇧` copies) | Move line |
+| `⌘⌥D` `⌘⇧L` `⌘⌥↑↓` | Next match as a cursor · all matches · cursor above or below |
+| `⌘⇧\` | Matching bracket |
+| `⌘J` `⌘B` `⌘⇧O` `⌘,` | Git panel · sidebar · switch repository · settings |
+| `⌘⌥T` | Reopen the last closed tab |
+| `?` | Every shortcut |
+
+(On Linux, `⌘` is `Ctrl`.) `Ctrl-M` in the editor makes Tab move focus, so the editor is never a keyboard trap.
+
+## Safety
+
+echo only listens on `127.0.0.1`, refuses requests with a foreign Host or Origin, requires a per-user token, and serves everything under a strict Content-Security-Policy. The page cannot write into `.git`, read it, or follow a symlink out of the repository; paths from the page are literal (a file named `[id].tsx` is not a glob); saves never replace a file an agent changed after you opened it; creating or renaming never overwrites; Markdown and diagrams are sanitized.
 
 ## Development
 
 ```sh
 gofmt -w *.go
-go build ./...
-go test ./...
+go vet ./...
+go test -race ./...
+node --test web/
 ```
 
-There is no frontend build step. The `web/` directory is embedded into the Go binary.
+There is no frontend build step and no dependencies beyond the Go standard library and the system `git`. The `web/` directory is embedded into the Go binary; its JavaScript is native ES modules (`web/app.js` plus one module per feature, sharing state through `web/ctx.js`). `decisions.md` records why things are the way they are, and `changelog.md` what changed.

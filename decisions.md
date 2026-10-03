@@ -1,5 +1,7 @@
 # echo decisions
 
+> v2 (October 2026) is recorded in section 21. Where an earlier section disagrees, section 21 wins.
+
 This file is the complete decision log for echo. It records decisions chosen during requirements discovery and defaults chosen while implementing v1.
 
 Status meanings:
@@ -23,7 +25,7 @@ Status meanings:
 
 ## 2. Platform and distribution
 
-- **Accepted:** macOS only for v1.
+- **Accepted:** macOS only for v1. **Superseded in v2 (§21):** Linux is supported too; macOS binaries can be signed and notarized.
 - **Accepted:** performance and small resource usage matter more than minimizing development time.
 - **Accepted:** the app is launched from Terminal.
 - **Accepted:** the app is not a double-click `.app` bundle in v1.
@@ -207,7 +209,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** switching tabs preserves unsaved edits.
 - **Accepted:** only explicit save writes to disk.
 - **Accepted:** the interface should behave like a normal editor for basic navigation and file viewing.
-- **Accepted:** the editor is highlighted from language-server semantic tokens. The textarea keeps doing all editing; its text turns transparent and a layer behind it draws only the visible lines in color, so large files cost the same as small ones.
+- **Superseded by §8 (highlight.js):** the editor was highlighted from language-server semantic tokens. The textarea keeps doing all editing; its text turns transparent and a layer behind it draws only the visible lines in color, so large files cost the same as small ones.
 - **Default:** while typing, lines above and below the edit keep their last tokens (shifted by the lines added or removed) and the edited lines stay plain until the server answers again, 250 ms after typing stops.
 - **Accepted:** Markdown files (`.md`, `.markdown`) open rendered, like a GitHub preview, with a Preview / Edit switch in the file bar (`⌘⇧V`). Jumping to a line from the review opens the source instead.
 - **Default:** the Markdown renderer is a small vanilla module (`web/markdown.js`) covering GitHub-flavored Markdown: headings, emphasis, code, fenced blocks, nested and task lists, quotes, `[!NOTE]`-style alerts, tables, reference links, autolinks, and front matter.
@@ -458,7 +460,7 @@ The following Git capabilities were accepted as part of the product direction:
 
 These are YAGNI decisions for v1:
 
-- Find in file matches within a line only (no multi-line regex), stops at 5,000 matches, has no replace, and does not scroll sideways to a match off-screen to the right. Its marks are a transparent-text layer above the textarea, not part of the syntax layer.
+- Find in file matches within a line only (no multi-line regex), stops at 5,000 matches, and does not scroll sideways to a match off-screen to the right. Its marks are a transparent-text layer above the textarea, not part of the syntax layer.
 - The file tree's context menu (new file, copy name/relative/absolute path) is client-only: the absolute path is the status `root` plus the path, and there is no new endpoint. New-file shortcut is `⌘⌥N` because browsers reserve `⌘N`.
 - No database.
 - No Git library.
@@ -473,24 +475,24 @@ These are YAGNI decisions for v1:
 - No theme marketplace or user-imported themes; the theme list is curated in `web/themes.css`.
 - No plugin system.
 - No native file-picker dependency.
-- No conflict-resolution workflow UI.
+- ~~No conflict-resolution workflow UI.~~ Built in v2 (§21).
 - No virtualized editor.
 - No language servers; highlighting is lexical.
 - No per-repository configuration.
-- No closed-tab restore.
+- ~~No closed-tab restore.~~ Built in v2 (§21).
 - No custom keybinding editor.
 
 ## 19. Deferred roadmap
 
 These are not rejected. They are waiting until the basic review loop is proven:
 
-2. Hunk-level stage and unstage controls.
-4. Word-level diff highlighting.
+2. ~~Hunk-level stage and unstage controls.~~ Done in v2.
+4. ~~Word-level diff highlighting.~~ Done in v2.
 5. Native file picker and richer context menus.
 6. Drag-to-reorder panel layout. (Panel sizing is done, see section 16.)
-7. Full vim mode.
-8. Conflict continue/abort controls.
-9. Stash pop UI and stash diffs.
+7. ~~Full vim mode.~~ A practical subset is built in v2.
+8. ~~Conflict continue/abort controls.~~ Done in v2.
+9. ~~Stash pop UI and stash diffs.~~ Done in v2.
 10. Large-file truncation and streaming improvements.
 11. Native macOS filesystem events instead of polling.
 12. Better handling of Git rename/delete metadata in the file tree.
@@ -534,4 +536,49 @@ These are not rejected. They are waiting until the basic review loop is proven:
 - Update `changelog.md` when behavior changes.
 - Update this file when a decision changes.
 - Update `agents.md` when repository rules change.
-- Run `gofmt -w main.go` and `go test ./...` before handoff.
+- Run `gofmt -w *.go`, `go vet ./...`, `go test -race ./...` and `node --test web/` before handoff.
+
+## 21. v2: hardening, review notes, Git and editor depth (2026-10)
+
+Everything below was proposed in a review of the v1 code and accepted item by item. Items the owner declined are listed at the end so they are not re-proposed by accident.
+
+### Safety and correctness
+
+- **Accepted:** every path from the page reaches Git as a literal name (`GIT_LITERAL_PATHSPECS=1`). A file called `[id].tsx` is not a glob, and discarding it never touches `i.tsx` or `d.tsx`.
+- **Accepted:** `create` and `rename` refuse to replace an existing file (409). A save needs the hash the file was opened with, or an explicit `force`; it is written to a temporary file and renamed, so an agent never sees half a file, and the file's mode is kept. Saves are serialized per process.
+- **Accepted:** every discard (a file, a hunk, a hard reset, a restore over a file) is first written to a snapshot commit under `refs/echo/discards/` (newest 20 kept) from a private index, so nothing the page throws away is unrecoverable. "Restore" in the Changes list puts the last one back.
+- **Accepted:** the editor loads files up to 10 MB; larger ones show a notice with "Open in default app". Reading anything under `.git` through the page is refused, as writing it already was.
+- **Accepted:** the API needs a per-user secret. It lives in `<config dir>/echo/token` (`0600`), is created on first run and shared by every echo process of the user. The printed link carries it once (`/?t=`), which becomes an `HttpOnly`, `SameSite=Strict` cookie; sibling processes send it as `X-Echo-Token`. The Host and Origin checks stay, and run first.
+- **Accepted:** ssh gets `BatchMode=yes` for network commands unless the user configured their own ssh command, so a passphrase prompt cannot hang a request until the timeout. `/api/config` validates what it stores.
+- **Accepted:** one status poller per process, however many tabs, and only while a tab is connected. The slow half of the status (refs, branches, stashes, remotes, tags, discard snapshots) is recomputed only when a cheap fingerprint of the git directory changes. The file-hash cache is pruned to the changed files.
+- **Accepted:** the Go code is split by concern (`main.go`, `files.go`, `git.go`, `gitops.go`, `endpoints.go`, `status.go`, `snapshot.go`, `parse.go`, `diffattrs.go`). The browser code is native ES modules: `app.js` holds the original core, and each feature is its own module sharing state through `ctx.js`. Pure logic (diff parsing, patch building, word diff, notes and prompt, conflicts, editing, Vim, CSV) has no DOM and is tested with `node --test`.
+- **Accepted:** CI runs gofmt, vet, `-race` tests and the JS tests on macOS and Linux; the tools and actions are pinned (actions by commit SHA, `govulncheck` by version); a release tag ships only if the same suite passes on it. The installer finds the latest release by following the `/releases/latest` redirect. macOS binaries are signed and notarized when the Apple secrets exist. Linux builds are released.
+- **Accepted:** a smoke test builds the real binary and drives the token handshake, status, tree, a Git action, the session store and shutdown.
+
+### Review
+
+- **Accepted:** a hunk, or selected lines of it, can be staged, unstaged or discarded. The browser builds a patch from the parsed diff and the server runs `git apply` (`--cached`, `--reverse`, `--recount`) after checking every path in it. In "All changes" a hunk is actionable when its file has changes on one side only; otherwise the hunk says "partly staged" and the Unstaged and Staged views do it. Line selection: click line numbers (Shift for a range).
+- **Accepted:** notes belong to a file and a line on the new side (or the old side, for a removed line) and carry the code that was there. Accept and Reject belong to a hunk, identified by a hash of its changed lines (not its context), so they survive edits above it and a change of context. Both are stored per repository in the config directory (`review/<hash of root>.json`), never in the repository.
+- **Accepted:** "Copy for agent" produces: one sentence on what was reviewed, how to work (take the comments in order, find the quoted code if lines moved, change only what a comment asks, answer questions instead of changing code, ask rather than guess, do not commit, stage, unstage or discard, report each comment afterwards), the open notes by file and line with their quoted code, the rejected hunks to redo, and the accepted ones to leave alone. "Copy notes" is the list alone.
+- **Accepted:** changed words inside a changed line are marked; "show more context" per file (3, 12, whole file) re-asks Git for that file; the review filters by name, content, extension and decision state; images are shown before and after; renames and mode changes are shown (rename detection is a setting). A diff over 6,000 lines draws file bodies only near the viewport.
+
+### Git
+
+- **Accepted:** merge options (fast-forward, no-ff, squash), abort and continue; rebase, cherry-pick and revert continue, skip and abort from one bar; conflict resolution in the editor (per conflict, or a whole side) and `resolve:ours|theirs` for a file; interactive rebase through a todo file (reword becomes a pick plus an amend; the range may not contain merges); branch rename, force delete behind a list of the commits it would lose, delete on the remote; stash of chosen files, show, pop, branch; reset soft, mixed and hard; remotes (URLs starting with `-` or using `ext::`/`fd::` are refused), worktrees, submodules, reflog, compare; pull strategy and single-remote fetch; push tags and set-upstream; `.gitignore` from a menu; intent-to-add; restore a file from a commit; undo last commit; amend without editing; sign-off and co-author trailers; the commit template.
+- **Accepted:** Log filters by date and merges; a right-click menu on commits and on files within a commit.
+- **Accepted:** what the last Git command printed stays in the commit card (open on failure, so a hook's complaint is readable).
+
+### Editor
+
+- **Accepted:** the editor stays a textarea with layers over it. Edits that need a computed change go through `execCommand`, so the browser's undo keeps working. Tab indents (Ctrl-M turns that off so Tab can leave the editor).
+- **Accepted:** multi-cursor keeps the extra carets in a layer and applies each edit to all of them as one replacement.
+- **Accepted:** Vim mode is a pure engine (motions, operators, counts, visual, `.`, `/`, `:w :q :wq :N`) applied to the textarea; insert mode is the browser's own typing.
+- **Accepted:** the file tree draws only the rows in view; it is no longer capped at 3,000 files.
+- **Accepted:** the side view is read-only (Swap makes it the main file). Folding is not built: hiding lines inside a textarea would need an editor of our own, and a wrong guess would corrupt a file.
+- **Accepted:** settings are plain config keys with a validated range (`/api/config`), edited in Settings › Editor. Opening a file in another app uses a fixed list of editors (`code`, `cursor`, `zed`, `subl`), never a command from the page.
+- **Accepted:** unsaved edits and the rest of the session are also mirrored to the server per repository (`drafts/`), and boot takes the newer of the browser's and the server's copy, so a repository that returns on another port, a cleared browser or another browser still restores them.
+
+### Declined (do not re-propose without asking)
+
+Server-side timeouts on commit, revert and reset; a server cap on the file list; renaming `vendor/`; artifact attestation; creating tags; bisect; checkpoints; patch export/import; code symbols and go to symbol; an agent activity feed; the accessibility pass (the Ctrl-M Tab escape is the one concession).
+

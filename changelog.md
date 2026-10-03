@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### v2: safety, review notes, Git and editor depth (on branch `v2/hardening-and-features`)
+
+**Fixes**
+- Discarding a file called like a glob (`[id].tsx`) no longer reverts its neighbours: paths are literal.
+- New file and rename refuse to replace an existing file; saving writes atomically, keeps the file's mode and needs the hash the file was opened with.
+- Every discard is snapshotted first; **Restore** in the Changes list brings the last one back.
+- Files over 10 MB are not loaded into the editor; `.git` cannot be read from the page.
+- The API requires a per-user secret (cookie from the printed link); ssh cannot hang a request on a passphrase prompt; `/api/config` is validated.
+- One shared status poller for all tabs and a cached slow half of the status; the hash cache no longer grows without bound.
+- Switching repositories no longer loses unsaved edits or your place: the session is also kept on the server, per repository.
+
+**Review**
+- Stage, unstage or discard a hunk or selected lines. Accept or reject hunks; leave notes on lines. **Copy for agent** builds a ready-to-paste prompt (file, line, quoted code, note, plus rules for the agent); **Copy notes** is the plain list.
+- Changed words are marked inside changed lines. Show more context per file. Filter by name, content, extension or decision. Next undecided hunk (`[` `]`). Images before/after, renames, mode changes. Huge diffs draw lazily.
+
+**Git**
+- Merge options, interactive rebase, cherry-pick, continue/skip/abort bar, conflict resolution, branch rename/force delete/delete on remote, stash (files, show, branch, pop), reset soft/mixed/hard, remotes, worktrees, submodules, reflog, Compare, pull strategies, push options, `.gitignore` menu, intent-to-add, restore file from commit, undo last commit, amend keeping the message, sign-off, co-authors, commit template, Git output panel, Log filters (dates, merges) and context menus.
+
+**Editor**
+- Auto-indent, closing brackets and quotes, Tab/Shift-Tab, comment toggle, line move/duplicate/delete, matching bracket, multi-cursor, find and replace (and across files), indent detection and settings, EOL indicator and conversion, trim trailing whitespace and final newline on save, autosave, minimap, indent guides, ruler, whitespace, sticky scroll, breadcrumbs, other-uses highlighting, Vim mode, CSV/image previews, JSON format, side view, file rename/duplicate/delete/move/reveal/open-in, recent files, reopen closed tab, command palette. The file tree is windowed.
+
+**Project**
+- Linux builds and installer; CI on macOS and Linux with race tests, pinned tools and a release gated on CI; optional macOS notarization; `main.go` and the web code split into modules; README rewritten with screenshots; tests for the new code including a real-binary smoke test.
+
 - **UX pass on the review loop**:
   - Staging shows its result at once: the lists, the trace and the commit button move before Git answers, and the real status replaces the guess a moment later.
   - Staging a file from the review (its **Stage** button, or `s`) moves on to the next file with work left. `u` unstages the current file.

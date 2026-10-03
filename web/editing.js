@@ -206,18 +206,19 @@ const SYMBOL = /^\s*(?:(?:export\s+)?(?:default\s+)?(?:async\s+)?function\*?\s+[
 // line that looks like a declaration and is indented less than the line below it. Lines hold the file's lines.
 export function enclosingScopes(lines, idx, max = 4) {
   const indentOf = l => l.replace(/\t/g, '    ').match(/^ */)[0].length
-  let want = Infinity
-  for (let i = idx; i >= 0 && want > 0; i--) {
-    if (lines[i].trim()) { want = indentOf(lines[i]) + (i === idx ? 1 : 0); break }
-  }
   const out = []
-  for (let i = idx - (lines[idx]?.trim() ? 1 : 0); i >= 0 && want > 0 && out.length < max; i--) {
+  let want = lines[idx]?.trim() ? indentOf(lines[idx]) : Infinity
+  // On a blank line, what encloses it is what encloses the next line of code.
+  if (!Number.isFinite(want)) for (let i = idx + 1; i < lines.length; i++) if (lines[i].trim()) { want = indentOf(lines[i]); break }
+  if (!Number.isFinite(want)) want = 0
+  for (let i = idx - 1; i >= 0 && want > 0 && out.length < max; i--) {
     const l = lines[i]
     if (!l.trim()) continue
     const ind = indentOf(l)
-    if (ind < want && SYMBOL.test(l)) { out.unshift({ line: i, text: l.trim() }); want = ind }
-    else if (ind < want && /^\s*[}\])]/.test(l) === false) want = Math.min(want, ind + 0) || want
+    if (ind < want) { if (SYMBOL.test(l)) out.unshift({ line: i, text: l.trim() }); want = ind }
   }
+  // The line itself counts when it is a declaration.
+  if (lines[idx] && SYMBOL.test(lines[idx]) && out.length < max) out.push({ line: idx, text: lines[idx].trim() })
   return out
 }
 
