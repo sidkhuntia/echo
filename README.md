@@ -98,7 +98,7 @@ echo only listens on `127.0.0.1`, refuses requests with a foreign Host or Origin
 gofmt -w *.go
 go vet ./...
 go test -race ./...
-node --test web/
+node --test web/*.test.mjs
 ```
 
 There is no frontend build step and no dependencies beyond the Go standard library and the system `git`. The `web/` directory is embedded into the Go binary; its JavaScript is native ES modules (`web/app.js` plus one module per feature, sharing state through `web/ctx.js`). `decisions.md` records why things are the way they are, and `changelog.md` what changed.

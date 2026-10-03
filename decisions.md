@@ -536,7 +536,7 @@ These are not rejected. They are waiting until the basic review loop is proven:
 - Update `changelog.md` when behavior changes.
 - Update this file when a decision changes.
 - Update `agents.md` when repository rules change.
-- Run `gofmt -w *.go`, `go vet ./...`, `go test -race ./...` and `node --test web/` before handoff.
+- Run `gofmt -w *.go`, `go vet ./...`, `go test -race ./...` and `node --test web/*.test.mjs` before handoff.
 
 ## 21. v2: hardening, review notes, Git and editor depth (2026-10)
 

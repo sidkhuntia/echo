@@ -15,7 +15,7 @@ the Homebrew formula.
 ## Cut a release
 
 ```sh
-gofmt -l . && go vet ./... && go test -race ./... && node --test web/
+gofmt -l . && go vet ./... && go test -race ./... && node --test web/*.test.mjs
 git tag v0.1.0
 git push origin v0.1.0
 ```
