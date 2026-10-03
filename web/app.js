@@ -1,5 +1,8 @@
 import { renderMarkdown, sanitize } from './markdown.js'
 import { highlight, highlightLines } from './highlight.js'
+import { parseDiff } from './diffparse.js'
+import { splitLines, lineDiff } from './linediff.js'
+import { layoutGraph, graphWidth, graphSVG, railSVG, LOG_H, HIST_H } from './graph.js'
 
 const $ = s => document.querySelector(s)
 const state = {
@@ -308,7 +311,7 @@ function renderQueue() {
     return
   }
   if (!all.length) {
-    q.innerHTML = `<div class="empty"><b>No changes</b>The working tree matches HEAD.</div>`
+    q.innerHTML = discardBar() + `<div class="empty"><b>No changes</b>The working tree matches HEAD.</div>`
     return
   }
   const filter = $('#file-filter').value.toLowerCase()
@@ -331,7 +334,7 @@ function renderQueue() {
     </div>`
   }
   const bulk = { staged: iconBtn('unstage-all', ICON.minus, 'Unstage all'), work: iconBtn('discard-all', ICON.discard, 'Discard all unstaged changes') + iconBtn('stage-all', ICON.plus, 'Stage all changes'), merge: iconBtn('stage-all', ICON.plus, 'Mark all resolved (stage)') }
-  let h = pickBar()
+  let h = discardBar() + pickBar()
   for (const g of GROUPS) {
     const rows = list.filter(g.has)
     if (!rows.length) continue
@@ -348,6 +351,12 @@ function renderQueue() {
 const qkey = (sec, path) => sec + '\t' + path
 const pickedIn = sec => [...state.qsel].filter(k => k.startsWith(sec + '\t')).map(k => k.slice(sec.length + 1))
 const pickedSec = () => state.qsel.size ? [...state.qsel][0].split('\t')[0] : ''
+
+function discardBar() {
+  const d = state.status?.lastDiscard
+  if (!d) return ''
+  return `<div class="pickbar restore"><span>Discarded ${plural(d.files, 'file')} ${ago(d.time)}</span><span class="grow"></span><button class="btn sm" data-restore-discard title="Put the files of the last discard back">Restore</button></div>`
+}
 
 function pickBar() {
   const sec = pickedSec()
@@ -525,58 +534,6 @@ async function discard(paths, worktree) {
 }
 
 // ---------- diff ----------
-function unquote(p) {
-  p = p.replace(/\t$/, '')
-  if (p.startsWith('"')) try { return JSON.parse(p) } catch {}
-  return p
-}
-
-function parseDiff(text) {
-  const files = []
-  let f = null, h = null, o = 0, n = 0
-  const finish = () => { if (f) f.path = f.plus ?? f.minus ?? f.path }
-  for (const line of text.split('\n')) {
-    if (line.startsWith('diff --git ')) {
-      finish()
-      const rest = line.slice(11), len = (rest.length - 5) / 2
-      let path = rest
-      if (Number.isInteger(len) && rest.slice(2, 2 + len) === rest.slice(5 + len)) path = rest.slice(2, 2 + len)
-      else { const m = rest.match(/^a\/(.*) b\/(.*)$/); if (m) path = m[2] }
-      f = { path: unquote(path), hunks: [], added: 0, deleted: 0, lines: 0, isNew: false, isDeleted: false, binary: false, note: '' }
-      files.push(f); h = null
-      continue
-    }
-    if (!f) continue
-    if (line.startsWith('@@')) {
-      const m = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/)
-      if (!m) continue
-      o = +m[1]; n = +m[2]
-      h = { range: line.slice(0, line.indexOf('@@', 2) + 2), context: m[3], lines: [], nStart: n, add: 0, del: 0 }
-      f.hunks.push(h)
-      continue
-    }
-    if (!h) {
-      if (line.startsWith('--- ')) { const p = line.slice(4); if (p !== '/dev/null') f.minus = unquote(p).replace(/^a\//, '') }
-      else if (line.startsWith('+++ ')) { const p = line.slice(4); if (p !== '/dev/null') f.plus = unquote(p).replace(/^b\//, '') }
-      else if (line.startsWith('new file')) f.isNew = true
-      else if (line.startsWith('deleted file')) f.isDeleted = true
-      else if (line.startsWith('Binary files')) f.binary = true
-      else if (line.startsWith('echo: ')) f.note = line.slice(6)
-      continue
-    }
-    const c = line[0]
-    if (c === '+') { h.lines.push({ t: 'add', n: n++, text: line.slice(1) }); f.added++; h.add++ }
-    // `at` is where a deleted line would sit in the new version, so it can still jump to the editor.
-    else if (c === '-') { h.lines.push({ t: 'del', o: o++, at: n, text: line.slice(1) }); f.deleted++; h.del++ }
-    else if (c === ' ') h.lines.push({ t: 'ctx', o: o++, n: n++, text: line.slice(1) })
-    else if (c === '\\') h.lines.push({ t: 'meta', text: line.slice(2) })
-    else continue
-    f.lines++
-  }
-  finish()
-  return files
-}
-
 let diffTimer
 function scheduleDiff() { clearTimeout(diffTimer); diffTimer = setTimeout(loadDiff, 120) }
 
@@ -974,7 +931,7 @@ async function fetchFile(path) {
 function fromDisk(data) {
   const crlf = data.content.includes('\r\n') && !/(^|[^\r])\n/.test(data.content)
   const content = data.content.replace(/\r\n/g, '\n')
-  return { content, saved: content, eol: crlf ? '\r\n' : '\n', hash: data.hash, binary: data.binary, conflict: '' }
+  return { content, saved: content, eol: crlf ? '\r\n' : '\n', hash: data.hash, binary: data.binary, tooLarge: !!data.tooLarge, size: data.size || 0, conflict: '' }
 }
 
 async function openFile(path, { line = 0, fromReview = false, find: hit = null } = {}) {
@@ -1034,7 +991,7 @@ let shownTab = null
 function renderEditor() {
   const file = state.mode === 'file'
   const tab = activeTab()
-  const text = file && !!tab && !tab.binary
+  const text = file && !!tab && !tab.binary && !tab.tooLarge
   const preview = text && isMarkdown(tab.path) && tab.preview
   const editing = text && !preview
   $('#save').hidden = !text
@@ -1068,6 +1025,7 @@ function renderEditor() {
   if (file && !text) {
     $('#highlight').innerHTML = !tab
       ? `<div class="empty"><b>No file open</b>Press <kbd>⌘K</kbd> or pick a file from the sidebar.</div>`
+      : tab.tooLarge ? `<div class="empty"><b>File too large to edit</b>${(tab.size / 1048576).toFixed(1)} MB. <button class="btn sm" data-open-ext>Open in default app</button></div>`
       : `<div class="empty"><b>Binary file</b>Not shown.</div>`
   }
   renderBanner()
@@ -1608,79 +1566,6 @@ function computeMarks(tab) {
   tab.marks = { kinds: vsHead.marks, staged, dels }
 }
 
-// Lines without the empty string after a final newline, so the phantom last line never gets a bar.
-function splitLines(text) {
-  const lines = text.replace(/\r\n/g, '\n').split('\n')
-  if (lines.length && lines.at(-1) === '') lines.pop()
-  return lines
-}
-
-// lineDiff compares line arrays: marks[i] is 'add' or 'mod' for changed lines of b, and dels holds the
-// b positions where lines of a were removed with nothing added in their place.
-function lineDiff(a, b) {
-  let s = 0
-  while (s < a.length && s < b.length && a[s] === b[s]) s++
-  let ea = a.length, eb = b.length
-  while (ea > s && eb > s && a[ea - 1] === b[eb - 1]) { ea--; eb-- }
-  const marks = [], dels = new Set()
-  const ops = myers(a.slice(s, ea), b.slice(s, eb))
-  if (!ops) {
-    // Too different to diff cheaply: call the whole middle modified.
-    for (let i = s; i < eb; i++) marks[i] = 'mod'
-    if (eb === s && ea > s) dels.add(s)
-    return { marks, dels }
-  }
-  let j = s, removed = 0, added = []
-  const flush = () => {
-    for (const k of added) marks[k] = removed ? 'mod' : 'add'
-    if (removed && !added.length) dels.add(j)
-    removed = 0; added = []
-  }
-  for (const op of ops) {
-    if (op === '=') { flush(); j++ }
-    else if (op === '-') removed++
-    else { added.push(j); j++ }
-  }
-  flush()
-  return { marks, dels }
-}
-
-// Myers' O(ND) diff, returning '=', '-', '+' ops, or null when the edit distance passes the limit.
-function myers(a, b, limit = 2000) {
-  const n = a.length, m = b.length
-  if (!n) return Array(m).fill('+')
-  if (!m) return Array(n).fill('-')
-  const max = n + m, off = max
-  const v = new Int32Array(2 * max + 2)
-  const trace = []
-  for (let d = 0; d <= Math.min(max, limit); d++) {
-    for (let k = -d; k <= d; k += 2) {
-      let x = k === -d || (k !== d && v[off + k - 1] < v[off + k + 1]) ? v[off + k + 1] : v[off + k - 1] + 1
-      let y = x - k
-      while (x < n && y < m && a[x] === b[y]) { x++; y++ }
-      v[off + k] = x
-      if (x >= n && y >= m) { trace.push(v.slice(off - d, off + d + 1)); return backtrack(trace, n, m) }
-    }
-    trace.push(v.slice(off - d, off + d + 1))
-  }
-  return null
-}
-
-function backtrack(trace, n, m) {
-  const ops = []
-  let x = n, y = m
-  for (let d = trace.length - 1; d > 0; d--) {
-    const prev = trace[d - 1], at = kk => prev[kk + d - 1]
-    const k = x - y
-    const pk = k === -d || (k !== d && at(k - 1) < at(k + 1)) ? k + 1 : k - 1
-    const px = at(pk), py = px - pk
-    while (x > px && y > py) { ops.push('='); x--; y-- }
-    if (pk === k + 1) { ops.push('+'); y-- } else { ops.push('-'); x-- }
-  }
-  while (x > 0 && y > 0) { ops.push('='); x--; y-- }
-  return ops.reverse()
-}
-
 // Only the visible rows are drawn, so large files cost the same as small ones.
 function paintGutter() {
   const g = $('#gutter'), ed = $('#editor'), tab = activeTab()
@@ -1746,11 +1631,11 @@ async function syncTabs() {
 
 async function saveFile(force = false) {
   const tab = activeTab()
-  if (!tab || tab.binary || state.mode !== 'file') return
+  if (!tab || tab.binary || tab.tooLarge || state.mode !== 'file') return
   tab.content = $('#editor').value
   try {
     const content = tab.eol === '\r\n' ? tab.content.replace(/\n/g, '\r\n') : tab.content
-    const res = await post('/api/file', { action: 'save', path: tab.path, content, baseHash: force ? '' : tab.hash })
+    const res = await post('/api/file', { action: 'save', path: tab.path, content, baseHash: tab.hash, force })
     Object.assign(tab, { saved: tab.content, hash: res.hash, conflict: '' })
     state.diffStale = true
     renderTabs(); renderEditor()
@@ -2089,6 +1974,7 @@ function renderRepoPop() {
 function switchRepo(port, newTab) {
   const url = `http://127.0.0.1:${port}/`
   toggleRepoPop(false)
+  persistSession(true)
   if (newTab) window.open(url, '_blank')
   else if (port !== +location.port) location.href = url
 }
@@ -2118,55 +2004,6 @@ async function stopRepo(port, all) {
 // layoutGraph assigns each commit a lane. lanes[j] is the commit that lane j is heading down to;
 // a row records the lanes above it (before), below it (after), which lanes end in its node (into),
 // and which lane each parent continues on (out). Lanes are not compacted, so a lane keeps its column.
-const LANE = 12, HUES = 8, LOG_H = 26, HIST_H = 44
-function layoutGraph(commits) {
-  const lanes = [], rows = []
-  let color = 0
-  const free = () => { const i = lanes.findIndex(l => !l); return i < 0 ? lanes.length : i }
-  for (const c of commits) {
-    const before = lanes.slice()
-    let col = lanes.findIndex(l => l && l.hash === c.hash)
-    if (col < 0) { col = free(); lanes[col] = { hash: c.hash, color: color++ } }
-    const own = lanes[col].color
-    const into = []
-    lanes.forEach((l, j) => { if (l && j !== col && l.hash === c.hash) { into.push(j); lanes[j] = null } })
-    const out = c.parents.map((p, k) => {
-      if (k === 0) { lanes[col] = { hash: p, color: own }; return col }
-      let j = lanes.findIndex(l => l && l.hash === p)
-      if (j < 0) { j = free(); lanes[j] = { hash: p, color: color++ } }
-      return j
-    })
-    if (!c.parents.length) lanes[col] = null
-    while (lanes.length && !lanes[lanes.length - 1]) lanes.pop()
-    rows.push({ col, color: own, before, after: lanes.slice(), into, out, merge: c.parents.length > 1 })
-  }
-  return rows
-}
-
-const graphWidth = rows => LANE * Math.min(16, Math.max(1, ...rows.map(r => Math.max(r.before.length, r.after.length, r.col + 1))))
-const laneX = j => LANE / 2 + j * LANE
-
-function graphSVG(r, h, w) {
-  const m = h / 2, cx = laneX(r.col)
-  const seg = (d, color) => `<path d="${d}" class="g${color % HUES}"/>`
-  const curve = (x1, y1, x2, y2) => `M${x1} ${y1}C${x1} ${(y1 + y2) / 2} ${x2} ${(y1 + y2) / 2} ${x2} ${y2}`
-  let p = ''
-  r.before.forEach((l, j) => {
-    if (!l) return
-    if (j === r.col) p += seg(`M${cx} 0V${m}`, l.color)
-    else if (r.into.includes(j)) p += seg(curve(laneX(j), 0, cx, m), l.color)
-    else p += seg(`M${laneX(j)} 0V${h}`, l.color)
-  })
-  r.out.forEach(j => { p += seg(j === r.col ? `M${cx} ${m}V${h}` : curve(cx, m, laneX(j), h), r.after[j].color) })
-  return `<svg class="graph" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">${p}<circle cx="${cx}" cy="${m}" r="3.5" class="g${r.color % HUES}${r.merge ? ' m' : ''}"/></svg>`
-}
-
-// railSVG carries the lanes below a row through a block of any height (the expanded History detail).
-function railSVG(lanes, w) {
-  const p = lanes.map((l, j) => l ? `<path d="M${laneX(j)} 0V10" class="g${l.color % HUES}" vector-effect="non-scaling-stroke"/>` : '').join('')
-  return `<svg class="graph rail" width="${w}" viewBox="0 0 ${w} 10" preserveAspectRatio="none" aria-hidden="true">${p}</svg>`
-}
-
 // Decorations from %D: "HEAD -> main", "origin/main", "tag: v1", or a bare "HEAD" when detached.
 function refChips(refs) {
   const local = new Set((state.status?.local || []).map(b => b.name))
@@ -2798,6 +2635,7 @@ function markRail() {
 
 // ---------- wiring ----------
 $('#queue').addEventListener('click', e => {
+  if (e.target.closest('[data-restore-discard]')) return void gitAction({ action: 'discard:restore' })
   const bar = e.target.closest('[data-pick]')?.dataset.pick
   if (bar) {
     const paths = pickedIn(pickedSec())
@@ -3443,7 +3281,7 @@ document.addEventListener('keydown', e => {
 })
 // Unsaved edits are kept with the session and come back on the next visit, so the browser only needs
 // to ask when they could not be kept.
-window.addEventListener('beforeunload', e => { persistSession(); if (!sessionSaved && state.tabs.some(t => t.content !== t.saved)) e.preventDefault() })
+window.addEventListener('beforeunload', e => { persistSession(true); if (!sessionSaved && state.tabs.some(t => t.content !== t.saved)) e.preventDefault() })
 
 async function loadConfig() {
   try { state.config = await api('/api/config'); $('#vim-mode').checked = !!state.config.vim; $('#commit-all').checked = !!state.config.commitAll; renderCommit() } catch {}
@@ -3492,7 +3330,7 @@ function snapshotSession() {
   })
   const L = state.log, sec = state.mode === 'log' && state.railBeforeLog ? state.railBeforeLog : state.rail
   return [kept, {
-    v: 1, root: state.status?.root || '',
+    v: 1, t: Date.now(), root: state.status?.root || '',
     mode: state.mode, rail: sec, insp: $('#insp').dataset.insp, drawer: gitOpen() && !gitPinned(),
     scope: scope(), from: $('#diff-from').value, to: $('#diff-to').value, commit: $('#diff-commit').value, full: state.commit,
     ws: $('#ignore-ws').checked, dots: state.rangeDots,
@@ -3505,19 +3343,34 @@ function snapshotSession() {
   }]
 }
 
-function persistSession() {
+// The browser keeps the session per origin, which is per port: a repository that comes back on another
+// port, a cleared site-data store or another browser would start from nothing. The server keeps a copy
+// per repository (beside the config), and boot takes whichever is newer.
+let mirrorTimer = 0
+function mirrorSession(snap, final) {
+  const body = JSON.stringify({ session: snap })
+  clearTimeout(mirrorTimer)
+  if (final && navigator.sendBeacon) return void navigator.sendBeacon('/api/drafts', new Blob([body], { type: 'application/json' }))
+  mirrorTimer = setTimeout(() => fetch('/api/drafts', { method: 'POST', headers: { 'content-type': 'application/json' }, body }).catch(() => {}), 1500)
+}
+
+function persistSession(final = false) {
   clearTimeout(sessionTimer)
   if (!sessionReady) return
+  let snap
   try {
-    const [kept, snap] = snapshotSession()
-    localStorage.setItem(SESSION_KEY, JSON.stringify(snap))
+    let kept
+    ;[kept, snap] = snapshotSession()
     sessionSaved = kept
   } catch { sessionSaved = false }
+  if (!snap) return
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify(snap)) } catch { sessionSaved = false }
+  mirrorSession(snap, final)
 }
 const scheduleSession = () => { if (sessionReady) { clearTimeout(sessionTimer); sessionTimer = setTimeout(persistSession, 400) } }
 for (const ev of ['input', 'change', 'click', 'keyup', 'scroll']) document.addEventListener(ev, scheduleSession, true)
-window.addEventListener('pagehide', persistSession)
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistSession() })
+window.addEventListener('pagehide', () => persistSession(true))
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistSession(true) })
 
 function readSession(root) {
   try {
@@ -3594,7 +3447,9 @@ let booting = true, pendingStatus = null
 async function boot() {
   try {
     const [, status] = await Promise.all([loadConfig(), api('/api/git/status')])
-    const saved = readSession(status.root)
+    let saved = readSession(status.root)
+    const remote = await api('/api/drafts').then(d => d.session, () => null)
+    if (remote?.v === 1 && remote.root === status.root && (!saved || (remote.t || 0) > (saved.t || 0))) saved = remote
     if (saved) restoreInputs(saved)
     state.treeStale = true
     applyStatus(status)
