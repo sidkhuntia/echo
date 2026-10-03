@@ -83,7 +83,8 @@ func parsePorcelain(s string) []Change {
 			continue
 		}
 		code := entry[:2]
-		out = append(out, Change{Path: entry[3:], Code: code, Staged: code[0] != ' ' && code[0] != '?'})
+		conflict := code[0] == 'U' || code[1] == 'U' || code == "AA" || code == "DD"
+		out = append(out, Change{Path: entry[3:], Code: code, Staged: code[0] != ' ' && code[0] != '?' && !conflict, Conflict: conflict})
 		if code[0] == 'R' || code[0] == 'C' {
 			i++
 		}

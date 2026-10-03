@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -169,6 +170,10 @@ func (a *App) handleRaw(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "path not allowed", http.StatusBadRequest)
 		return
 	}
+	if rev := r.URL.Query().Get("rev"); rev != "" {
+		a.rawAtRev(w, rel, rev)
+		return
+	}
 	if info, err := os.Stat(path); err != nil || info.IsDir() {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -189,8 +194,12 @@ func (a *App) handleFileRev(w http.ResponseWriter, rel, rev string) {
 	case "index":
 		object = ":./" + filepath.ToSlash(rel)
 	default:
-		http.Error(w, "unknown rev", http.StatusBadRequest)
-		return
+		hash, err := a.resolveCommit(rev)
+		if err != nil {
+			http.Error(w, "unknown rev", http.StatusBadRequest)
+			return
+		}
+		object = hash + ":./" + filepath.ToSlash(rel)
 	}
 	out, err := a.git("show", object)
 	if err != nil {
@@ -651,4 +660,37 @@ func inGitDir(rel string) bool {
 		}
 	}
 	return false
+}
+
+// rawAtRev serves a file's bytes as they are at HEAD, in the index or in a commit, for the
+// before side of an image diff.
+func (a *App) rawAtRev(w http.ResponseWriter, rel, rev string) {
+	var object string
+	switch rev {
+	case "head":
+		object = "HEAD:./" + filepath.ToSlash(rel)
+	case "index":
+		object = ":./" + filepath.ToSlash(rel)
+	default:
+		hash, err := a.resolveCommit(rev)
+		if err != nil {
+			http.Error(w, "unknown rev", http.StatusBadRequest)
+			return
+		}
+		object = hash + ":./" + filepath.ToSlash(rel)
+	}
+	out, err := a.gitCmd("show", object).Output()
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-cache")
+	ct := mime.TypeByExtension(filepath.Ext(rel))
+	if ct == "" {
+		ct = http.DetectContentType(out)
+	}
+	w.Header().Set("Content-Type", ct)
+	_, _ = w.Write(out)
 }

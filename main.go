@@ -107,6 +107,8 @@ type App struct {
 	mu    sync.Mutex
 	// writeMu serializes saves, so a save's stale-base check and its write cannot interleave with another save.
 	writeMu sync.Mutex
+	// stateMu serializes the page's per-repository JSON documents (review notes, drafts).
+	stateMu sync.Mutex
 	sigs    map[string]fileSig
 	// refs caches the slow half of the status; see refsPart.
 	refsMu    sync.Mutex
@@ -318,6 +320,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/commit", a.handleCommit)
 	mux.HandleFunc("/api/blame", a.handleBlame)
 	mux.HandleFunc("/api/search", a.handleSearch)
+	a.addEndpoints(mux)
 	mux.HandleFunc("/api/commit/contains", a.handleContains)
 	mux.HandleFunc("/api/reset/preview", a.handleResetPreview)
 	mux.HandleFunc("/api/stream", a.handleStream)

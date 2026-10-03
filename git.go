@@ -72,7 +72,9 @@ type Change struct {
 	Added   int    `json:"added"`
 	Deleted int    `json:"deleted"`
 	Binary  bool   `json:"binary,omitempty"`
-	Hash    string `json:"hash"`
+	// Conflict marks an unmerged path: both sides changed it, or one deleted what the other changed.
+	Conflict bool   `json:"conflict,omitempty"`
+	Hash     string `json:"hash"`
 	// Index is the staged side (HEAD to index) and Work the unstaged side (index to working tree);
 	// each is nil when that side has nothing, so a partly staged file carries both.
 	Index *LineStat `json:"index,omitempty"`
@@ -112,7 +114,9 @@ type GitStatus struct {
 	Head    string `json:"head"`
 	RefsSig string `json:"refsSig"`
 	// Reverting is true while a revert stopped on conflicts and waits for Continue or Abort.
-	Reverting bool     `json:"reverting,omitempty"`
+	Reverting bool `json:"reverting,omitempty"`
+	// Operation names a merge, rebase, cherry-pick or revert that stopped and waits for Continue or Abort.
+	Operation string   `json:"operation,omitempty"`
 	Branches  []string `json:"branches"`
 	Stashes   []Stash  `json:"stashes"`
 	// LastDiscard is the newest discard snapshot that can still be restored.
@@ -217,6 +221,7 @@ func (a *App) gitStatus() GitStatus {
 		}
 	}
 	status.Reverting = a.gitPathExists("REVERT_HEAD")
+	status.Operation = a.operationInProgress()
 	a.fillRefs(&status)
 	return status
 }
@@ -634,7 +639,14 @@ func (a *App) discard(paths []string, worktree bool) (string, error) {
 
 func (a *App) handleDiff(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	flags := []string{"--no-ext-diff", "--no-color", "--no-renames", "--unified=3"}
+	renames, context := "--no-renames", "--unified=3"
+	if q.Get("renames") == "1" {
+		renames = "-M"
+	}
+	if n, err := strconv.Atoi(q.Get("context")); err == nil && n >= 0 && n <= 100000 {
+		context = "--unified=" + strconv.Itoa(n)
+	}
+	flags := []string{"--no-ext-diff", "--no-color", renames, context}
 	if q.Get("ignoreWhitespace") == "1" {
 		flags = append(flags, "--ignore-all-space")
 	}
@@ -673,13 +685,23 @@ func (a *App) handleDiff(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown diff scope", http.StatusBadRequest)
 		return
 	}
-	out, err := a.git(append(funcnameArgs(), append(args, "--")...)...)
+	// path narrows the diff to one file, which is how "show more context" reloads a single file.
+	only := q.Get("path")
+	tail := []string{"--"}
+	if only != "" {
+		if _, err := a.safePath(only); err != nil {
+			badRequest(w, err)
+			return
+		}
+		tail = append(tail, only)
+	}
+	out, err := a.git(append(funcnameArgs(), append(args, tail...)...)...)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	if untracked {
-		out += a.untrackedDiff()
+		out += a.untrackedDiff(only)
 	}
 	writeJSON(w, map[string]string{"text": out})
 }
@@ -731,6 +753,21 @@ func (a *App) handleLog(w http.ResponseWriter, r *http.Request) {
 	if text != "" || author != "" {
 		// Filters are typed text, not regexes: "fix(" should match a literal "fix(".
 		args = append(args, "--regexp-ignore-case", "--fixed-strings")
+	}
+	for _, f := range [][2]string{{"since", q.Get("since")}, {"until", q.Get("until")}} {
+		if f[1] != "" {
+			if !dateArg.MatchString(f[1]) {
+				http.Error(w, "invalid "+f[0]+" date", http.StatusBadRequest)
+				return
+			}
+			args = append(args, "--"+f[0]+"="+f[1])
+		}
+	}
+	switch q.Get("merges") {
+	case "only":
+		args = append(args, "--merges")
+	case "no":
+		args = append(args, "--no-merges")
 	}
 	if skip > 0 {
 		args = append(args, "--skip="+strconv.Itoa(skip))
@@ -996,8 +1033,12 @@ func (a *App) handleContains(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, parseContains(out))
 }
 
-func (a *App) untrackedDiff() string {
-	out, err := a.git("ls-files", "--others", "--exclude-standard", "-z")
+func (a *App) untrackedDiff(only string) string {
+	lsArgs := []string{"ls-files", "--others", "--exclude-standard", "-z"}
+	if only != "" {
+		lsArgs = append(lsArgs, "--", only)
+	}
+	out, err := a.git(lsArgs...)
 	if err != nil {
 		return ""
 	}
