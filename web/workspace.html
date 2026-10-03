@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>echo — workspace</title>
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<script src="/theme-init.js"></script>
+<link rel="preload" href="/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/themes.css">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="ws-page">
+<header class="wshead">
+  <div class="logo"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" class="m-bg"/><path d="M11 16h9.5a4.8 4.8 0 1 0-1.3 3.4" class="m-e"/><path d="M24.5 11.5a7.5 7.5 0 0 1 0 9" class="m-w"/></svg></div>
+  <div class="wstitle"><b id="ws-name">Workspace</b><span id="ws-sum" class="faint"></span></div>
+  <input id="ws-filter" class="field" placeholder="Filter repositories and files  ( / )" autocomplete="off" spellcheck="false">
+  <label class="wscheck"><input id="ws-dirty" type="checkbox"> Changed only</label>
+  <div class="wsactions">
+    <button id="ws-fetch" class="btn sm" title="git fetch --all --prune in every repository">Fetch all</button>
+    <button id="ws-pull" class="btn sm" title="Fast-forward every clean repository that is behind its upstream">Pull all</button>
+    <button id="ws-rescan" class="btn quiet sm" title="Look for repositories that were added or removed">Rescan</button>
+    <a id="ws-files" class="btn quiet sm" href="/r/_files/" title="Files in the workspace folder that are in no repository">Files</a>
+  </div>
+</header>
+<main class="wsmain">
+  <section aria-labelledby="ws-h-repos">
+    <h2 id="ws-h-repos">Repositories</h2>
+    <div id="ws-repos" class="ws-table" role="table"></div>
+  </section>
+  <section aria-labelledby="ws-h-changes">
+    <h2 id="ws-h-changes">All changes <span id="ws-ch-sum" class="faint"></span></h2>
+    <div id="ws-changes"></div>
+  </section>
+</main>
+<footer class="statusbar"><span class="live"></span><span id="status">Ready</span></footer>
+<script type="module" src="/workspace.js"></script>
+</body>
+</html>

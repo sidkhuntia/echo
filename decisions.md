@@ -17,7 +17,7 @@ Status meanings:
 - **Accepted:** the primary workflow is reviewing working-tree and branch diffs.
 - **Accepted:** editing files is a primary workflow, not an afterthought.
 - **Accepted:** the product is for personal daily use, not a team platform.
-- **Accepted:** echo is local-first. It operates on one repository at a time.
+- **Accepted:** echo is local-first. It operates on one repository at a time (a workspace, section 22, is a folder of repositories, each still worked on one at a time).
 - **Accepted:** the tool should feel like a focused desk, not a general-purpose IDE clone.
 - **Accepted:** echo's main job is reviewing code written by coding agents: seeing what changed, proofing it file by file, and accepting or rejecting it.
 - **Accepted:** echo reviews agent output; it does not launch, drive, or talk to agents.
@@ -590,4 +590,18 @@ Everything below was proposed in a review of the v1 code and accepted item by it
 ### Declined (do not re-propose without asking)
 
 Server-side timeouts on commit, revert and reset; a server cap on the file list; renaming `vendor/`; artifact attestation; creating tags; bisect; checkpoints; patch export/import; code symbols and go to symbol; an agent activity feed; the accessibility pass (the Ctrl-M Tab escape is the one concession).
+
+## 22. Workspaces: several repositories in one folder (2026-10-03)
+
+The trigger: a folder such as `EH-Provider-Portal` that is not a repository but holds nine, which one wants to watch together, as Cursor's multi-root workspace does.
+
+- **Accepted:** `echo-desk` in a folder that has no `.git` of its own but has repositories as direct children starts a workspace. Anything else (a repository, or a folder with no repositories) behaves exactly as before. `-depth` is not a flag: the search is one level deep (`wsDepth`), skipping hidden folders, `node_modules`, `dist` and `build`, and not following links.
+- **Accepted:** one process, one `App` per child repository. An `App` already holds everything per repository (root, locks, status cache, notes), so the workspace only owns the list. The folder itself is one more `App` with `noGit` set, served as "Files": its own loose files and folders, without the child repositories' trees. This reverses "one repository per process" (section 18, and the rule in `agents.md`) to "one repository per `App`".
+- **Accepted:** a repository is served under `/r/<id>/` and the request is passed on with the prefix stripped, so its handlers are unchanged. `<id>` is the path under the workspace with `/` written as `~`, and must be in the discovered list: a request cannot name a folder of its own. The host/origin/token guard runs once, outside. `shutdown`, `instance` and `instances` belong to the process and are refused under a repository prefix.
+- **Accepted:** `/ws/...` holds the workspace's own endpoints: `repos` (one summary per repository: branch, ahead/behind, staged, unstaged, untracked, conflicts, from one `git status --branch` each), `stream` (the same as server-sent events), `changes` (every changed file with line counts), `fetch` and `pull` (all repositories), `rescan`. At most three Git processes run at once. The stream polls every 5 seconds and only while a page is subscribed; an open repository still polls its own status every 2 seconds.
+- **Accepted:** the home page (`/`) shows the repositories as a table and every changed file grouped by repository; a row opens the repository, a file opens its diff (`/r/<id>/#diff=<path>`). Fetch all runs `git fetch --all --prune`. Pull all fast-forwards only a repository that is behind, ahead of nothing, and has no staged, unstaged or conflicted files; everything else is skipped and said so. There is no commit-all or push-all: those stay per repository.
+- **Accepted:** switching repositories navigates the tab to another `/r/<id>/` and the page reloads, which the session restore of section 19b already handles. One origin now holds every repository, so the session and recent-file keys in `localStorage` carry the id (`storeKey`). The page was not turned into per-repository state in memory; that would mean rewriting most of `app.js`.
+- **Accepted:** a repository page shows a bar of chips (name, branch, ↑↓, change count) that polls `/ws/repos` every 5 seconds while the tab is visible. It does not hold a stream: a browser allows about six connections to one origin, and every tab already holds one for its own status.
+- **Accepted:** the repository switcher (`⌘⇧O`) lists the workspace's repositories instead of the echo processes; a workspace is one entry in another echo's switcher, and `echo-desk` started inside one of its repositories opens that repository's page there instead of starting a second process.
+- **Deferred:** cross-repository search, a combined "Copy for agent" note export, and nesting deeper than one level.
 

@@ -18,6 +18,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -117,8 +118,16 @@ type Config struct {
 }
 
 type App struct {
-	root  string
-	port  int
+	root string
+	port int
+	// noGit marks a folder that holds repositories but is not one (a workspace's own files), so Git
+	// is not asked about it even when the folder sits inside some other repository.
+	noGit bool
+	// skipRel says which directories (slash paths under root) the file tree leaves out: a workspace's
+	// child repositories, which have their own trees.
+	skipRel func(rel string) bool
+	// ws is set on a workspace's own App, so the instance report can describe the whole workspace.
+	ws    *Workspace
 	hosts map[string]bool
 	// token is the secret every request must carry (cookie or header); empty turns the check off, as in tests.
 	token string
@@ -156,6 +165,9 @@ type Instance struct {
 	Port    int    `json:"port"`
 	Branch  string `json:"branch"`
 	Changes int    `json:"changes"`
+	// Repos is set for a workspace: its repositories' ids and roots, so echo started inside one of
+	// them can open it there instead of starting a second process.
+	Repos map[string]string `json:"repos,omitempty"`
 }
 
 func main() {
@@ -187,8 +199,8 @@ func main() {
 	}
 	authToken = loadToken()
 	if *port == 0 {
-		if p := runningFor(root, instances()); p != 0 {
-			url := "http://127.0.0.1:" + strconv.Itoa(p) + "/?t=" + authToken
+		if p, sub := locate(root, instances()); p != 0 {
+			url := "http://127.0.0.1:" + strconv.Itoa(p) + sub + "?t=" + authToken
 			fmt.Printf("echo %s is already open at %s\n", root, url)
 			open(url)
 			return
@@ -203,8 +215,19 @@ func main() {
 		rememberPort(root, bound)
 	}
 
-	app := newApp(root, bound)
-	app.token = authToken
+	// A folder that is not a repository but holds some is served as a workspace of them.
+	var app *App
+	var handler http.Handler
+	if found := discoverRepos(root, wsDepth); !isRepoRoot(root) && len(found) > 0 {
+		ws := newWorkspace(root, bound, found)
+		ws.host.token = authToken
+		app, handler = ws.host, ws.routes()
+		fmt.Printf("echo workspace of %d repositories\n", len(found))
+	} else {
+		app = newApp(root, bound)
+		app.token = authToken
+		handler = app.routes()
+	}
 	url := "http://127.0.0.1:" + strconv.Itoa(bound) + "/?t=" + authToken
 	fmt.Printf("echo %s\n", root)
 	fmt.Printf("open %s\n", url)
@@ -215,7 +238,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	srv := &http.Server{
-		Handler: app.routes(),
+		Handler: handler,
 		// No write timeout: the status stream stays open. These stop a stalled client holding a socket.
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -278,6 +301,22 @@ func runningFor(root string, list []Instance) int {
 	return 0
 }
 
+// locate finds where root is already open: its own echo, or the workspace that holds it (then the
+// path under that workspace's address).
+func locate(root string, list []Instance) (port int, sub string) {
+	if p := runningFor(root, list); p != 0 {
+		return p, "/"
+	}
+	for _, in := range list {
+		for id, r := range in.Repos {
+			if r == root {
+				return in.Port, "/r/" + url.PathEscape(id) + "/"
+			}
+		}
+	}
+	return 0, ""
+}
+
 // instances asks every port in the range whether an echo is serving there. Closed ports refuse
 // at once, so the scan costs about one round trip.
 func instances() []Instance {
@@ -326,6 +365,11 @@ func newApp(root string, port int) *App {
 }
 
 func (a *App) routes() http.Handler {
+	return a.guard(a.mux())
+}
+
+// mux is the app's routes without the request guard, which a workspace applies once for all its repositories.
+func (a *App) mux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/tree", a.handleTree)
 	mux.HandleFunc("/api/file", a.handleFile)
@@ -361,7 +405,7 @@ func (a *App) routes() http.Handler {
 		w.Header().Set("Cache-Control", "no-cache")
 		files.ServeHTTP(w, r)
 	}))
-	return a.guard(mux)
+	return mux
 }
 
 // The diagram renderer (vendor/mermaid.zip) ships zipped: mermaid's ESM build is 5.4 MB as
@@ -522,6 +566,11 @@ func validateConfig(c Config) error {
 
 func (a *App) handleInstance(w http.ResponseWriter, r *http.Request) {
 	in := Instance{Root: a.root, Port: a.port}
+	if a.ws != nil {
+		in.Repos, in.Changes = a.ws.instanceInfo()
+		writeJSON(w, in)
+		return
+	}
 	if out, err := a.git("branch", "--show-current"); err == nil {
 		in.Branch = strings.TrimSpace(out)
 	}
@@ -753,9 +802,9 @@ func (a *App) authorized(w http.ResponseWriter, r *http.Request) bool {
 	if a.token == "" {
 		return true
 	}
-	if r.Method == http.MethodGet && r.URL.Path == "/" && subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("t")), []byte(a.token)) == 1 {
+	if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/") && subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("t")), []byte(a.token)) == 1 {
 		http.SetCookie(w, &http.Cookie{Name: tokenCookie, Value: a.token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 365 * 24 * 3600})
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
 		return false
 	}
 	got := r.Header.Get(tokenHeader)

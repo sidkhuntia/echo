@@ -166,6 +166,10 @@ func (a *App) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) gitStatus() GitStatus {
 	status := GitStatus{Build: build, Git: true, Root: a.root, Changes: []Change{}}
+	if a.noGit {
+		status.Git = false
+		return status
+	}
 	if _, err := exec.LookPath("git"); err != nil {
 		status.Git = false
 		status.Error = "git not found"

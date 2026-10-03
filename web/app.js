@@ -17,6 +17,7 @@ import * as FO from './fileops.js'
 import { commands } from './commands.js'
 import { wordRanges, pairRuns, injectMarks } from './wordiff.js'
 import { layoutGraph, graphWidth, graphSVG, railSVG, LOG_H, HIST_H } from './graph.js'
+import { BASE, WS_ID, withBase, storeKey } from './base.js'
 
 const $ = s => document.querySelector(s)
 const state = {
@@ -46,7 +47,7 @@ const state = {
   // widths: the side panels' dragged widths, written to the desk grid as --tree-w and --git-w.
   widths: { tree: 272, git: 300 },
   // search: the Search rail. ran is the query and options the shown results came from; ctl aborts the one in flight.
-  closed: [], recent: (() => { try { return JSON.parse(localStorage.getItem('echo:recent')) || [] } catch { return [] } })(),
+  closed: [], recent: (() => { try { return JSON.parse(localStorage.getItem(storeKey('echo:recent'))) || [] } catch { return [] } })(),
   search: { opts: { case: false, word: false, regex: false }, ran: null, res: null, err: '', ctl: null, timer: 0, closed: new Set() },
 }
 const mod = e => e.metaKey || e.ctrlKey
@@ -58,7 +59,7 @@ const EDITABLE = ['head', 'worktree']
 const GENERATED = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|go\.sum|Cargo\.lock|poetry\.lock|Gemfile\.lock|composer\.lock|bun\.lockb?)$/
 
 const api = async (url, opts) => {
-  const res = await fetch(url, opts)
+  const res = await fetch(withBase(url), opts)
   const text = await res.text()
   let data
   try { data = JSON.parse(text) } catch { data = text }
@@ -825,7 +826,7 @@ function blocksHTML(f) {
 const IMAGE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i
 function imageDiffHTML(f) {
   if (!IMAGE.test(f.path)) return ''
-  const sc = scope(), url = rev => `/api/raw?path=${encodeURIComponent(f.path)}${rev ? '&rev=' + encodeURIComponent(rev) : ''}`
+  const sc = scope(), url = rev => `${withBase('/api/raw')}?path=${encodeURIComponent(f.path)}${rev ? '&rev=' + encodeURIComponent(rev) : ''}`
   const commit = $('#diff-commit').value.trim(), from = $('#diff-from').value.trim(), to = $('#diff-to').value.trim()
   const sides = { head: ['head', ''], worktree: ['index', ''], staged: ['head', 'index'], commit: [commit + '^', commit], range: [from, to] }[sc]
   if (!sides) return ''
@@ -1116,7 +1117,7 @@ async function openFile(path, { line = 0, fromReview = false, find: hit = null }
   state.active = i
   state.selected = path
   state.recent = [path, ...state.recent.filter(p => p !== path)].slice(0, 30)
-  try { localStorage.setItem('echo:recent', JSON.stringify(state.recent)) } catch {}
+  try { localStorage.setItem(storeKey('echo:recent'), JSON.stringify(state.recent)) } catch {}
   state.returnTo = fromReview ? path : ''
   setMode('file')
   renderTabs()
@@ -1264,7 +1265,7 @@ function mdURL(tab) {
     if (kind === 'link') return v
     let rel
     try { rel = resolvePath(tab.path, decodeURIComponent(v.split(/[?#]/)[0])) } catch { return null }
-    return rel ? `/api/raw?path=${encodeURIComponent(rel)}` : null
+    return rel ? `${withBase('/api/raw')}?path=${encodeURIComponent(rel)}` : null
   }
 }
 
@@ -2168,8 +2169,10 @@ function renderBranchPop() {
 // ---------- repositories ----------
 // Each repository runs in its own echo process on its own port; the server finds its siblings.
 let repos = [], repoSel = 0
+const hereKey = () => BASE ? WS_ID : String(location.port)
 async function toggleRepoPop(open = $('#repo-pop').hidden) {
   $('#repo-pop').hidden = !open
+  $('#repo-pop').classList.toggle('in-ws', !!BASE)
   $('#repo').classList.toggle('open', open)
   if (!open) return
   toggleThemes(false)
@@ -2177,31 +2180,35 @@ async function toggleRepoPop(open = $('#repo-pop').hidden) {
   $('#repo-filter').value = ''
   $('#repo-filter').focus()
   renderRepoPop()
-  try { repos = await api('/api/instances') } catch (e) { setStatus(e.message, 'err') }
+  try {
+    // In a workspace the list is its repositories; otherwise it is the echo processes on this machine.
+    repos = BASE ? (await api('/ws/repos')).repos.map(r => ({ key: r.id, root: r.root, branch: r.branch, changes: r.staged + r.unstaged + r.untracked + r.conflicts }))
+      : (await api('/api/instances')).map(r => ({ ...r, key: String(r.port) }))
+  } catch (e) { setStatus(e.message, 'err') }
   // Start on the first other repository, so ⌘⇧O then Enter hops away like an app switcher.
-  repoSel = Math.max(0, repos.findIndex(r => r.port !== +location.port))
+  repoSel = Math.max(0, repos.findIndex(r => r.key !== hereKey()))
   if (!$('#repo-pop').hidden) renderRepoPop()
 }
 
 const repoMatches = () => { const f = $('#repo-filter').value.toLowerCase(); return repos.filter(r => !f || r.root.toLowerCase().includes(f)) }
 
 function renderRepoPop() {
-  const here = +location.port, list = repoMatches()
+  const here = hereKey(), list = repoMatches()
   repoSel = Math.min(repoSel, Math.max(0, list.length - 1))
-  $('#repo-list').innerHTML = list.map((r, i) => `<div class="th rp-row ${r.port === here ? 'on' : ''} ${i === repoSel ? 'sel' : ''}" data-port="${r.port}" data-i="${i}" title="${esc(r.root)}">
-    <span class="ok">${r.port === here ? '✓' : ''}</span>
+  $('#repo-list').innerHTML = list.map((r, i) => `<div class="th rp-row ${r.key === here ? 'on' : ''} ${i === repoSel ? 'sel' : ''}" data-key="${esc(r.key)}" data-i="${i}" title="${esc(r.root)}">
+    <span class="ok">${r.key === here ? '✓' : ''}</span>
     <span><div class="nm">${esc(basename(r.root))}${r.branch ? ` <span class="meta">· ${esc(r.branch)}</span>` : ''}${r.changes ? ` <span class="meta">· ${r.changes} changed</span>` : ''}</div><div class="path">${esc(r.root)}</div></span>
-    <span class="rp-end"><span class="port">:${r.port}</span><button class="rp-stop" data-repo-stop="${r.port}" title="Stop this echo process">Stop</button></span></div>`).join('')
+    ${BASE ? '' : `<span class="rp-end"><span class="port">:${r.port}</span><button class="rp-stop" data-repo-stop="${r.port}" title="Stop this echo process">Stop</button></span>`}</div>`).join('')
     || `<div class="bp-more faint">${repos.length ? 'No open repository matches.' : 'Looking for open repositories…'}</div>`
   $('#repo-list .sel')?.scrollIntoView({ block: 'nearest' })
 }
 
-function switchRepo(port, newTab) {
-  const url = `http://127.0.0.1:${port}/`
+function switchRepo(key, newTab) {
+  const url = BASE ? `/r/${encodeURIComponent(key)}/` : `http://127.0.0.1:${key}/`
   toggleRepoPop(false)
   persistSession(true)
   if (newTab) window.open(url, '_blank')
-  else if (port !== +location.port) location.href = url
+  else if (key !== hereKey()) location.href = url
 }
 
 // stopRepo shuts one echo process down, or every one of them. The request is answered before the
@@ -2223,6 +2230,35 @@ async function stopRepo(port, all) {
   setStatus(`stopped ${what}`, 'ok')
   repos = repos.filter(r => r.port !== port)
   renderRepoPop()
+}
+
+// ---------- workspace bar ----------
+// In a workspace every repository is a chip with its branch and change count. It polls (a stream per tab
+// would use up the browser's few connections to this one origin) and only while the tab is visible.
+let wsRepos = []
+const wsChanged = r => r.staged + r.unstaged + r.untracked + r.conflicts
+function renderWsBar() {
+  const bar = $('#wsbar'), first = bar.hidden, left = bar.scrollLeft
+  bar.hidden = false
+  const chip = r => {
+    const n = wsChanged(r)
+    return `<a class="ws-chip ${r.id === WS_ID ? 'on' : ''} ${r.conflicts ? 'conflict' : ''}" href="/r/${encodeURIComponent(r.id)}/" title="${esc(r.root)}${r.error ? '\n' + esc(r.error) : ''}"><b>${esc(r.name)}</b><span class="br">${esc(r.branch || '—')}</span>${r.ahead ? `<i class="ah">↑${r.ahead}</i>` : ''}${r.behind ? `<i class="bh">↓${r.behind}</i>` : ''}${n ? `<em>${n}</em>` : ''}</a>`
+  }
+  bar.innerHTML = `<a class="ws-home" href="/" title="Every repository and every change">Workspace</a>${wsRepos.map(chip).join('')}<a class="ws-chip files ${WS_ID === '_files' ? 'on' : ''}" href="/r/_files/" title="Files in the workspace folder that are in no repository"><b>Files</b></a>`
+  // The bar keeps where it was scrolled to between polls; the first time it brings this repository into view.
+  if (first) bar.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'center' })
+  else bar.scrollLeft = left
+}
+async function pollWsBar(force) {
+  if (document.hidden && force !== true) return
+  try { wsRepos = (await api('/ws/repos')).repos; renderWsBar() } catch {}
+}
+function startWsBar() {
+  pollWsBar(true)
+  setInterval(pollWsBar, 5000)
+  document.addEventListener('visibilitychange', () => pollWsBar())
+  // The session is saved before the page leaves, which a plain link would not do.
+  $('#wsbar').addEventListener('click', e => { if (e.target.closest('a') && !e.metaKey && !e.ctrlKey && !e.shiftKey) persistSession(true) })
 }
 
 // ---------- graph ----------
@@ -3324,7 +3360,7 @@ $('#repo-filter').addEventListener('keydown', e => {
     e.preventDefault()
     repoSel = (repoSel + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length
     renderRepoPop()
-  } else if (e.key === 'Enter' && list[repoSel]) { e.preventDefault(); switchRepo(list[repoSel].port, mod(e)) }
+  } else if (e.key === 'Enter' && list[repoSel]) { e.preventDefault(); switchRepo(list[repoSel].key, mod(e)) }
 })
 $('#repo-list').addEventListener('mousemove', e => {
   const row = e.target.closest('.rp-row')
@@ -3334,7 +3370,7 @@ $('#repo-list').addEventListener('click', e => {
   const stop = e.target.closest('[data-repo-stop]')
   if (stop) { e.stopPropagation(); e.preventDefault(); return stopRepo(+stop.dataset.repoStop, false) }
   const row = e.target.closest('.rp-row')
-  if (row) switchRepo(+row.dataset.port, mod(e))
+  if (row) switchRepo(row.dataset.key, mod(e))
 })
 $('#repo-pop').addEventListener('click', e => {
   if (e.target.closest('[data-repo-quit]')) { e.stopPropagation(); stopRepo(0, true) }
@@ -3758,7 +3794,7 @@ async function loadConfig() {
 // put back on the way in: the mode, rails and diff scope, open tabs with unsaved edits, caret and scroll,
 // the diff position, and the commit message draft. The saved root guards against a port that later serves
 // another repository; a file that changed on disk meanwhile comes back with the usual conflict banner.
-const SESSION_KEY = 'echo:session', DRAFT_MAX = 1 << 20
+const SESSION_KEY = storeKey('echo:session'), DRAFT_MAX = 1 << 20
 let sessionReady = false, sessionSaved = true, sessionTimer = 0
 
 // Where the review is, as a file and an offset inside it, so edits above it do not shift the place.
@@ -3802,8 +3838,8 @@ let mirrorTimer = 0
 function mirrorSession(snap, final) {
   const body = JSON.stringify({ session: snap })
   clearTimeout(mirrorTimer)
-  if (final && navigator.sendBeacon) return void navigator.sendBeacon('/api/drafts', new Blob([body], { type: 'application/json' }))
-  mirrorTimer = setTimeout(() => fetch('/api/drafts', { method: 'POST', headers: { 'content-type': 'application/json' }, body }).catch(() => {}), 1500)
+  if (final && navigator.sendBeacon) return void navigator.sendBeacon(withBase('/api/drafts'), new Blob([body], { type: 'application/json' }))
+  mirrorTimer = setTimeout(() => fetch(withBase('/api/drafts'), { method: 'POST', headers: { 'content-type': 'application/json' }, body }).catch(() => {}), 1500)
 }
 
 function persistSession(final = false) {
@@ -3909,6 +3945,13 @@ async function boot() {
     renderTree()
     await loadDiff()
     if (saved) await restoreView(saved)
+    // The workspace overview links to a changed file as /r/<id>/#diff=<path>.
+    const open = decodeURIComponent(location.hash).match(/^#diff=(.+)$/)
+    if (open) {
+      history.replaceState(null, '', location.pathname)
+      booting = false
+      await goTo(open[1])
+    }
   } catch (e) { setStatus(e.message, 'err') }
   booting = false
   sessionReady = true
@@ -3929,7 +3972,8 @@ boot()
 // Geist Mono can arrive after the first paint; the editor's measured character width and wrap
 // heights belong to whichever font was showing, so they are measured again once it is in.
 document.fonts?.ready.then(() => { charWidth = 0; wrap.tab = null; if (state.mode === 'file') renderEditor() })
-const events = new EventSource('/api/stream')
+if (BASE) startWsBar()
+const events = new EventSource(withBase('/api/stream'))
 // After a lost connection the server may have restarted with new history; forget the refs key so the
 // first status after reconnecting reloads History and the Log.
 events.onopen = () => {

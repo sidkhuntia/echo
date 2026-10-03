@@ -35,7 +35,7 @@ cd ~/code/my-project && echo-desk
 echo-desk ~/code/my-project
 ```
 
-It opens your browser at `http://127.0.0.1:6030`. Each process serves one repository. Start echo in another repository and it takes the next free port (up to 6049) in a new tab; start it in a repository that is already open and it just opens that tab. Click the repository name in the title bar (`⌘⇧O`) to switch between open repositories. What you were doing in each (open files, unsaved edits, scroll positions, review notes) is kept and comes back when you return.
+It opens your browser at `http://127.0.0.1:6030`. Each process serves one repository, or one workspace: run `echo-desk` in a folder that holds several repositories (and is not one itself) and it opens an overview of all of them, with every changed file grouped by repository; each repository opens as the usual page, with a bar to hop between them. Start echo in another repository and it takes the next free port (up to 6049) in a new tab; start it in a repository that is already open and it just opens that tab. Click the repository name in the title bar (`⌘⇧O`) to switch between open repositories. What you were doing in each (open files, unsaved edits, scroll positions, review notes) is kept and comes back when you return.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |

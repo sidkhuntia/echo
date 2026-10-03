@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Workspaces (on branch `feat/workspace-mode`)
+
+- Run `echo-desk` in a folder that is not a repository but contains repositories (for example `~/Developer/EH-Provider-Portal`) and echo opens them all in one tab. The home page lists every repository with its branch, ↑↓, and staged, unstaged, untracked and conflict counts, plus every changed file grouped by repository; a file opens its diff.
+- Each repository opens at `/r/<name>/` as the usual echo page, with a bar of repository chips (branch and change count) across the top. `⌘⇧O` switches between them; what was open in each comes back.
+- Fetch all, Pull all (fast-forward only, skipping repositories with local work), Rescan, and a "Changed only" filter. The folder's own loose files are under Files.
+- Starting echo inside a repository that a workspace already serves opens that repository in the workspace.
+
 ### v2: safety, review notes, Git and editor depth (on branch `v2/hardening-and-features`)
 
 **Fixes**

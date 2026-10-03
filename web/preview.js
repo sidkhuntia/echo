@@ -1,4 +1,5 @@
 // Previews for files the editor shows as something other than text: tables, images.
+import { withBase } from './base.js'
 import { ctx } from './ctx.js'
 import { parseCSV } from './editing.js'
 
@@ -33,7 +34,7 @@ export function csvDoc(tab) {
 }
 
 export function imageViewHTML(tab) {
-  const src = `/api/raw?path=${encodeURIComponent(tab.path)}&v=${encodeURIComponent(tab.hash || '')}`
+  const src = `${withBase('/api/raw')}?path=${encodeURIComponent(tab.path)}&v=${encodeURIComponent(tab.hash || '')}`
   return `<div class="img-view"><div class="img-frame"><img src="${ctx.esc(src)}" alt="${ctx.esc(tab.path)}"></div><div class="img-meta"><span id="img-dim"></span><button class="btn sm" data-open-ext>Open in default app</button></div></div>`
 }
 

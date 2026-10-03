@@ -51,8 +51,10 @@ func (a *App) handleTree(w http.ResponseWriter, r *http.Request) {
 // tree lists the repository's files. In a Git repository it asks Git, so ignored files
 // (build output, local data) stay out and cannot crowd real sources past the browser's cap.
 func (a *App) tree() []TreeNode {
-	if out, err := a.gitTree(); err == nil {
-		return out
+	if !a.noGit {
+		if out, err := a.gitTree(); err == nil {
+			return out
+		}
 	}
 	var out []TreeNode
 	_ = filepath.WalkDir(a.root, func(path string, d fs.DirEntry, err error) error {
@@ -63,7 +65,7 @@ func (a *App) tree() []TreeNode {
 			return nil
 		}
 		rel, _ := filepath.Rel(a.root, path)
-		if skipDir(d.Name()) && d.IsDir() {
+		if skipDir(d.Name()) && d.IsDir() || d.IsDir() && a.skipRel != nil && a.skipRel(filepath.ToSlash(rel)) {
 			return filepath.SkipDir
 		}
 		if strings.HasPrefix(rel, ".") && !d.IsDir() {
