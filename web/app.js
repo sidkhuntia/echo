@@ -453,10 +453,10 @@ function buildTree(paths) {
   return root
 }
 
-// The paths the tree shows: the filter, then the cap on what a browser will lay out.
+// The paths the tree shows: the filter applied; the window below decides how many are drawn.
 const treePaths = () => {
   const filter = $('#file-filter').value.toLowerCase()
-  return state.tree.map(f => f.path).filter(p => !filter || p.toLowerCase().includes(filter)).slice(0, 3000)
+  return state.tree.map(f => f.path).filter(p => !filter || p.toLowerCase().includes(filter))
 }
 // A folder opens by default when it holds a change or the open file; a choice the user made wins.
 const dirIsOpen = (d, filter, open) => filter ? true : state.dirOpen.has(d.path) ? state.dirOpen.get(d.path) : d.changed > 0 || (open || '').startsWith(d.path + '/')
@@ -464,6 +464,11 @@ const allDirs = (node, out = []) => {
   for (const [, d] of node.dirs) { out.push(d); allDirs(d, out) }
   return out
 }
+
+// The tree draws only the rows in view (plus a margin) between two spacers, so a repository with
+// a hundred thousand files costs the same to scroll as one with a hundred. Rows are a fixed 26px.
+const TREE_ROW = 26, TREE_WINDOW_MIN = 400
+let treeRows = []
 
 function renderTree() {
   if (state.rail !== 'files') return
@@ -477,22 +482,36 @@ function renderTree() {
     const at = n.toLowerCase().indexOf(filter)
     return at < 0 ? esc(n) : `${esc(n.slice(0, at))}<mark>${esc(n.slice(at, at + filter.length))}</mark>${esc(n.slice(at + filter.length))}`
   }
+  const rows = []
   const render = (node, depth) => {
-    let h = ''
     for (const [n, d] of [...node.dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
       const o = isOpen(d)
-      h += `<div class="tnode dir" draggable="true" data-dir="${esc(d.path)}" ${pad(depth)} title="${esc(d.path)}"><span class="tw">${o ? '▾' : '▸'}</span><svg class="i ic" viewBox="0 0 16 16"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><span class="nm">${esc(n)}</span>${d.changed ? `<span class="count">${d.changed}</span>` : ''}</div>`
-      if (o) h += render(d, depth + 1)
+      rows.push(`<div class="tnode dir" draggable="true" data-dir="${esc(d.path)}" ${pad(depth)} title="${esc(d.path)}"><span class="tw">${o ? '▾' : '▸'}</span><svg class="i ic" viewBox="0 0 16 16"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><span class="nm">${esc(n)}</span>${d.changed ? `<span class="count">${d.changed}</span>` : ''}</div>`)
+      if (o) render(d, depth + 1)
     }
     for (const p of node.files) {
       const c = state.changes.get(p)
-      h += `<div class="tnode ${state.selected === p || open === p ? 'active' : ''}" draggable="true" data-path="${esc(p)}" ${pad(depth)} title="${esc(p)}"><span class="tw"></span><svg class="i ic" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg><span class="nm">${name(basename(p))}</span>${c ? codeTag(c) : ''}</div>`
+      rows.push(`<div class="tnode ${state.selected === p || open === p ? 'active' : ''}" draggable="true" data-path="${esc(p)}" ${pad(depth)} title="${esc(p)}"><span class="tw"></span><svg class="i ic" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg><span class="nm">${name(basename(p))}</span>${c ? codeTag(c) : ''}</div>`)
     }
-    return h
   }
-  $('#tree').innerHTML = render(root, 0) || `<div class="empty">No path matches.</div>`
+  render(root, 0)
+  treeRows = rows
+  paintTreeWindow(true)
   syncTreeCollapse(root)
 }
+
+function paintTreeWindow(force = false) {
+  const box = $('#tree'), total = treeRows.length
+  if (!total) { box.innerHTML = '<div class="empty">No path matches.</div>'; return }
+  if (total < TREE_WINDOW_MIN) { if (force) box.innerHTML = treeRows.join(''); return }
+  const first = Math.max(0, Math.floor(box.scrollTop / TREE_ROW) - 20)
+  const last = Math.min(total, Math.ceil((box.scrollTop + (box.clientHeight || 600)) / TREE_ROW) + 20)
+  if (!force && box.dataset.first === String(first) && box.dataset.last === String(last)) return
+  box.dataset.first = first; box.dataset.last = last
+  box.innerHTML = `<div style="height:${first * TREE_ROW}px"></div>${treeRows.slice(first, last).join('')}<div style="height:${(total - last) * TREE_ROW}px"></div>`
+}
+let treeFrame
+$('#tree').addEventListener('scroll', () => { cancelAnimationFrame(treeFrame); treeFrame = requestAnimationFrame(() => paintTreeWindow()) })
 
 function toggleDir(path) {
   const row = $(`#tree .tnode.dir[data-dir="${CSS.escape(path)}"]`)
@@ -621,6 +640,43 @@ function isFolded(f) {
   return GENERATED.test(f.path) || f.lines > 1500
 }
 
+// ---------- drawing huge diffs lazily ----------
+const LAZY_LINES = 6000
+// Which unrendered bodies are within a screen and a half of the viewport get drawn. Driven by scroll and
+// by each render, from measured positions rather than an observer, so it also works in a hidden tab.
+function observeLazy() { renderNear() }
+function renderNear() {
+  if (!state.lazy) return
+  const view = $('#diff'), vr = view.getBoundingClientRect(), margin = 1500
+  for (const el of view.querySelectorAll('.dbody[data-lazy]')) {
+    const r = el.getBoundingClientRect()
+    if (r.top > vr.bottom + margin) break
+    if (r.bottom >= vr.top - margin) renderBody(+el.closest('.dfile').dataset.i)
+  }
+}
+
+function renderBody(i) {
+  const f = state.diffFiles[i]
+  if (!f || f.rendered || isFolded(f)) return false
+  const sec = $(`#diff .dfile[data-i="${i}"]`)
+  if (!sec) return false
+  f.rendered = true
+  const body = sec.querySelector('.dbody')
+  body.removeAttribute('data-lazy'); body.style.minHeight = ''
+  body.innerHTML = f.hunks.map((h, hi) => hunkHTML(h, hi, f.path, f.hunks.length, f)).join('')
+  return true
+}
+
+// Navigation asks for a file before it looks for its hunks.
+const ensureRendered = i => { if (state.lazy) renderBody(i) }
+
+// stepHunk found nothing in what is drawn: draw the next file (or the previous) and look again.
+function renderNextLazy(dir) {
+  const from = state.current < 0 ? 0 : state.current
+  for (let k = from + dir; k >= 0 && k < state.diffFiles.length; k += dir) if (renderBody(k)) return true
+  return false
+}
+
 // ---------- filtering the review ----------
 // Narrows the changed files by name or content and by what has been decided; the full list stays in
 // state.diffAll so clearing the filter brings every file back.
@@ -680,8 +736,12 @@ function renderDiff() {
     return diffMessage(...why, state.cleanShown ? cleanHTML() : '')
   }
   const view = $('#diff'), top = view.scrollTop
+  // A huge diff draws file bodies only as they come near the screen.
+  state.lazy = files.reduce((n, f) => n + f.lines, 0) > LAZY_LINES
+  files.forEach(f => { if (!state.lazy) f.rendered = true })
   view.innerHTML = files.map(fileHTML).join('')
   view.scrollTop = top
+  observeLazy()
   state.current = -1
   renderTrace()
   updateCurrent()
@@ -723,6 +783,7 @@ async function goHunk(i, hi) {
   if (state.mode !== 'diff') await setMode('diff')
   const f = state.diffFiles[i]
   if (!f) return
+  ensureRendered(i)
   if (isFolded(f)) { state.folded.set(f.path, false); rerenderFile(i) }
   const view = $('#diff'), el = view.querySelector(`.dfile[data-i="${i}"] .hunk[data-h="${hi}"]`)
   if (!el) return goFile(i)
@@ -739,6 +800,7 @@ function renderPos() {
 function rerenderFile(i) {
   const sec = $(`#diff .dfile[data-i="${i}"]`)
   if (!sec) return
+  state.diffFiles[i].rendered = true
   sec.outerHTML = fileHTML(state.diffFiles[i], i)
   state.current = -1
   updateCurrent()
@@ -789,7 +851,9 @@ function fileHTML(f, i) {
     canStage ? `<button class="btn sm stage" data-act="stage" title="Stage and go to the next file (s)">${ICON.plus}Stage</button>` : '',
   ].join('')
   let body = ''
-  if (!folded) {
+  const lazy = !folded && state.lazy && !f.rendered && f.hunks.length && !f.note && !f.binary
+  if (lazy) body = ''
+  else if (!folded) {
     if (f.note) body = `<div class="dnote">${esc(f.note)}</div>`
     else if (f.binary) body = imageDiffHTML(f) || `<div class="dnote">Binary file — not shown.</div>`
     else if (!f.hunks.length) body = `<div class="dnote">${f.renamedFrom ? `Renamed from <b>${esc(f.renamedFrom)}</b>${f.mode ? '; ' : '.'}` : ''}${f.mode ? `Mode changed ${esc(f.mode.from)} → ${esc(f.mode.to)}.` : ''}${!f.renamedFrom && !f.mode ? (f.isNew ? 'Empty new file.' : 'Metadata change only.') : ''}</div>`
@@ -801,7 +865,7 @@ function fileHTML(f, i) {
   const stat = chips + (f.binary ? '' : `${f.added ? `<span class="add">+${f.added}</span>` : ''}${f.deleted ? `<span class="del">−${f.deleted}</span>` : ''}${blocksHTML(f)}`)
   return `<section class="dfile ${folded ? 'folded' : ''}" data-i="${i}">
     <header class="dfile-head"><span class="fold">▶</span>${badge(letter, kind)}<span class="dpath" title="${esc(f.path)}">${fullPath(f.path)}</span><span class="dstat">${stat}${why ? `<span class="note">· ${why}</span>` : ''}${unsaved ? '<span class="note unsaved" title="The diff shows the file on disk; save with ⌘S in the editor">· unsaved edits</span>' : ''}</span><span class="spacer"></span><span class="dacts">${acts}</span></header>
-    <div class="dbody">${body}</div>
+    <div class="dbody"${lazy ? ` data-lazy style="min-height:${f.lines * 20 + f.hunks.length * 44}px"` : ''}>${body}</div>
   </section>`
 }
 
@@ -970,6 +1034,7 @@ function currentPath() {
 }
 
 function goFile(i) {
+  ensureRendered(i)
   const view = $('#diff')
   const sec = view.querySelector(`.dfile[data-i="${i}"]`)
   if (!sec) return
@@ -989,7 +1054,7 @@ function stepHunk(dir) {
   const pos = view.scrollTop + 60
   const tops = hunks.map(h => offsetIn(h, view))
   let idx = dir > 0 ? tops.findIndex(t => t > pos + 1) : tops.findLastIndex(t => t < pos - 1)
-  if (idx < 0) return
+  if (idx < 0) { if (state.lazy && renderNextLazy(dir)) return stepHunk(dir); return }
   view.scrollTop = tops[idx] - 60
   updateCurrent()
 }
@@ -2975,7 +3040,7 @@ $('#diff').addEventListener('dblclick', e => {
   openAtLine(f.path, +cell.dataset.n)
 })
 let scrollFrame
-$('#diff').addEventListener('scroll', () => { cancelAnimationFrame(scrollFrame); scrollFrame = requestAnimationFrame(updateCurrent) })
+$('#diff').addEventListener('scroll', () => { cancelAnimationFrame(scrollFrame); scrollFrame = requestAnimationFrame(() => { renderNear(); updateCurrent() }) })
 $('#tabs').addEventListener('contextmenu', e => {
   const el = e.target.closest('.tab')
   if (!el) return
