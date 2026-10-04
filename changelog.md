@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-10-04)
 
 - The status poll and the file tree load faster. Git's independent calls (branch, status, and the three line-count diffs; the two file listings) now run at the same time instead of one after another. Same results; on a repository with 400 changes the status went from about 260 ms to 140 ms.
 - Switching between a workspace's repositories is faster. The repository bar's `/ws/repos` answer is shared by simultaneous requests and reused for two seconds (fetch, pull and rescan refresh it at once), so each switch no longer runs a Git status in every repository.
