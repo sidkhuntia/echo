@@ -11,6 +11,9 @@
 - Quieter screen: the repository bar is one line of names (a count only where something changed; branch and sync are in the tooltip), the review's file filter shows only the filter box (status filter and Collapse all moved into the view menu, the status filter returns beside the box while active), the footer shortcut strip and the refresh button are gone, and the commit box shows Sign off and Co-author only while you are writing a message.
 - A file's header keeps Note and Stage/Unstage; Open, File history, more context lines and Discard are in its ⋯ menu. The sidebar tabs are Changes and Files as words, with Branches and Notes as icons (Notes keeps its count).
 - The repository switcher is one line per repository: name and branch, then the change count, port, and Stop.
+- Log: opening it closes an open History drawer; clicking a commit only selects it and shows its details (like History); clicking one of its files opens that diff, and the Log's commits move into the left nav (a Log tab appears there) so another commit is one click away. Esc returns to the full Log.
+- Tabs can be dragged into the order you like: the sidebar tabs, Review/Editor/Log, the Git panel tabs (saved in the config as `tabOrder`), and the open-file tabs.
+- Hunk header: note and discard are quiet icons and the one action that moves the hunk (Stage hunk / Unstage hunk) sits last, tinted; the line range shows on hover.
 - Messages in the bottom-left corner disappear after four seconds (eight for errors); "Lost the echo server" stays until the connection returns.
 - The repository switcher searches names and branches by every word you type (the folder path no longer matches everything), and one row is highlighted instead of two competing boxes. The theme picker now moves with ↑/↓, previews the highlighted theme, applies it with Enter, and Escape puts the old one back.
 

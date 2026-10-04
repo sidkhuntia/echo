@@ -285,3 +285,20 @@ func TestLocate(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateConfigTabOrder(t *testing.T) {
+	ok := Config{TabOrder: map[string][]string{"rail": {"changes", "files", "branches", "notes"}}}
+	if err := validateConfig(ok); err != nil {
+		t.Errorf("a real tab order was refused: %v", err)
+	}
+	for name, c := range map[string]Config{
+		"odd id":    {TabOrder: map[string][]string{"rail": {"<script>"}}},
+		"too long":  {TabOrder: map[string][]string{"rail": make([]string, 17)}},
+		"too many":  {TabOrder: map[string][]string{"a": nil, "b": nil, "c": nil, "d": nil, "e": nil, "f": nil, "g": nil, "h": nil, "i": nil}},
+		"long name": {TabOrder: map[string][]string{"averyveryverylongname": {"x"}}},
+	} {
+		if err := validateConfig(c); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

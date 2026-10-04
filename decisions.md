@@ -489,7 +489,7 @@ These are not rejected. They are waiting until the basic review loop is proven:
 2. ~~Hunk-level stage and unstage controls.~~ Done in v2.
 4. ~~Word-level diff highlighting.~~ Done in v2.
 5. Native file picker and richer context menus.
-6. Drag-to-reorder panel layout. (Panel sizing is done, see section 16.)
+6. Drag-to-reorder panel layout. (Panel sizing is done, see section 16; tabs reorder within their strip, section 22b. Moving a tab to another panel is still deferred.)
 7. ~~Full vim mode.~~ A practical subset is built in v2.
 8. ~~Conflict continue/abort controls.~~ Done in v2.
 9. ~~Stash pop UI and stash diffs.~~ Done in v2.
@@ -611,4 +611,10 @@ The trigger: a folder such as `EH-Provider-Portal` that is not a repository but 
 - **Accepted:** secondary controls move behind menus, not away: the review's status filter and Collapse all live in the view menu (the filter returns beside the search box while one is active); the shortcut strip is the `?` sheet; refresh is live already. The commit box's Sign off and Co-author appear only while it is focused or has text.
 - **Accepted:** the workspace bar shows names only, with a count where there are changes; branch, ahead/behind and errors are in each chip's tooltip and the title bar.
 - **Accepted:** pickers (repository, theme) are keyboard lists with one highlighted row; the repository switcher matches every typed word against name and branch, never the folder path.
+
+### 22b. Log, draggable tabs, hunk actions (2026-10-04)
+
+- **Accepted:** the Log and History behave alike: a click on a commit only selects it; a click on one of its files opens the diff. Opening the Log closes an open History drawer. While a commit's diff from the Log is shown, the Log's commits live in the left nav (a hidden-until-needed `Log` rail tab, same rows as History), and Esc returns to the Log.
+- **Accepted:** tab strips (sidebar, view switch, Git panel) reorder by dragging and the order is saved in the config (`tabOrder`, validated: at most 8 strips, 16 ids each); open-file tabs reorder in the session. The first icon tab takes the free space so icons stay at the end. Moving a tab into a different panel is deferred.
+- **Accepted:** a hunk's actions are quiet icons (note, discard) plus one tinted primary (Stage/Unstage), last. Choosing lines turns the discard icon back into words, because it then says how many lines.
 

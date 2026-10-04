@@ -18,6 +18,7 @@ import { commands } from './commands.js'
 import { wordRanges, pairRuns, injectMarks } from './wordiff.js'
 import { layoutGraph, graphWidth, graphSVG, railSVG, LOG_H, HIST_H } from './graph.js'
 import { BASE, WS_ID, withBase, storeKey } from './base.js'
+import * as TD from './tabdrag.js'
 
 const $ = s => document.querySelector(s)
 const state = {
@@ -211,14 +212,17 @@ function setRail(rail) {
   $('#branches').hidden = rail !== 'branches'
   $('#search-pane').hidden = rail !== 'search'
   $('#notes').hidden = rail !== 'notes'
+  $('#log-side').hidden = rail !== 'logside'
+  $('[data-rail="logside"]').hidden = rail !== 'logside'
   $('#commit-dock').hidden = rail !== 'changes' || state.status?.git === false
   $('[data-rail="search"]').hidden = rail !== 'search'
-  $('.filter-row').hidden = rail === 'search' || rail === 'notes'
+  $('.filter-row').hidden = rail === 'search' || rail === 'notes' || rail === 'logside'
   $('#file-filter').placeholder = rail === 'branches' ? 'Filter branches' : 'Filter paths'
   if (rail === 'files') ensureTree().then(renderTree)
   else if (rail === 'branches') renderBranches()
   else if (rail === 'search') $('#search-input').focus()
   else if (rail === 'notes') R.renderNotesPane()
+  else if (rail === 'logside') renderLogSide()
   else renderQueue()
 }
 
@@ -1175,7 +1179,7 @@ async function reopenClosedTab() {
 }
 
 function renderTabs() {
-  $('#tabs').innerHTML = state.tabs.map((t, i) => `<div class="tab ${i === state.active && state.mode === 'file' ? 'active' : ''} ${t.content !== t.saved ? 'dirty' : ''}" data-i="${i}" title="${esc(t.path)}"><span>${esc(basename(t.path))}</span><button class="x" data-close="${i}" title="Close"><span>×</span></button></div>`).join('')
+  $('#tabs').innerHTML = state.tabs.map((t, i) => `<div class="tab ${i === state.active && state.mode === 'file' ? 'active' : ''} ${t.content !== t.saved ? 'dirty' : ''}" data-i="${i}" draggable="true" title="${esc(t.path)}"><span>${esc(basename(t.path))}</span><button class="x" data-close="${i}" title="Close"><span>×</span></button></div>`).join('')
 }
 
 let shownTab = null
@@ -1889,7 +1893,11 @@ function setMode(m) {
   $('#log').classList.toggle('active', m === 'log')
   if (m !== 'diff') state.fromLog = false
   // The Log gets IntelliJ's branch list beside it; leaving puts the sidebar back as it was.
-  if (m === 'log' && was !== 'log' && state.rail !== 'branches' && state.status?.git) { state.railBeforeLog = state.rail; setRail('branches') }
+  if (m === 'log' && was !== 'log') {
+    // The Log is the history, so a History drawer beside it is closed: the room goes to the graph.
+    if (gitOpen() && $('#insp').dataset.insp === 'history') toggleGit(false)
+    if (state.rail !== 'branches' && state.status?.git) { state.railBeforeLog = state.rail === 'logside' ? 'changes' : state.rail; setRail('branches') }
+  }
   if (was === 'log' && m !== 'log' && state.railBeforeLog) { if (state.rail === 'branches') setRail(state.railBeforeLog); state.railBeforeLog = '' }
   if (m === 'log') { if (!state.log.loaded) loadLog(); $('#log-rows').focus({ preventScroll: true }) }
   $('#file-crumb').hidden = m !== 'file' || !activeTab()
@@ -2374,13 +2382,26 @@ function paintLogDetail() {
     <div class="ld-refs">${refChips(c.refs)}</div><div class="ld-body">${detailHTML(c.hash)}</div>` : ''
 }
 
+// While a commit's diff from the Log is on screen, the Log's commits move to the left nav, so another
+// commit is one click away and the diff gets the room. Same rows as History: click expands, a file opens its diff.
+function renderLogSide() {
+  const L = state.log, w = graphWidth(L.rows), view = $('#log-side')
+  view.innerHTML = L.commits.map((c, i) => `<div class="commit-row ${c.hash === L.sel ? 'open' : ''}${c.unpushed ? ' unpushed' : ''}" data-hash="${esc(c.hash)}" data-short="${esc(c.short)}" title="${esc(c.subject)}">
+      <span class="c-graph">${graphSVG(L.rows[i], HIST_H, w)}</span>
+      <div class="c-main"><div class="c-subject">${refChips(c.refs)}${esc(c.subject)}</div>
+      <div class="c-meta">${pushMark(c)}<b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time">${ago(c.time)}</span></div></div>
+    </div>${c.hash === L.sel ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(L.rows[i].after, w)}</span><div class="c-dbody">${detailHTML(c.hash)}</div></div>` : ''}`).join('')
+  view.querySelector('.commit-row.open')?.scrollIntoView({ block: 'nearest' })
+}
+const showLogSide = () => { if (state.log.commits.length) setRail('logside') }
+
 function openLogDiff() {
   const c = state.log.commits.find(c => c.hash === state.log.sel)
   if (!c) return
   state.fromLog = true
   const path = $('#log-path').value.trim()
   const shown = path ? goCommitFile(c.hash, path) : showCommitDiff(c.hash, c.short)
-  shown.then(() => { state.fromLog = true; setStatus('Esc returns to the log') })
+  shown.then(() => { state.fromLog = true; showLogSide(); setStatus('Esc returns to the log') })
 }
 
 function renderLogRefs() {
@@ -2504,6 +2525,8 @@ async function loadDetail(hash) {
 function paintDetail(hash) {
   const el = $(`#history .commit-row[data-hash="${CSS.escape(hash)}"] + .c-detail .c-dbody`)
   if (el) el.innerHTML = detailHTML(hash)
+  const side = $(`#log-side .commit-row[data-hash="${CSS.escape(hash)}"] + .c-detail .c-dbody`)
+  if (side) side.innerHTML = detailHTML(hash)
   if (state.log.sel === hash) paintLogDetail()
 }
 
@@ -3352,7 +3375,7 @@ function detailClick(e, hash, inLog) {
     document.querySelectorAll('.c-files .tnode.active').forEach(n => n.classList.remove('active'))
     hit('[data-cfile]').classList.add('active')
     state.fromLog = inLog
-    goCommitFile(hash, hit('[data-cfile]').dataset.cfile).then(() => { state.fromLog = inLog })
+    goCommitFile(hash, hit('[data-cfile]').dataset.cfile).then(() => { state.fromLog = inLog; if (inLog) showLogSide() })
   } else if (hit('[data-diff]')) openLogDiff()
   else return false
   return true
@@ -3368,8 +3391,18 @@ $('#revert-bar').addEventListener('click', e => {
   if (b) gitAction({ action: b.dataset.revert })
 })
 $('#log-detail').addEventListener('click', e => detailClick(e, state.log.sel, true))
-// A click selects the commit and opens its diff in Review; Esc comes back to the Log.
-$('#log-rows').addEventListener('click', e => { const r = e.target.closest('.lrow'); if (r) { selectLog(r.dataset.hash); openLogDiff() } })
+$('#log-side').addEventListener('click', e => {
+  const hash = e.target.closest('.c-detail')?.previousElementSibling?.dataset.hash
+  if (hash && detailClick(e, hash, true)) return
+  const row = e.target.closest('.commit-row')
+  if (!row || row.dataset.hash === state.log.sel) return
+  state.log.sel = row.dataset.hash
+  renderLogSide()
+  loadDetail(row.dataset.hash)
+})
+// A click only selects the commit and shows its details, as in History; a click on one of its files opens
+// that file's diff, and Esc comes back to the Log.
+$('#log-rows').addEventListener('click', e => { const r = e.target.closest('.lrow'); if (r) selectLog(r.dataset.hash) })
 $('#log-rows').addEventListener('scroll', () => {
   const v = $('#log-rows'), L = state.log
   if (L.more && !L.loading && v.scrollTop + v.clientHeight > v.scrollHeight - 600) loadLog(true)
@@ -3972,7 +4005,7 @@ async function restoreView(s) {
     const view = $('#diff'), el = view.querySelector(`.dfile[data-i="${i}"]`)
     if (el) { view.scrollTop = offsetIn(el, view) + at.off; updateCurrent() }
   }
-  setRail(document.querySelector(`.rail-switch [data-rail="${s.rail}"]`) ? s.rail : state.rail)
+  setRail(document.querySelector(`.rail-switch [data-rail="${s.rail}"]`) && s.rail !== 'logside' ? s.rail : state.rail)
   if (document.querySelector(`.insp-switch [data-insp="${s.insp}"]`)) setInspector(s.insp)
   // Applied after the config, which decides whether the drawer is pinned open.
   if (s.drawer && !gitPinned()) { $('.desk').classList.add('git-open'); markRail() }
@@ -4011,7 +4044,7 @@ async function boot() {
   persistSession()
 }
 syncScopeInputs()
-Object.assign(ctx, { currentPath, rerenderAll: () => { if (state.diffFiles.length) renderDiff() }, undoLastCommit, openPalette, reopenClosedTab, openFileHistory, closeTab, showFind, stepFind, renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => Ed.applySettings(), rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
+Object.assign(ctx, { currentPath, rerenderAll: () => { if (state.diffFiles.length) renderDiff() }, undoLastCommit, openPalette, reopenClosedTab, openFileHistory, closeTab, showFind, stepFind, renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => { Ed.applySettings(); TD.applyTabOrder() }, rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
 R.initReview()
 Ops.initOps()
 Pv.initPreview()
@@ -4020,6 +4053,7 @@ Ed.initEditor()
 Rp.initReplace()
 T.initTools()
 G.init()
+TD.initTabDrag()
 boot()
 // Geist Mono can arrive after the first paint; the editor's measured character width and wrap
 // heights belong to whichever font was showing, so they are measured again once it is in.

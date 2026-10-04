@@ -61,6 +61,7 @@
       <div class="seg rail-switch" role="tablist">
         <button data-rail="changes" class="on" role="tab">Changes <span id="change-count" class="count"></span></button>
         <button data-rail="files" role="tab">Files</button>
+        <button data-rail="logside" class="ico" role="tab" title="Log: the commits you opened a file from" aria-label="Log" hidden><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="3.5" r="1.6"/><circle cx="8" cy="12.5" r="1.6"/><path d="M8 5.1v5.8"/></svg></button>
         <button data-rail="branches" class="ico" role="tab" title="Branches" aria-label="Branches"><svg class="i" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="6" r="1.6"/><path d="M4.5 5v6M11.5 7.6c0 2.4-7 1.6-7 3.3"/></svg></button>
         <button data-rail="notes" class="ico" role="tab" title="Review notes for the agent" aria-label="Review notes"><svg class="i" viewBox="0 0 16 16"><path d="M3.5 2.5h9v8l-3 3h-6z"/><path d="M9.5 13.5v-3h3M5.5 6h5M5.5 8.5h3"/></svg><span id="note-count" class="count"></span></button>
         <button data-rail="search" role="tab" title="Search file contents (⌘⇧F)" hidden>Search</button>
@@ -101,6 +102,7 @@
       </div>
     </div>
     <div id="branches" class="list" hidden></div>
+    <div id="log-side" class="list history-side" hidden></div>
     <div id="notes" class="list notes-pane" hidden></div>
     <div id="search-pane" class="search-pane" hidden>
       <div class="search-box">

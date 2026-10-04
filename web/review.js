@@ -56,25 +56,28 @@ function sideOf(f) {
 const BTN = (act, label, title, cls = '') => `<button class="hbtn ${cls}" data-hact="${act}" title="${esc(title)}">${label}</button>`
 const ICO = {
   note: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10v7H8.5L5.5 13v-2.5H3z"/></svg>',
+  undo: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5 3 6l2.5 2.5"/><path d="M3 6h6.5a3.5 3.5 0 0 1 0 7H7"/></svg>',
 }
 
+// Quiet icons first, the one action that moves the hunk last, so it sits where Stage sits in the file header.
 export function hunkActsHTML(f, h, hi) {
   const side = sideOf(f)
   const picked = review.sel && review.sel.path === f.path && review.sel.hi === hi ? review.sel.lines.size : 0
-  let out = ''
-  if (side === 'work') {
-    out += BTN('stage', picked ? `Stage ${picked} line${picked === 1 ? '' : 's'}` : 'Stage hunk', picked ? 'Stage only the selected lines' : 'Stage this hunk')
-    out += BTN('discard', picked ? `Discard ${picked}` : 'Discard', picked ? 'Throw away only the selected lines' : 'Throw away this hunk', 'danger')
-  } else if (side === 'index') {
-    out += BTN('unstage', picked ? `Unstage ${picked} line${picked === 1 ? '' : 's'}` : 'Unstage hunk', picked ? 'Unstage only the selected lines' : 'Unstage this hunk')
-  } else if (side === 'both') {
-    out += `<span class="hint-s" title="This file has staged and unstaged changes. Use the Unstaged or Staged view to stage single hunks.">partly staged</span>`
-  }
+  const lines = n => `${n} line${n === 1 ? '' : 's'}`
+  let quiet = '', main = ''
   if (notable()) {
     const n = review.notes.filter(x => x.path === f.path && x.line > 0 && h.lines.some(l => l.i !== undefined && x.side === lineSide(l) && lastLine(x) === lineNo(l))).length
-    out += BTN('note', ICO.note + (n ? `<span class="n">${n}</span>` : ''), picked ? `Add a note on the ${picked} selected line${picked === 1 ? '' : 's'} (c)` : n ? `${n} note${n === 1 ? '' : 's'} on this hunk. Click to add another (c)` : 'Add a note to this hunk (c)', n ? 'has' : 'icon')
+    quiet += BTN('note', ICO.note + (n ? `<span class="n">${n}</span>` : ''), picked ? `Add a note on the ${lines(picked)} selected (c)` : n ? `${n} note${n === 1 ? '' : 's'} on this hunk. Click to add another (c)` : 'Add a note to this hunk (c)', n ? 'has' : 'icon')
   }
-  return `<span class="hacts">${out}</span>`
+  if (side === 'work') {
+    quiet += picked ? BTN('discard', `Discard ${picked}`, 'Throw away only the selected lines', 'danger') : BTN('discard', ICO.undo, 'Discard this hunk', 'danger icon')
+    main = BTN('stage', picked ? `Stage ${lines(picked)}` : 'Stage hunk', picked ? 'Stage only the selected lines' : 'Stage this hunk', 'main')
+  } else if (side === 'index') {
+    main = BTN('unstage', picked ? `Unstage ${lines(picked)}` : 'Unstage hunk', picked ? 'Unstage only the selected lines' : 'Unstage this hunk', 'main')
+  } else if (side === 'both') {
+    main = `<span class="hint-s" title="This file has staged and unstaged changes. Use the Unstaged or Staged view to stage single hunks.">partly staged</span>`
+  }
+  return `<span class="hacts">${quiet}${main}</span>`
 }
 
 export const lineAttr = l => (l.t === 'meta' ? '' : ` data-l="${l.i}"`)

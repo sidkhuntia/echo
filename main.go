@@ -90,6 +90,8 @@ type Config struct {
 	CommitAll  bool           `json:"commitAll"`
 	Panels     []string       `json:"panels"`
 	PanelSizes map[string]int `json:"panelSizes"`
+	// TabOrder is the order the user dragged each tab strip into (rail, mode, insp), as tab ids.
+	TabOrder map[string][]string `json:"tabOrder"`
 	// GitPinned docks the Git panel as a column instead of a drawer over the review.
 	GitPinned bool `json:"gitPinned"`
 	// SwapPanels puts the sidebar on the right and the Git panel and its rail on the left.
@@ -544,6 +546,19 @@ func validateConfig(c Config) error {
 	}
 	if !slices.Contains([]string{"", "line", "off"}, c.Blame) {
 		return errors.New("invalid blame")
+	}
+	if len(c.TabOrder) > 8 {
+		return errors.New("too many tab strips")
+	}
+	for k, ids := range c.TabOrder {
+		if len(k) > 16 || len(ids) > 16 {
+			return errors.New("invalid tab order")
+		}
+		for _, id := range ids {
+			if !themeName.MatchString(id) {
+				return errors.New("invalid tab id")
+			}
+		}
 	}
 	if len(c.Panels) > 8 {
 		return errors.New("too many panels")
