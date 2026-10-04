@@ -110,8 +110,17 @@ func isEmptyDir(p string) (bool, error) {
 }
 
 func (a *App) gitTree() ([]TreeNode, error) {
+	// The ignored listing does not depend on the file listing, so Git runs both at once.
+	var ign string
+	var ignErr error
+	ignDone := make(chan struct{})
+	go func() {
+		defer close(ignDone)
+		ign, ignErr = a.git("ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z")
+	}()
 	list, err := a.git("ls-files", "--cached", "--others", "--exclude-standard", "-z")
 	if err != nil {
+		<-ignDone
 		return nil, err
 	}
 	seen := map[string]bool{}
@@ -136,7 +145,8 @@ func (a *App) gitTree() ([]TreeNode, error) {
 	}
 	// Ignored entries: --directory collapses a wholly ignored folder to one "dir/" line.
 	ignored := map[string]bool{}
-	if ign, err := a.git("ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"); err == nil {
+	<-ignDone
+	if ignErr == nil {
 		for _, rel := range strings.Split(ign, "\x00") {
 			isDir := strings.HasSuffix(rel, "/")
 			rel = strings.TrimSuffix(rel, "/")

@@ -26,7 +26,19 @@ const (
 	// processes it runs at once. The open repository's own status stream still polls every two seconds.
 	wsInterval = 5 * time.Second
 	wsParallel = 3
+	// wsFresh is how long /ws/repos reuses its last answer. Every repository page asks for it on load,
+	// so switching quickly would otherwise run a Git status in every repository for each switch.
+	wsFresh = 2 * time.Second
 )
+
+// snapCache lets concurrent /ws/repos requests share one computation and reuse it briefly.
+type snapCache struct {
+	mu   sync.Mutex
+	data []byte
+	at   time.Time
+	gen  int           // bumped by invalidate, so a computation that began before it is not kept
+	wait chan struct{} // closed when the computation in flight finishes
+}
 
 type wsRepo struct {
 	ID   string
@@ -40,6 +52,7 @@ type Workspace struct {
 	root string
 	host *App // the folder itself: its files, and the process's config, instance and shutdown routes
 	hub  statusHub
+	snap snapCache
 
 	mu    sync.RWMutex
 	repos []*wsRepo
@@ -261,6 +274,46 @@ func (w *Workspace) snapshot() []byte {
 	return data
 }
 
+// cachedSnapshot is snapshot for /ws/repos: callers that arrive while one is being computed wait for
+// it, and an answer under wsFresh old is reused.
+func (w *Workspace) cachedSnapshot() []byte {
+	c := &w.snap
+	for {
+		c.mu.Lock()
+		if c.data != nil && time.Since(c.at) < wsFresh {
+			d := c.data
+			c.mu.Unlock()
+			return d
+		}
+		if c.wait != nil {
+			ch := c.wait
+			c.mu.Unlock()
+			<-ch
+			continue
+		}
+		ch, gen := make(chan struct{}), c.gen
+		c.wait = ch
+		c.mu.Unlock()
+		data := w.snapshot()
+		c.mu.Lock()
+		if gen == c.gen {
+			c.data, c.at = data, time.Now()
+		}
+		c.wait = nil
+		close(ch)
+		c.mu.Unlock()
+		return data
+	}
+}
+
+// invalidateSnapshot drops the cached answer after something changed that it would not show yet.
+func (w *Workspace) invalidateSnapshot() {
+	w.snap.mu.Lock()
+	w.snap.gen++
+	w.snap.at = time.Time{}
+	w.snap.mu.Unlock()
+}
+
 // RepoChanges is one repository's changed files, for the overview's all-changes list.
 type RepoChanges struct {
 	ID      string   `json:"id"`
@@ -328,7 +381,7 @@ func (w *Workspace) routes() http.Handler {
 	hostMux := w.host.mux()
 	mux.HandleFunc("/ws/repos", func(w2 http.ResponseWriter, r *http.Request) {
 		w2.Header().Set("Content-Type", "application/json")
-		_, _ = w2.Write(w.snapshot())
+		_, _ = w2.Write(w.cachedSnapshot())
 	})
 	// The other echo processes on this machine, so the switcher can reach repositories outside the workspace.
 	mux.HandleFunc("/ws/instances", w.host.handleInstances)
@@ -342,6 +395,7 @@ func (w *Workspace) routes() http.Handler {
 			return
 		}
 		w.rescan()
+		w.invalidateSnapshot()
 		w2.Header().Set("Content-Type", "application/json")
 		_, _ = w2.Write(w.snapshot())
 	})
@@ -376,7 +430,9 @@ func (w *Workspace) handleNet(w2 http.ResponseWriter, r *http.Request, pull bool
 		http.Error(w2, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJSON(w2, w.netAll(pull))
+	res := w.netAll(pull)
+	w.invalidateSnapshot()
+	writeJSON(w2, res)
 }
 
 // serveRepo hands /r/<id>/<rest> to that repository's own routes as /<rest>. The id must be one

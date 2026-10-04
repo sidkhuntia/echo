@@ -643,3 +643,11 @@ The trigger: a folder such as `EH-Provider-Portal` that is not a repository but 
 
 - **Accepted:** the sidebar's Merge and Rebase buttons and the branch menu entries open one dialog (`integrate` in `gitui.js`) rather than running `git merge` / `git rebase` on whatever the branch dropdown held. The dialog states the direction (the source branch comes into the checked-out branch), offers Merge or Rebase, and previews from `/api/git/relation` (`HEAD...ref` counts, `merge-base --is-ancestor` for fast-forward, up to eight incoming subjects, a count of files with uncommitted changes). Nothing runs until the confirm button, which names what it will do. The preview is advisory: Git still decides, and its conflicts go to the existing banner.
 - **Not changed:** interactive rebase keeps its own screen; Abort / Continue / Skip behave as before.
+
+### 22g. The workspace snapshot is coalesced (2026-10-04)
+
+Every repository page asks `/ws/repos` on load for the chip bar, and that runs `git status` in every repository. Switching quickly stacked those runs. `/ws/repos` now shares one computation between concurrent callers and reuses the answer for `wsFresh` (2s); fetch, pull and rescan invalidate it. The overview's stream (`/ws/stream`) still computes its own fresh snapshot. The cost is a chip count up to two seconds old.
+
+### 22h. Independent Git calls run together (2026-10-04)
+
+`gitStatus` runs `branch`, `status` and the three `diff --numstat` calls concurrently, and `gitTree` runs its two `ls-files` calls concurrently. Each call is a separate read-only process and none reads another's output, so results and error precedence (branch error, then status error) are unchanged. Most of the time was two numstat diffs of about 80 ms each, run one after the other.

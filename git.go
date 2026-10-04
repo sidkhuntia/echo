@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -175,35 +176,52 @@ func (a *App) gitStatus() GitStatus {
 		status.Error = "git not found"
 		return status
 	}
-	out, err := a.git("branch", "--show-current")
-	if err != nil {
+	// The Git calls below do not depend on each other, so they run together; the diffs are the slow part.
+	var branchOut, statusOut string
+	var branchErr, statusErr error
+	stats, index, work := map[string]Change{}, map[string]Change{}, map[string]Change{}
+	var wg sync.WaitGroup
+	run := func(f func()) {
+		wg.Add(1)
+		go func() { defer wg.Done(); f() }()
+	}
+	run(func() { branchOut, branchErr = a.git("branch", "--show-current") })
+	run(func() {
+		statusOut, statusErr = a.git("status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all")
+	})
+	run(func() {
+		if out, err := a.git("diff", "--numstat", "-z", "--no-renames", a.base(), "--"); err == nil {
+			stats = parseNumstat(out)
+		}
+	})
+	run(func() {
+		if out, err := a.git("diff", "--cached", "--numstat", "-z", "--no-renames", "--"); err == nil {
+			index = parseNumstat(out)
+		}
+	})
+	run(func() {
+		if out, err := a.git("diff", "--numstat", "-z", "--no-renames", "--"); err == nil {
+			work = parseNumstat(out)
+		}
+	})
+	wg.Wait()
+	if branchErr != nil {
 		status.Git = false
-		status.Error = err.Error()
+		status.Error = branchErr.Error()
 		return status
 	}
-	status.Branch = strings.TrimSpace(out)
+	status.Branch = strings.TrimSpace(branchOut)
 	if status.Branch == "" {
 		if head, err := a.git("rev-parse", "--short", "HEAD"); err == nil {
 			status.Branch = "detached@" + strings.TrimSpace(head)
 		}
 	}
-	out, err = a.git("status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all")
-	if err != nil {
-		status.Error = err.Error()
+	if statusErr != nil {
+		status.Error = statusErr.Error()
 		return status
 	}
-	status.Changes = parsePorcelain(out)
+	status.Changes = parsePorcelain(statusOut)
 	defer a.forgetSigs(status.Changes)
-	stats, index, work := map[string]Change{}, map[string]Change{}, map[string]Change{}
-	if out, err := a.git("diff", "--numstat", "-z", "--no-renames", a.base(), "--"); err == nil {
-		stats = parseNumstat(out)
-	}
-	if out, err := a.git("diff", "--cached", "--numstat", "-z", "--no-renames", "--"); err == nil {
-		index = parseNumstat(out)
-	}
-	if out, err := a.git("diff", "--numstat", "-z", "--no-renames", "--"); err == nil {
-		work = parseNumstat(out)
-	}
 	for i := range status.Changes {
 		c := &status.Changes[i]
 		sig, ok := a.sig(c.Path)
