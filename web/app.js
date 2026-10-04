@@ -22,7 +22,7 @@ import * as TD from './tabdrag.js'
 
 const $ = s => document.querySelector(s)
 const state = {
-  fileView: false, fileIdx: 0, filePath: '',
+  amending: false, fileView: false, fileIdx: 0, filePath: '',
   tree: [], treeExtra: [], ignKids: new Map(), ignoredFiles: new Set(), treeStale: true, tabs: [], active: -1, selected: '',
   status: null, changes: new Map(), folded: new Map(),
   config: { vim: false, theme: 'system', diffMode: 'unified' }, mode: 'diff', rail: 'changes', dirOpen: new Map(),
@@ -2033,13 +2033,14 @@ function renderCommit() {
   // nothing staged it either takes everything (Commit stages everything) or waits for a file to be staged.
   const takeAll = all && !ns
   const label = takeAll ? (nu ? `Stage ${plural(nu, 'file')} & Commit` : 'Commit') : ns ? `Commit ${plural(ns, 'staged file')}` : 'Commit'
-  $('#commit-label').textContent = label
-  $('#commit').disabled = takeAll ? !nu : !ns
+  $('#commit-label').textContent = state.amending ? `Amend last commit${ns ? ` + ${plural(ns, 'staged file')}` : ''}` : label
+  $('#commit').disabled = state.amending ? false : takeAll ? !nu : !ns
   // The rail and the title bar's Git button carry the same staged badge; one of them is on screen.
   for (const id of ['#rail-staged', '#tb-staged']) { $(id).hidden = !ns; $(id).textContent = ns }
   $('#git-toggle').title = ns ? `Git panel (⌘J) · ${plural(ns, 'file')} staged` : 'Git panel (⌘J)'
   const hint = $('#commit-hint')
-  const words = takeAll && nu ? `Nothing is staged, so this commits all ${plural(nu, 'change')}, after you confirm.`
+  const words = state.amending ? `The staged changes${ns ? '' : ' (none yet)'} are added to the last commit with the message below, like git commit --amend.`
+    : takeAll && nu ? `Nothing is staged, so this commits all ${plural(nu, 'change')}, after you confirm.`
     : !takeAll && !ns ? (nu ? 'Nothing staged yet. Stage files in Changes, or press s in the review.' : '')
     : nu ? `${plural(nu, 'unstaged change')} stay out of this commit.` : ''
   hint.hidden = !words
@@ -2047,7 +2048,7 @@ function renderCommit() {
   $('#revert-bar').hidden = true
   $('#commit-menu').innerHTML = (nu && (ns || !all)
     ? `<button class="menu-item" data-c="all" role="menuitem">${ns ? `Stage ${plural(nu, 'more file')} & Commit` : 'Stage all & Commit'}</button>` : '')
-    + '<button class="menu-item" data-c="amend" role="menuitem">Amend last commit (edit message)</button>'
+    + (state.amending ? '<button class="menu-item" data-c="amend-cancel" role="menuitem">Cancel amend</button>' : '<button class="menu-item" data-c="amend" role="menuitem">Amend last commit (edit message)</button>')
     + '<button class="menu-item" data-c="amend-keep" role="menuitem" title="Add the staged changes to the last commit and keep its message">Amend, keep message</button>'
     + '<button class="menu-item" data-c="undo" role="menuitem" title="Move the branch back one commit; its changes stay staged">Undo last commit</button>'
 }
@@ -2068,14 +2069,17 @@ function toggleCommitMenu(open) {
 // again (or a message typed first) rewrites the commit with what the box holds and whatever is staged.
 async function amend() {
   const box = $('#commit-message')
-  if (box.value.trim()) return gitAction({ action: 'amend', message: box.value, ...G.commitOpts() })
+  if (box.value.trim()) { state.amending = false; return gitAction({ action: 'amend', message: box.value, ...G.commitOpts() }) }
   const head = state.status?.head
   if (!head) return setStatus('There is no commit to amend yet', 'err')
   try {
     const d = await api('/api/commit?hash=' + encodeURIComponent(head))
     box.value = d.body ? d.subject + '\n\n' + d.body : d.subject
     box.focus()
-    setStatus('Edit the message, then choose Amend last commit again')
+    // The commit button now amends: it adds what is staged to the last commit with the message in the box.
+    state.amending = true
+    renderCommit()
+    setStatus('Edit the message if you like, then press the Amend button')
   } catch (e) { setStatus(e.message, 'err') }
 }
 
@@ -2089,6 +2093,7 @@ async function undoLastCommit() {
 
 // Committing everything is the one commit that reaches past what the user staged, so it always asks.
 async function doCommit(all) {
+  if (state.amending) return amend()
   const message = $('#commit-message').value
   if (!message.trim()) { setStatus('Write a commit message first', 'err'); $('#commit-message').focus(); return }
   if (!all) return gitAction({ action: 'commit', message, ...G.commitOpts() })
@@ -3829,7 +3834,8 @@ $('#commit-menu').addEventListener('click', e => {
   if (act === 'staged') doCommit(false)
   else if (act === 'all') doCommit(true)
   else if (act === 'amend') amend()
-  else if (act === 'amend-keep') gitAction({ action: 'amend:noedit', ...G.commitOpts() })
+  else if (act === 'amend-cancel') { state.amending = false; $('#commit-message').value = ''; G.fillTemplate(); $('#commit-message').dispatchEvent(new Event('input')); renderCommit() }
+  else if (act === 'amend-keep') { state.amending = false; gitAction({ action: 'amend:noedit', ...G.commitOpts() }) }
   else if (act === 'undo') undoLastCommit()
 })
 document.addEventListener('click', e => { if (!e.target.closest('#commit-menu, #commit-more')) toggleCommitMenu(false) })

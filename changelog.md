@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Amend works in one step, like `git commit --amend`: choosing "Amend last commit (edit message)" fills the box with the last message and turns the commit button into "Amend last commit + N staged files"; one press adds the staged changes (unstaged ones stay out) and rewrites the message. "Cancel amend" in the same menu backs out. Before, the menu item had to be chosen a second time.
 - The commit button's menu (Amend, Undo) opens upward when there is no room below it, so it is no longer cut off at the bottom of the window.
 
 - The Git panel starts collapsed even when pinned (pinning docks it as a column; the title-bar button or ⌘J opens it). The staged-count badge on its button is no longer clipped by the button group's border.
