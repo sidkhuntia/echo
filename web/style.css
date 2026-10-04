@@ -1369,3 +1369,8 @@ a.ws-row:hover { background: var(--hover); }
 .tab:hover .x, .tab.active .x, .tab.dirty .x { opacity: 1; }
 .tab.dirty:not(:hover) .x:hover::before { content: ""; }
 .mode-switch + .vr { display: block; }
+
+/* Files view: the hunk headers and their actions go; the file's own header keeps Stage and Note. */
+#diff.fileview .hunk-head { display: none; }
+#diff.fileview .hunk + .hunk { margin-top: 0; border-top: 0; }
+#file-nav button:disabled { opacity: .35; cursor: default; }

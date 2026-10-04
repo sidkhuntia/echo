@@ -22,6 +22,7 @@ import * as TD from './tabdrag.js'
 
 const $ = s => document.querySelector(s)
 const state = {
+  fileView: false, fileIdx: 0, filePath: '',
   tree: [], treeExtra: [], ignKids: new Map(), ignoredFiles: new Set(), treeStale: true, tabs: [], active: -1, selected: '',
   status: null, changes: new Map(), folded: new Map(),
   config: { vim: false, theme: 'system', diffMode: 'unified' }, mode: 'diff', rail: 'changes', dirOpen: new Map(),
@@ -788,6 +789,7 @@ function renderDiff() {
     state.cleanShown = scope() === 'head'
     return diffMessage(...why, state.cleanShown ? cleanHTML() : '')
   }
+  if (state.fileView) return renderFileView()
   const view = $('#diff'), top = view.scrollTop
   // A huge diff draws file bodies only as they come near the screen.
   state.lazy = files.reduce((n, f) => n + f.lines, 0) > LAZY_LINES
@@ -799,6 +801,66 @@ function renderDiff() {
   renderTrace()
   updateCurrent()
 }
+
+// ---------- Files view: one changed file at a time, the whole file, no hunk chrome ----------
+// The review's other view. It fetches a file with the whole file as context, so there is nothing to
+// expand, and CSS hides the hunk headers and their actions; staging stays per file, in its header.
+async function wholeFile(i) {
+  const f = state.diffFiles[i]
+  if (!f || f.ctx === 100000 || f.binary || f.note || !f.hunks.length || !state.diffParams) return
+  const p = new URLSearchParams(state.diffParams)
+  p.set('path', f.path); p.set('context', '100000')
+  try {
+    const nf = parseDiff((await api('/api/diff?' + p)).text)[0]
+    if (!nf || state.diffFiles[i]?.path !== f.path) return
+    nf.ctx = 100000
+    state.diffFiles[i] = nf
+    const j = state.diffAll.findIndex(x => x.path === f.path)
+    if (j >= 0) state.diffAll[j] = nf
+  } catch (e) { setStatus(e.message, 'err') }
+}
+
+async function renderFileView(i) {
+  const files = state.diffFiles
+  if (i === undefined) i = Math.max(0, files.findIndex(f => f.path === state.filePath))
+  const f = files[i]
+  if (!f) return
+  state.fileIdx = i; state.filePath = f.path
+  if (isFolded(f) && !state.folded.has(f.path)) state.folded.set(f.path, false)
+  const seq = state.diffSeq
+  await wholeFile(i)
+  // A newer diff, another file or the other view took over while the file loaded.
+  if (!state.fileView || state.fileIdx !== i || seq !== state.diffSeq && state.diffFiles[i]?.path !== f.path) return
+  const cur = state.diffFiles[i], view = $('#diff'), same = view.querySelector(`.dfile[data-i="${i}"]`) && view.dataset.path === cur.path, top = view.scrollTop
+  state.lazy = false
+  cur.rendered = true
+  view.dataset.path = cur.path
+  view.innerHTML = fileHTML(cur, i)
+  view.scrollTop = same ? top : 0
+  state.current = -1
+  renderTrace()
+  updateCurrent()
+  $('#file-prev').disabled = i === 0
+  $('#file-next').disabled = i >= state.diffFiles.length - 1
+}
+
+function setFileView(on) {
+  state.fileView = on
+  try { localStorage.setItem(storeKey('echo:fileView'), on ? '1' : '') } catch {}
+  $('#diff').classList.toggle('fileview', on)
+  $('#file-nav').hidden = !on
+  document.querySelectorAll('#view-seg button').forEach(b => b.classList.toggle('on', (b.dataset.view === 'file') === on))
+  const at = state.diffFiles[state.current]?.path || state.filePath
+  if (on && at) state.filePath = at
+  if (state.diffFiles.length) {
+    renderDiff()
+    if (!on && at) { const i = state.diffFiles.findIndex(f => f.path === at); if (i >= 0) goFile(i) }
+  }
+}
+document.querySelectorAll('#view-seg button').forEach(b => b.onclick = () => setFileView(b.dataset.view === 'file'))
+$('#file-prev').onclick = () => stepFile(-1)
+$('#file-next').onclick = () => stepFile(1)
+try { if (localStorage.getItem(storeKey('echo:fileView'))) setFileView(true) } catch {}
 
 // ---------- change trace ----------
 // The title bar's picture of the whole diff: one segment per file, one tick per hunk. Additions rise
@@ -1057,15 +1119,15 @@ const offsetIn = (el, view) => el.getBoundingClientRect().top - view.getBounding
 function updateCurrent() {
   const view = $('#diff')
   const secs = view.querySelectorAll('.dfile')
-  let cur = secs.length ? 0 : -1
-  secs.forEach((s, i) => { if (offsetIn(s, view) - view.scrollTop <= 40) cur = i })
+  let cur = secs.length ? +secs[0].dataset.i : -1
+  secs.forEach(s => { if (offsetIn(s, view) - view.scrollTop <= 40) cur = +s.dataset.i })
   // The current hunk is the last one in the current file whose header has reached the top, which is
   // also where j and k leave it.
-  const hunks = cur >= 0 ? [...secs[cur].querySelectorAll('.hunk')] : []
+  const hunks = cur >= 0 ? [...(view.querySelector(`.dfile[data-i="${cur}"]`)?.querySelectorAll('.hunk') || [])] : []
   let hunk = -1
   for (const h of hunks) { if (hunk >= 0 && offsetIn(h, view) > view.scrollTop + 61) break; hunk = +h.dataset.h }
   if (cur === state.current && hunk === state.hunk) return
-  if (cur !== state.current) { secs.forEach((s, i) => s.classList.toggle('current', i === cur)); state.current = cur; markQueueCurrent() }
+  if (cur !== state.current) { secs.forEach(s => s.classList.toggle('current', +s.dataset.i === cur)); state.current = cur; markQueueCurrent() }
   state.hunk = hunk
   view.querySelector('.hunk.current')?.classList.remove('current')
   hunks.find(h => +h.dataset.h === hunk)?.classList.add('current')
@@ -1085,6 +1147,7 @@ function currentPath() {
 }
 
 function goFile(i) {
+  if (state.fileView) return void (i === state.fileIdx && $(`#diff .dfile[data-i="${i}"]`) ? ($('#diff').scrollTop = 0) : renderFileView(i))
   ensureRendered(i)
   const view = $('#diff')
   const sec = view.querySelector(`.dfile[data-i="${i}"]`)

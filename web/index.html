@@ -154,6 +154,11 @@
           <option value="noted">With open notes</option>
         </select>
         <button id="diff-collapse" class="btn quiet sm" title="Collapse or expand every file" hidden>Collapse all</button>
+        <div id="file-nav" class="seg" hidden><button id="file-prev" title="Previous file (p)" aria-label="Previous file"><svg class="i" viewBox="0 0 16 16"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg></button><button id="file-next" title="Next file (n)" aria-label="Next file"><svg class="i" viewBox="0 0 16 16"><path d="M6 3.5 10.5 8 6 12.5"/></svg></button></div>
+        <div id="view-seg" class="seg" role="tablist" title="Review by hunk, or one whole file at a time">
+          <button data-view="hunks" class="on" role="tab" title="Every changed file as hunks, with hunk actions">Hunks</button>
+          <button data-view="file" role="tab" title="One changed file at a time, whole file, no hunks">Files</button>
+        </div>
         <div class="seg layout-switch" role="tablist" title="Diff layout">
           <button data-layout="unified" class="on" role="tab" title="Stacked: old and new lines in one column" aria-label="Stacked layout"><svg class="i" viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h10"/></svg></button>
           <button data-layout="split" role="tab" title="Split: old version left, new version right" aria-label="Split layout"><svg class="i" viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M8 3v10"/></svg></button>

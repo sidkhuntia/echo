@@ -4,6 +4,10 @@
 
 - The Git panel starts collapsed even when pinned (pinning docks it as a column; the title-bar button or ⌘J opens it). The staged-count badge on its button is no longer clipped by the button group's border.
 
+### Review: Files view
+
+- A **Hunks | Files** switch in the review toolbar. Files shows one changed file at a time, whole file, with no hunk headers or hunk actions; Stage, Unstage and Note stay in the file's header. ‹ › (and `n` / `p`) step between files; the trace strip and the sidebar still jump to a file. The choice is remembered per repository.
+
 ### Files tree
 
 - Files are ordered naturally, so `V2__x.sql` comes before `V10__y.sql` (it was `V1, V10, V11, … V2`). Folders still come first.
