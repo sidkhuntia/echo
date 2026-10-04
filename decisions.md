@@ -651,3 +651,10 @@ Every repository page asks `/ws/repos` on load for the chip bar, and that runs `
 ### 22h. Independent Git calls run together (2026-10-04)
 
 `gitStatus` runs `branch`, `status` and the three `diff --numstat` calls concurrently, and `gitTree` runs its two `ls-files` calls concurrently. Each call is a separate read-only process and none reads another's output, so results and error precedence (branch error, then status error) are unchanged. Most of the time was two numstat diffs of about 80 ms each, run one after the other.
+
+
+### 22i. Subcommands for running servers (2026-10-04)
+
+- **Accepted:** `ls`, `open`, `stop`, `stop --all` and `update` (`cli.go`). They reuse the instance scan and `/api/shutdown` the switcher already uses, so there is no new server surface. A target is a port or a repository path; no argument means the current folder.
+- **Accepted:** `update` compares the latest release tag (read from the `/releases/latest` redirect, as `install.sh` does) with the running version. A binary under a Homebrew `Cellar` is upgraded with `brew upgrade`; any other is replaced by `install.sh` run with `INSTALL_DIR` set to the binary's folder. No in-process binary replacement.
+- **Not taken:** a version check on every launch.

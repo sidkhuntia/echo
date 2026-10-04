@@ -175,6 +175,13 @@ type Instance struct {
 }
 
 func main() {
+	if runCommand(os.Args[1:]) {
+		return
+	}
+	flag.Usage = func() {
+		fmt.Fprintln(os.Stderr, cliUsage)
+		flag.PrintDefaults()
+	}
 	port := flag.Int("port", 0, fmt.Sprintf("port to listen on (default: this repository's last port, else the first free one in %d-%d)", firstPort, lastPort))
 	noOpen := flag.Bool("no-open", false, "do not launch a browser")
 	showVersion := flag.Bool("version", false, "print the version and exit")

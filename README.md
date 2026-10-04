@@ -24,7 +24,7 @@ From source (Go 1.25+):
 go build -o "$(go env GOPATH)/bin/echo-desk" .
 ```
 
-`echo-desk -version` prints the installed version. Update with `brew upgrade echo-desk` or by running the install script again; open pages reload themselves when the new version starts.
+`echo-desk -version` prints the installed version. Update with `echo-desk update` (or `brew upgrade echo-desk`, or run the install script again); open pages reload themselves when the new version starts.
 
 ## Open any repository
 
@@ -46,6 +46,16 @@ It opens your browser at `http://127.0.0.1:6030`. Each process serves one reposi
 - Theme, editor and layout settings are global and shared by every repository.
 - The printed link carries a per-user secret (`?t=…`, stored `0600` in echo's config directory). It becomes a cookie, so other users and processes on the machine cannot call echo's API.
 - While developing echo itself, `go run . -no-open` runs it from source in the current directory.
+
+### Manage running servers
+
+```sh
+echo-desk ls                 # port, branch, changes and path of every running server
+echo-desk open [path|port]   # open a running server in the browser
+echo-desk stop [path|port]   # stop one (default: the current folder's)
+echo-desk stop --all         # stop every server
+echo-desk update             # install the latest release
+```
 
 ## The review loop
 

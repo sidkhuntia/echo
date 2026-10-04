@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0 (2026-10-04)
+
+- Command-line subcommands manage running servers without a browser tab: `echo-desk ls` (port, branch, changes, path), `echo-desk open [path|port]`, `echo-desk stop [path|port]` (default: the current folder), `echo-desk stop --all`, and `echo-desk update` (Homebrew's `brew upgrade` when it installed the binary, otherwise the install script into the binary's own folder; running servers keep the old version until restarted). A folder named like a subcommand is still reachable as `./ls`.
+
 ## 0.3.1 (2026-10-04)
 
 - A small button in the title bar opens the repository's remote page (GitHub, GitLab or Bitbucket; `origin` first) in a new browser tab. It is hidden when no remote has a web page.
