@@ -75,12 +75,24 @@ const fullPath = p => `${dirname(p) ? `<i>${esc(dirname(p))}/</i>` : ''}${esc(ba
 const scope = () => $('#diff-scope').value
 const activeTab = () => state.tabs[state.active]
 
-function setStatus(msg, kind = '') {
+// A message stays for a few seconds and then goes, so the corner is quiet when nothing is happening.
+// A sticky one (the lost connection) stays until clearStatus() says it is over.
+let statusTimer = 0, statusSticky = false
+function setStatus(msg, kind = '', sticky = false) {
   const text = String(msg ?? '').trim()
   const s = $('#status')
+  clearTimeout(statusTimer)
+  statusSticky = sticky
   s.textContent = text.split('\n').find(l => l.trim()) || 'done'
   s.title = text
   s.className = kind
+  if (!sticky && text) statusTimer = setTimeout(() => { s.textContent = ''; s.title = ''; s.className = '' }, kind === 'err' ? 8000 : 4000)
+}
+function clearStatus() {
+  if (!statusSticky) return
+  statusSticky = false
+  const s = $('#status')
+  s.textContent = ''; s.title = ''; s.className = ''
 }
 
 const ICON_UNDO = '<svg class="i" viewBox="0 0 16 16"><path d="M5.5 3.5 3 6l2.5 2.5"/><path d="M3 6h6.5a3.5 3.5 0 0 1 0 7H7"/></svg>'
@@ -2190,14 +2202,20 @@ async function toggleRepoPop(open = $('#repo-pop').hidden) {
   if (!$('#repo-pop').hidden) renderRepoPop()
 }
 
-const repoMatches = () => { const f = $('#repo-filter').value.toLowerCase(); return repos.filter(r => !f || r.root.toLowerCase().includes(f)) }
+// Every word typed must appear in the repository's name or branch. The folder path is not searched: in a
+// workspace it is the same for all of them, so a word from it would match everything.
+const repoMatches = () => {
+  const words = $('#repo-filter').value.toLowerCase().split(/\s+/).filter(Boolean)
+  return repos.filter(r => { const hay = `${basename(r.root)} ${r.branch || ''}`.toLowerCase(); return words.every(w => hay.includes(w)) })
+}
 
 function renderRepoPop() {
   const here = hereKey(), list = repoMatches()
   repoSel = Math.min(repoSel, Math.max(0, list.length - 1))
   $('#repo-list').innerHTML = list.map((r, i) => `<div class="th rp-row ${r.key === here ? 'on' : ''} ${i === repoSel ? 'sel' : ''}" data-key="${esc(r.key)}" data-i="${i}" title="${esc(r.root)}">
     <span class="ok">${r.key === here ? '✓' : ''}</span>
-    <span><div class="nm">${esc(basename(r.root))}${r.branch ? ` <span class="meta">· ${esc(r.branch)}</span>` : ''}${r.changes ? ` <span class="meta">· ${r.changes} changed</span>` : ''}</div><div class="path">${esc(r.root)}</div></span>
+    <span><div class="nm"><b>${esc(basename(r.root))}</b>${r.branch ? `<span class="meta">${esc(r.branch)}</span>` : ''}</div>${BASE ? '' : `<div class="path">${esc(r.root)}</div>`}</span>
+    ${r.changes ? `<span class="rp-n" title="${r.changes} changed files">${r.changes}</span>` : '<span></span>'}
     ${BASE ? '' : `<span class="rp-end"><span class="port">:${r.port}</span><button class="rp-stop" data-repo-stop="${r.port}" title="Stop this echo process">Stop</button></span>`}</div>`).join('')
     || `<div class="bp-more faint">${repos.length ? 'No open repository matches.' : 'Looking for open repositories…'}</div>`
   $('#repo-list .sel')?.scrollIntoView({ block: 'nearest' })
@@ -2242,9 +2260,10 @@ function renderWsBar() {
   bar.hidden = false
   const chip = r => {
     const n = wsChanged(r)
-    return `<a class="ws-chip ${r.id === WS_ID ? 'on' : ''} ${r.conflicts ? 'conflict' : ''}" href="/r/${encodeURIComponent(r.id)}/" title="${esc(r.root)}${r.error ? '\n' + esc(r.error) : ''}"><b>${esc(r.name)}</b><span class="br">${esc(r.branch || '—')}</span>${r.ahead ? `<i class="ah">↑${r.ahead}</i>` : ''}${r.behind ? `<i class="bh">↓${r.behind}</i>` : ''}${n ? `<em>${n}</em>` : ''}</a>`
+    const tip = [r.root, r.branch, r.ahead ? `${r.ahead} to push` : '', r.behind ? `${r.behind} to pull` : '', r.error].filter(Boolean).join('\n')
+    return `<a class="ws-chip ${r.id === WS_ID ? 'on' : ''} ${n ? 'dirty' : ''} ${r.conflicts ? 'conflict' : ''}" href="/r/${encodeURIComponent(r.id)}/" title="${esc(tip)}">${esc(r.name)}${n ? `<em>${n}</em>` : ''}</a>`
   }
-  bar.innerHTML = `<a class="ws-home" href="/" title="Every repository and every change">Workspace</a>${wsRepos.map(chip).join('')}<a class="ws-chip files ${WS_ID === '_files' ? 'on' : ''}" href="/r/_files/" title="Files in the workspace folder that are in no repository"><b>Files</b></a>`
+  bar.innerHTML = `<a class="ws-home" href="/" title="Workspace overview: every repository and every change" aria-label="Workspace overview"><svg class="i" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/></svg></a>${wsRepos.map(chip).join('')}<a class="ws-chip files ${WS_ID === '_files' ? 'on' : ''}" href="/r/_files/" title="Files in the workspace folder that are in no repository">Files</a>`
   // The bar keeps where it was scrolled to between polls; the first time it brings this repository into view.
   if (first) bar.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'center' })
   else bar.scrollLeft = left
@@ -2830,6 +2849,18 @@ function swatchHTML(id) {
   return `<span class="swatch">${swatches.get(id)}</span>`
 }
 
+// themeSel is the highlighted row. Moving it previews that theme; Escape puts the saved one back.
+let themeSel = 0
+function previewTheme() {
+  const rows = [...document.querySelectorAll('#theme-list .th')]
+  themeSel = Math.max(0, Math.min(themeSel, rows.length - 1))
+  rows.forEach((r, i) => r.classList.toggle('sel', i === themeSel))
+  const id = rows[themeSel]?.dataset.themeId
+  if (!id) return
+  document.documentElement.dataset.theme = id === 'system' ? (osLight.matches ? 'echo-paper' : 'echo-ink') : id
+  rows[themeSel].scrollIntoView({ block: 'nearest' })
+}
+
 function renderThemes() {
   const q = $('#theme-filter').value.trim().toLowerCase()
   const cur = themeId()
@@ -2840,20 +2871,23 @@ function renderThemes() {
   }
   const system = !q || 'system'.includes(q) ? item('system', 'System', 'echo paper / ink', osLight.matches ? 'echo-paper' : 'echo-ink') : ''
   $('#theme-list').innerHTML = (system + group('light') + group('dark')) || '<div class="empty">No theme matches.</div>'
+  previewTheme()
 }
 
 async function setTheme(id) {
   state.config.theme = id
   applyTheme()
-  renderThemes()
+  if (!$('#theme-pop').hidden) renderThemes()
   try { await post('/api/config', { theme: id }) } catch (e) { setStatus(e.message, 'err') }
 }
 
 function toggleThemes(open = $('#theme-pop').hidden) {
+  const was = !$('#theme-pop').hidden
   $('#theme-pop').hidden = !open
-  if (!open) return
+  if (!open) return was && applyTheme()
   toggleRepoPop(false)
   $('#theme-filter').value = ''
+  themeSel = Math.max(0, [...THEMES.map(t => t[0]), 'system'].indexOf(themeId()))
   renderThemes()
   $('#theme-filter').focus()
 }
@@ -3184,14 +3218,26 @@ $('#view-open').onclick = e => {
     cfg('wordDiff', 'Mark changed words'),
     cfg('renames', 'Detect renames'),
     { sep: true },
+    ...[['all', 'Show all files'], ['new', 'Show only new files'], ['modified', 'Show only modified files'], ['deleted', 'Show only deleted files'], ['renamed', 'Show only renamed files'], ['noted', 'Show only files with notes']]
+      .map(([v, label]) => ({ label: on($('#diff-status').value === v) + label, run: () => { const sel = $('#diff-status'); sel.value = v; sel.dispatchEvent(new Event('change')) } })),
+    { sep: true },
     { label: 'Collapse or expand all files', run: () => $('#diff-collapse').click() },
   ], r.right - 220, r.bottom + 6)
 }
 $('#theme-open').onclick = e => { e.stopPropagation(); toggleThemes() }
-$('#theme-filter').oninput = renderThemes
+$('#theme-filter').oninput = () => { themeSel = 0; renderThemes() }
 $('#theme-filter').addEventListener('keydown', e => {
+  const rows = document.querySelectorAll('#theme-list .th')
   if (e.key === 'Escape') { e.preventDefault(); toggleThemes(false) }
-  if (e.key === 'Enter') { const first = $('#theme-list .th'); if (first) setTheme(first.dataset.themeId) }
+  else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && rows.length) {
+    e.preventDefault()
+    themeSel = (themeSel + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length
+    previewTheme()
+  } else if (e.key === 'Enter' && rows[themeSel]) { e.preventDefault(); const id = rows[themeSel].dataset.themeId; toggleThemes(false); setTheme(id) }
+})
+$('#theme-list').addEventListener('mousemove', e => {
+  const row = e.target.closest('.th'), rows = [...document.querySelectorAll('#theme-list .th')], i = rows.indexOf(row)
+  if (i >= 0 && i !== themeSel) { themeSel = i; rows.forEach((r, j) => r.classList.toggle('sel', j === i)) }
 })
 $('#theme-list').onclick = e => { const t = e.target.closest('[data-theme-id]'); if (t) setTheme(t.dataset.themeId) }
 // Picking a theme re-renders the list, so a detached click target still counts as inside the picker.
@@ -3657,7 +3703,7 @@ $('#diff-scope').onchange = () => { syncScopeInputs(); $('#diff').scrollTop = 0;
 $('#ignore-ws').onchange = loadDiff
 let filterTimer
 $('#diff-filter').addEventListener('input', () => { clearTimeout(filterTimer); filterTimer = setTimeout(refilter, 150) })
-$('#diff-status').onchange = refilter
+$('#diff-status').onchange = () => { $('#diff-status').classList.toggle('on', $('#diff-status').value !== 'all'); refilter() }
 $('#diff-collapse').onclick = () => {
   const collapse = state.diffFiles.some(f => !isFolded(f))
   for (const f of state.diffFiles) state.folded.set(f.path, collapse)
@@ -3978,7 +4024,8 @@ const events = new EventSource(withBase('/api/stream'))
 // first status after reconnecting reloads History and the Log.
 events.onopen = () => {
   $('.live').classList.remove('off')
+  clearStatus()
   if (state.disconnected) { state.disconnected = false; state.refsKey = '' }
 }
 events.onmessage = e => { const st = JSON.parse(e.data); if (booting) pendingStatus = st; else applyStatus(st) }
-events.onerror = () => { state.disconnected = true; $('.live').classList.add('off'); setStatus('Lost the echo server — retrying…', 'err') }
+events.onerror = () => { state.disconnected = true; $('.live').classList.add('off'); setStatus('Lost the echo server — retrying…', 'err', true) }

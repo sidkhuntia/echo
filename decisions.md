@@ -605,3 +605,10 @@ The trigger: a folder such as `EH-Provider-Portal` that is not a repository but 
 - **Accepted:** the repository switcher (`⌘⇧O`) lists the workspace's repositories instead of the echo processes; a workspace is one entry in another echo's switcher, and `echo-desk` started inside one of its repositories opens that repository's page there instead of starting a second process.
 - **Deferred:** cross-repository search, a combined "Copy for agent" note export, and nesting deeper than one level.
 
+### 22a. Quieter chrome (2026-10-04)
+
+- **Accepted:** transient status messages clear themselves (4 s, 8 s for errors); only the lost-connection message is sticky. The idle status bar is empty, not "Ready".
+- **Accepted:** secondary controls move behind menus, not away: the review's status filter and Collapse all live in the view menu (the filter returns beside the search box while one is active); the shortcut strip is the `?` sheet; refresh is live already. The commit box's Sign off and Co-author appear only while it is focused or has text.
+- **Accepted:** the workspace bar shows names only, with a count where there are changes; branch, ahead/behind and errors are in each chip's tooltip and the title bar.
+- **Accepted:** pickers (repository, theme) are keyboard lists with one highlighted row; the repository switcher matches every typed word against name and branch, never the folder path.
+

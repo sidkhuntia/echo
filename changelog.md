@@ -8,6 +8,9 @@
 - Each repository opens at `/r/<name>/` as the usual echo page, with a bar of repository chips (branch and change count) across the top. `⌘⇧O` switches between them; what was open in each comes back.
 - Fetch all, Pull all (fast-forward only, skipping repositories with local work), Rescan, and a "Changed only" filter. The folder's own loose files are under Files.
 - Starting echo inside a repository that a workspace already serves opens that repository in the workspace.
+- Quieter screen: the repository bar is one line of names (a count only where something changed; branch and sync are in the tooltip), the review's file filter shows only the filter box (status filter and Collapse all moved into the view menu, the status filter returns beside the box while active), the footer shortcut strip and the refresh button are gone, and the commit box shows Sign off and Co-author only while you are writing a message.
+- Messages in the bottom-left corner disappear after four seconds (eight for errors); "Lost the echo server" stays until the connection returns.
+- The repository switcher searches names and branches by every word you type (the folder path no longer matches everything), and one row is highlighted instead of two competing boxes. The theme picker now moves with ↑/↓, previews the highlighted theme, applies it with Enter, and Escape puts the old one back.
 
 ### v2: safety, review notes, Git and editor depth (on branch `v2/hardening-and-features`)
 

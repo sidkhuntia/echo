@@ -19,10 +19,13 @@ const api = async (url, opts) => {
 }
 const post = url => api(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
 
-function setStatus(msg, kind = '') {
+let statusTimer = 0
+function setStatus(msg, kind = '', sticky = false) {
   const el = $('#status')
+  clearTimeout(statusTimer)
   el.textContent = msg
   el.className = kind
+  if (!sticky) statusTimer = setTimeout(() => { el.textContent = ''; el.className = '' }, kind === 'err' ? 10000 : 5000)
 }
 
 const count = r => r.staged + r.unstaged + r.untracked + r.conflicts
@@ -130,6 +133,6 @@ document.addEventListener('keydown', e => {
 
 api('/api/instance').then(i => { $('#ws-name').textContent = basename(i.root); document.title = `${basename(i.root)} — echo workspace` }, () => {})
 const events = new EventSource('/ws/stream')
-events.onopen = () => $('.live').classList.remove('off')
+events.onopen = () => { $('.live').classList.remove('off'); if ($('#status').className === 'err' && $('#status').textContent.startsWith('Lost')) setStatus('') }
 events.onmessage = e => applySnapshot(JSON.parse(e.data))
-events.onerror = () => { $('.live').classList.add('off'); setStatus('Lost the echo server — retrying…', 'err') }
+events.onerror = () => { $('.live').classList.add('off'); setStatus('Lost the echo server — retrying…', 'err', true) }
