@@ -2186,7 +2186,8 @@ function renderBranchPop() {
 // ---------- repositories ----------
 // Each repository runs in its own echo process on its own port; the server finds its siblings.
 let repos = [], repoSel = 0
-const hereKey = () => BASE ? WS_ID : String(location.port)
+// Keys: ws:<id> is a repository of this workspace, p:<port> is another echo process.
+const hereKey = () => BASE ? 'ws:' + WS_ID : 'p:' + location.port
 async function toggleRepoPop(open = $('#repo-pop').hidden) {
   $('#repo-pop').hidden = !open
   $('#repo-pop').classList.toggle('in-ws', !!BASE)
@@ -2198,9 +2199,10 @@ async function toggleRepoPop(open = $('#repo-pop').hidden) {
   $('#repo-filter').focus()
   renderRepoPop()
   try {
-    // In a workspace the list is its repositories; otherwise it is the echo processes on this machine.
-    repos = BASE ? (await api('/ws/repos')).repos.map(r => ({ key: r.id, root: r.root, branch: r.branch, changes: r.staged + r.unstaged + r.untracked + r.conflicts }))
-      : (await api('/api/instances')).map(r => ({ ...r, key: String(r.port) }))
+    // Every repository open in echo: this workspace's own, then the other echo processes (a workspace is one row).
+    const procs = (await api(BASE ? '/ws/instances' : '/api/instances')).filter(r => !BASE || r.port !== +location.port)
+    const own = BASE ? (await api('/ws/repos')).repos.map(r => ({ key: 'ws:' + r.id, group: 'ws', root: r.root, branch: r.branch, changes: wsChanged(r) })) : []
+    repos = own.concat(procs.map(r => ({ ...r, key: 'p:' + r.port, group: 'proc', workspace: !!r.repos })))
   } catch (e) { setStatus(e.message, 'err') }
   // Start on the first other repository, so ⌘⇧O then Enter hops away like an app switcher.
   repoSel = Math.max(0, repos.findIndex(r => r.key !== hereKey()))
@@ -2217,16 +2219,25 @@ const repoMatches = () => {
 function renderRepoPop() {
   const here = hereKey(), list = repoMatches()
   repoSel = Math.min(repoSel, Math.max(0, list.length - 1))
-  $('#repo-list').innerHTML = list.map((r, i) => `<div class="th rp-row ${r.key === here ? 'on' : ''} ${i === repoSel ? 'sel' : ''}" data-key="${esc(r.key)}" data-i="${i}" title="${esc(r.root)}">
+  const row = (r, i) => `<div class="th rp-row ${r.key === here ? 'on' : ''} ${i === repoSel ? 'sel' : ''}" data-key="${esc(r.key)}" data-i="${i}" title="${esc(r.root)}">
     <span class="ok">${r.key === here ? '✓' : ''}</span>
-    <span class="rp-main"><span class="nm"><b>${esc(basename(r.root))}</b>${r.branch ? `<span class="meta">${esc(r.branch)}</span>` : ''}</span></span>
-    <span class="rp-end">${r.changes ? `<span class="rp-n" title="${r.changes} changed files">${r.changes}</span>` : ''}${BASE ? '' : `<span class="port">:${r.port}</span><button class="rp-stop" data-repo-stop="${r.port}" title="Stop this echo process">Stop</button>`}</span></div>`).join('')
+    <span class="rp-main"><span class="nm"><b>${esc(basename(r.root))}</b>${r.workspace ? '<span class="meta">workspace</span>' : r.branch ? `<span class="meta">${esc(r.branch)}</span>` : ''}</span></span>
+    <span class="rp-end">${r.changes ? `<span class="rp-n" title="${r.changes} changed files">${r.changes}</span>` : ''}${r.group === 'proc' ? `<span class="port">:${r.port}</span><button class="rp-stop" data-repo-stop="${r.port}" title="Stop this echo process">Stop</button>` : ''}</span></div>`
+  // In a workspace the list has two groups; each gets a heading so "outside this workspace" is plain.
+  const heads = { ws: 'In this workspace', proc: BASE ? 'Elsewhere' : '' }
+  let last = '', html = ''
+  list.forEach((r, i) => {
+    if (BASE && r.group !== last) html += `<h5 class="rp-h">${heads[r.group]}</h5>`
+    last = r.group
+    html += row(r, i)
+  })
+  $('#repo-list').innerHTML = html
     || `<div class="bp-more faint">${repos.length ? 'No open repository matches.' : 'Looking for open repositories…'}</div>`
   $('#repo-list .sel')?.scrollIntoView({ block: 'nearest' })
 }
 
 function switchRepo(key, newTab) {
-  const url = BASE ? `/r/${encodeURIComponent(key)}/` : `http://127.0.0.1:${key}/`
+  const url = key.startsWith('ws:') ? `/r/${encodeURIComponent(key.slice(3))}/` : `http://127.0.0.1:${key.slice(2)}/`
   toggleRepoPop(false)
   persistSession(true)
   if (newTab) window.open(url, '_blank')
@@ -2244,7 +2255,7 @@ async function stopRepo(port, all) {
   if (all) return setStatus('echo is stopping.', 'ok')
   if (port === +location.port) {
     // This tab's own repository is gone: hop to another open one, or close the tab if none is left.
-    const next = repos.find(r => r.port !== port)
+    const next = repos.find(r => r.port && r.port !== port)
     if (next) return void (location.href = `http://127.0.0.1:${next.port}/`)
     window.close()
     return setStatus('echo stopped. You can close this tab.', 'ok')

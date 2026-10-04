@@ -1247,10 +1247,6 @@ label.set-row { cursor: pointer; }
 .nrow:hover .nacts { display: inline-flex; }
 
 /* ---------- workspace ---------- */
-.repo-pop #repo-home { display: none; margin: 0 0 6px; }
-.repo-pop.in-ws #repo-home { display: inline-flex; }
-.repo-pop.in-ws .repo-more, .repo-pop.in-ws .repo-stop { display: none; }
-.repo-foot #repo-home { text-decoration: none; margin-right: 8px; }
 /* One quiet line of pills. A dot and a count appear only where something changed. */
 .wsbar { flex: none; display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px 0 10px; overflow-x: auto; scrollbar-width: none; background: var(--bg); border-bottom: 1px solid var(--line); }
 .wsbar::-webkit-scrollbar { display: none; }
@@ -1331,9 +1327,6 @@ a.ws-row:hover { background: var(--hover); }
 .ws-file .del, .ws-gh .del { color: var(--del); }
 .ws-page .empty { padding: 18px; color: var(--muted); }
 .ws-page .statusbar { flex: none; }
-.repo-foot #repo-home { text-decoration: none; margin-right: 8px; }
-.repo-pop.in-ws .repo-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; white-space: nowrap; }
-.repo-pop.in-ws .repo-foot #repo-home { margin: 0; }
 
 /* hunk actions: quiet icons, then the one action that moves the hunk */
 .hbtn.icon { width: 22px; padding: 0; display: inline-grid; place-items: center; border-color: transparent; background: transparent; color: var(--muted); }
@@ -1349,3 +1342,9 @@ a.ws-row:hover { background: var(--hover); }
 .seg button[draggable="true"] { cursor: grab; }
 .tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
 .tabs.drop-end { box-shadow: inset -2px 0 0 var(--accent); }
+.rp-h { margin: 8px 8px 2px; }
+.rp-h:first-child { margin-top: 2px; }
+.repo-foot #repo-home { display: none; text-decoration: none; }
+.repo-pop.in-ws .repo-foot #repo-home { display: flex; width: max-content; margin: 0 0 6px; }
+.ws-row.else { grid-template-columns: minmax(160px, 1.6fr) minmax(110px, 1.1fr) 120px 74px; }
+#ws-else { margin-top: 18px; }

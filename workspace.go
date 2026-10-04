@@ -330,6 +330,8 @@ func (w *Workspace) routes() http.Handler {
 		w2.Header().Set("Content-Type", "application/json")
 		_, _ = w2.Write(w.snapshot())
 	})
+	// The other echo processes on this machine, so the switcher can reach repositories outside the workspace.
+	mux.HandleFunc("/ws/instances", w.host.handleInstances)
 	mux.HandleFunc("/ws/stream", w.handleStream)
 	mux.HandleFunc("/ws/changes", func(w2 http.ResponseWriter, r *http.Request) { writeJSON(w2, w.changes()) })
 	mux.HandleFunc("/ws/fetch", func(w2 http.ResponseWriter, r *http.Request) { w.handleNet(w2, r, false) })

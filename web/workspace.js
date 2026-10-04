@@ -136,3 +136,15 @@ const events = new EventSource('/ws/stream')
 events.onopen = () => { $('.live').classList.remove('off'); if ($('#status').className === 'err' && $('#status').textContent.startsWith('Lost')) setStatus('') }
 events.onmessage = e => applySnapshot(JSON.parse(e.data))
 events.onerror = () => { $('.live').classList.add('off'); setStatus('Lost the echo server — retrying…', 'err', true) }
+
+// Other echo processes on this machine (repositories or workspaces outside this one), found again every few seconds.
+async function loadElsewhere() {
+  try {
+    const here = +location.port
+    const list = (await api('/ws/instances')).filter(i => i.port !== here)
+    $('#ws-else').hidden = !list.length
+    $('#ws-else-list').innerHTML = list.map(i => `<a class="ws-row else" href="http://127.0.0.1:${i.port}/" title="${esc(i.root)}"><span class="nm"><b>${esc(basename(i.root))}</b></span><span class="mono">${i.repos ? `workspace · ${Object.keys(i.repos).length} repositories` : esc(i.branch || '')}</span><span class="faint mono">:${i.port}</span>${num(i.changes)}</a>`).join('')
+  } catch {}
+}
+loadElsewhere()
+setInterval(() => { if (!document.hidden) loadElsewhere() }, 8000)
