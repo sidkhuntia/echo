@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-### Workspaces (on branch `feat/workspace-mode`)
+## 0.2.0 (2026-10-04)
+
+### Workspaces
 
 - Run `echo-desk` in a folder that is not a repository but contains repositories (for example `~/Developer/EH-Provider-Portal`) and echo opens them all in one tab. The home page lists every repository with its branch, ↑↓, and staged, unstaged, untracked and conflict counts, plus every changed file grouped by repository; a file opens its diff.
 - Each repository opens at `/r/<name>/` as the usual echo page, with a bar of repository chips (branch and change count) across the top. `⌘⇧O` switches between them; what was open in each comes back.
@@ -22,7 +24,7 @@
 - Messages in the bottom-left corner disappear after four seconds (eight for errors); "Lost the echo server" stays until the connection returns.
 - The repository switcher searches names and branches by every word you type (the folder path no longer matches everything), and one row is highlighted instead of two competing boxes. The theme picker now moves with ↑/↓, previews the highlighted theme, applies it with Enter, and Escape puts the old one back.
 
-### v2: safety, review notes, Git and editor depth (on branch `v2/hardening-and-features`)
+### v2: safety, review notes, Git and editor depth
 
 **Fixes**
 - Discarding a file called like a glob (`[id].tsx`) no longer reverts its neighbours: paths are literal.
