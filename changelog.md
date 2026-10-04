@@ -16,6 +16,9 @@
 - Hunk header: note and discard are quiet icons and the one action that moves the hunk (Stage hunk / Unstage hunk) sits last, tinted; the line range shows on hover.
 - The repository bar is a row of pills: a dot and a count where something changed, the open repository filled, and the shared name prefix (`provider-`) left off (the tooltip has the full name). Settings → Layout → Repository bar turns it off (shown by default); `⌘⇧O` still switches.
 - In a workspace, `⌘⇧O` now lists the workspace's repositories and, under "Elsewhere", every other echo process (repositories or workspaces outside it); the overview page has an "Open elsewhere" section too. Before, a repository opened outside the workspace never showed up in the workspace's switcher.
+- Review always compares with HEAD: a three-way switch (All · Unstaged · Staged) replaces the "What to compare" menu. A commit or a range of refs only appears when you come from the Log or History, as a chip (`Commit abc1234 ×`) that takes you back to all changes.
+- One toolbar row instead of two in Review: the file filter moved up beside the layout switch (the status filter is in the view menu and tints the filter box while it is on). The title bar and repository bar are a little shorter.
+- Editor: tabs are quieter (the close button shows on hover, a dot marks unsaved), Save appears only when there is something to save, and line endings, note, open in…, history, blame and Format JSON are in one ⋯ menu.
 - Messages in the bottom-left corner disappear after four seconds (eight for errors); "Lost the echo server" stays until the connection returns.
 - The repository switcher searches names and branches by every word you type (the folder path no longer matches everything), and one row is highlighted instead of two competing boxes. The theme picker now moves with ↑/↓, previews the highlighted theme, applies it with Enter, and Escape puts the old one back.
 

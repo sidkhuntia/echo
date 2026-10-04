@@ -1095,9 +1095,16 @@ async function goTo(path, sec = '') {
   goFile(i)
 }
 
+// Review always compares with HEAD: All, Unstaged or Staged. A commit or a range of refs is only ever
+// reached from the Log or History, and shows as a chip that takes you back.
 function syncScopeInputs() {
-  $('#range-inputs').hidden = scope() !== 'range'
-  $('#diff-commit').hidden = scope() !== 'commit'
+  const sc = scope(), live = ['head', 'worktree', 'staged'].includes(sc)
+  document.querySelectorAll('#scope-seg button').forEach(b => b.classList.toggle('on', b.dataset.scope === sc))
+  $('#scope-seg').hidden = !live
+  $('#scope-chip').hidden = live
+  $('#scope-chip-text').textContent = sc === 'commit' ? `Commit ${$('#diff-commit').value || state.commit.slice(0, 7)}` : sc === 'range' ? 'Comparing' : ''
+  $('#range-inputs').hidden = sc !== 'range'
+  $('#diff-commit').hidden = true
   if (scope() !== 'commit') state.commit = ''
   renderHistoryCurrent()
   // The clean-tree screen quotes the last commit, which may arrive after the diff.
@@ -1194,6 +1201,7 @@ function renderEditor() {
   document.querySelectorAll('#md-switch button').forEach(b => b.classList.toggle('on', (b.dataset.md === 'preview') === !!preview))
   $('#file-history').hidden = !file || !tab || !state.status?.git
   $('#blame-toggle').hidden = !editing || !state.status?.git
+  $('#file-more').hidden = !editing
   $('#blame-toggle').classList.toggle('on', state.blameGutter)
   $('.stage').classList.toggle('blame-on', editing && state.blameGutter)
   if (editing) ensureBlame(tab)
@@ -1886,7 +1894,6 @@ function setMode(m) {
   state.mode = m
   document.querySelectorAll('.mode-switch button').forEach(b => b.classList.toggle('on', b.dataset.mode === m))
   $('#diff-bar').hidden = m !== 'diff'
-  $('#diff-filterbar').hidden = m !== 'diff'
   $('#log-extra').hidden = m !== 'log' || $('#log-more').getAttribute('aria-expanded') !== 'true'
   $('#file-bar').hidden = m !== 'file'
   $('#log-bar').hidden = m !== 'log'
@@ -3591,6 +3598,16 @@ $('#new-file').onclick = () => fileAction('create')
 $('#rename-file').onclick = () => fileAction('rename')
 $('#delete-file').onclick = () => fileAction('delete')
 $('#save').onclick = () => saveFile()
+// The editor's secondary actions live in one menu. The buttons stay in the page (the editor shows and hides
+// them by file type); the menu lists the ones that apply and presses them.
+$('#file-more').onclick = e => {
+  e.stopPropagation()
+  const r = e.currentTarget.getBoundingClientRect()
+  const items = [['#note-add', 'Add a note for the agent…', '⌘⌥M'], ['#open-ext', 'Open in another app…'], ['#file-history', 'File history'], ['#blame-toggle', 'Blame'], ['#eol', 'Line endings'], ['#json-format', 'Format JSON']]
+    .map(([sel, label, kbd]) => ({ b: $(sel), label, kbd })).filter(x => x.b && !x.b.hidden)
+    .map(({ b, label, kbd }) => ({ label: b.id === 'eol' ? `${label}: ${b.textContent.trim()} — convert` : b.id === 'blame-toggle' ? (b.classList.contains('on') || b.getAttribute('aria-pressed') === 'true' ? '✓  ' : '    ') + label : label, kbd, run: () => b.click() }))
+  popMenu(items, r.right - 240, r.bottom + 4)
+}
 $('#refresh').onclick = refreshAll
 const toggleTree = () => $('.desk').classList.toggle('no-tree')
 $('#tree-toggle').onclick = toggleTree
@@ -3769,10 +3786,18 @@ $('#rebase').onclick = () => gitAction({ action: 'rebase', from: $('#branch-sele
 $('#stash-create').onclick = () => gitAction({ action: 'stash:create', message: $('#stash-message').value }).then(() => { $('#stash-message').value = '' })
 $('#file-filter').oninput = () => { renderQueue(); renderTree(); renderBranches() }
 $('#diff-scope').onchange = () => { syncScopeInputs(); $('#diff').scrollTop = 0; loadDiff() }
+const setScope = v => { $('#diff-scope').value = v; $('#diff-scope').dispatchEvent(new Event('change')) }
+$('#scope-seg').addEventListener('click', e => { const b = e.target.closest('[data-scope]'); if (b && b.dataset.scope !== scope()) setScope(b.dataset.scope) })
+$('#scope-chip-x').onclick = () => { state.fromLog = false; setScope('head') }
 $('#ignore-ws').onchange = loadDiff
 let filterTimer
 $('#diff-filter').addEventListener('input', () => { clearTimeout(filterTimer); filterTimer = setTimeout(refilter, 150) })
-$('#diff-status').onchange = () => { $('#diff-status').classList.toggle('on', $('#diff-status').value !== 'all'); refilter() }
+$('#diff-status').onchange = () => {
+  const v = $('#diff-status').value, f = $('#diff-filter')
+  f.classList.toggle('filtered', v !== 'all')
+  f.placeholder = v === 'all' ? 'Filter files or text' : `Only ${v === 'noted' ? 'files with notes' : v + ' files'} — filter`
+  refilter()
+}
 $('#diff-collapse').onclick = () => {
   const collapse = state.diffFiles.some(f => !isFolded(f))
   for (const f of state.diffFiles) state.folded.set(f.path, collapse)

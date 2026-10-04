@@ -620,3 +620,8 @@ The trigger: a folder such as `EH-Provider-Portal` that is not a repository but 
 - **Accepted:** the repository bar can be turned off (`workspaceBar` in the config, default on, Settings → Layout). Off also stops its polling. Its labels drop a name prefix shared by every repository; the tooltip keeps the full name.
 - **Accepted:** the switcher inside a workspace shows two groups, the workspace's repositories (`ws:<id>`) and the other echo processes (`p:<port>`, a workspace is one row), from `/ws/instances` (the host's instance scan, which a repository prefix cannot reach). Leaving the workspace for another process navigates to its port; the access token cookie is shared across ports on 127.0.0.1.
 
+### 22c. Review compares with HEAD (2026-10-04)
+
+- **Accepted:** Review's scope is All (HEAD to working tree, the default), Unstaged or Staged, as a switch. "Compare refs" and "One commit" are no longer choices: they are reached from the Log, History and Compare, and show as a chip with a way back. The hidden `#diff-scope` select still holds the value, so session restore and every caller work as before.
+- **Accepted:** the review's filter box lives in the toolbar row, not a second row of its own, to give the diff the height. The editor's secondary actions are one menu; Save shows only when there is something to save.
+

@@ -128,7 +128,13 @@
       </div>
       <div class="vr"></div>
       <div id="diff-bar" class="bar-group">
-        <select id="diff-scope" class="field" title="What to compare">
+        <div id="scope-seg" class="seg scope-seg" role="tablist" aria-label="What to compare">
+          <button data-scope="head" role="tab" title="Every change since HEAD, staged or not">All</button>
+          <button data-scope="worktree" role="tab" title="Only what is not staged yet">Unstaged</button>
+          <button data-scope="staged" role="tab" title="Only what is staged">Staged</button>
+        </div>
+        <span id="scope-chip" class="scope-chip" hidden><span id="scope-chip-text"></span><button id="scope-chip-x" class="btn quiet icon xs" title="Back to all changes" aria-label="Back to all changes">×</button></span>
+        <select id="diff-scope" class="field" title="What to compare" hidden>
           <option value="head">All changes vs HEAD</option>
           <option value="worktree">Unstaged</option>
           <option value="staged">Staged</option>
@@ -142,6 +148,12 @@
         </span>
         <input id="diff-commit" class="field ref" placeholder="commit" autocomplete="off" spellcheck="false" hidden>
         <span id="diff-summary" class="summary"></span>
+        <input id="diff-filter" class="field diff-filter" placeholder="Filter files or text" autocomplete="off" spellcheck="false" aria-label="Filter the review">
+        <select id="diff-status" class="field" title="Show only…" aria-label="Show only" hidden>
+          <option value="all">All files</option><option value="new">New</option><option value="modified">Modified</option><option value="deleted">Deleted</option><option value="renamed">Renamed</option>
+          <option value="noted">With open notes</option>
+        </select>
+        <button id="diff-collapse" class="btn quiet sm" title="Collapse or expand every file" hidden>Collapse all</button>
         <div class="seg layout-switch" role="tablist" title="Diff layout">
           <button data-layout="unified" class="on" role="tab" title="Stacked: old and new lines in one column" aria-label="Stacked layout"><svg class="i" viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h10"/></svg></button>
           <button data-layout="split" role="tab" title="Split: old version left, new version right" aria-label="Split layout"><svg class="i" viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M8 3v10"/></svg></button>
@@ -170,18 +182,9 @@
         <button id="open-ext" class="btn quiet sm" hidden title="Open this file in another app">Open in…</button>
         <button id="file-history" class="btn quiet sm" hidden title="Commits that changed this file, across renames">History</button>
         <button id="blame-toggle" class="btn quiet sm" hidden title="Show who last changed each line; click an entry to see its commit">Blame</button>
+        <button id="file-more" class="btn quiet icon" aria-haspopup="menu" aria-label="File actions" title="Line endings, note, open in…, history, blame" hidden><svg class="i" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="12.5" cy="8" r="1"/></svg></button>
         <button id="save" class="btn primary" hidden disabled>Save <kbd>⌘S</kbd></button>
       </div>
-    </div>
-    <div id="diff-filterbar" class="filterbar">
-      <input id="diff-filter" class="field" placeholder="Filter files or text (.go for an extension)" autocomplete="off" spellcheck="false" aria-label="Filter the review">
-      <select id="diff-status" class="field" title="Show only…" aria-label="Show only">
-        <option value="all">All files</option><option value="new">New</option><option value="modified">Modified</option><option value="deleted">Deleted</option><option value="renamed">Renamed</option>
-        <option value="noted">With open notes</option>
-      </select>
-      <button id="diff-collapse" class="btn quiet sm" title="Collapse or expand every file">Collapse all</button>
-      <span class="grow"></span>
-      <span class="faint fb-keys"><kbd>c</kbd> note on the hunk</span>
     </div>
     <div id="log-extra" class="filterbar" hidden>
       <label class="faint">Since <input id="log-since" class="field" type="date" aria-label="Since"></label>

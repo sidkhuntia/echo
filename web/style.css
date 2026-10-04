@@ -1348,3 +1348,23 @@ a.ws-row:hover { background: var(--hover); }
 .repo-pop.in-ws .repo-foot #repo-home { display: flex; width: max-content; margin: 0 0 6px; }
 .ws-row.else { grid-template-columns: minmax(160px, 1.6fr) minmax(110px, 1.1fr) 120px 74px; }
 #ws-else { margin-top: 18px; }
+
+/* ---------- tighter toolbars ---------- */
+.titlebar { height: 46px; }
+.wsbar { height: 30px; }
+/* Review compares with HEAD: a three-way switch, and a chip when a commit or a range is shown. */
+.scope-seg button { padding: 0 10px; }
+.scope-chip { display: inline-flex; align-items: center; gap: 2px; height: 26px; padding: 0 2px 0 10px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.scope-chip .btn { color: var(--accent); }
+.toolbar .diff-filter { width: 170px; flex: none; height: 26px; transition: width .15s; }
+.toolbar .diff-filter:focus { width: 260px; }
+.toolbar .diff-filter.filtered { border-color: var(--accent); }
+/* Editor: tabs that read as tabs, and secondary actions in one menu. */
+#file-bar #eol, #file-bar #note-add, #file-bar #open-ext, #file-bar #file-history, #file-bar #blame-toggle, #file-bar #json-format { display: none !important; }
+#save:disabled { display: none; }
+.tab { background: none; box-shadow: none; padding: 0 4px 0 10px; border-radius: 6px; }
+.tab.active { background: var(--hover); box-shadow: none; }
+.tab .x { opacity: 0; transition: opacity .1s; }
+.tab:hover .x, .tab.active .x, .tab.dirty .x { opacity: 1; }
+.tab.dirty:not(:hover) .x:hover::before { content: ""; }
+.mode-switch + .vr { display: block; }
