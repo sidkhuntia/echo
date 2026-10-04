@@ -637,3 +637,9 @@ The trigger: a folder such as `EH-Provider-Portal` that is not a repository but 
 - **Accepted:** the review has two views, Hunks (every file as hunks, as before) and Files (one file at a time). Files fetches the file with the whole file as context (`/api/diff?path=&context=100000`, the same request "show more context" makes) and hides `.hunk-head` with CSS, so nothing about hunks shows. Staging in this view is per file. It is a view of the same diff, not a new endpoint or mode of the page.
 - **Accepted:** only one file is in the DOM, so a huge diff costs one file; large and generated files open unfolded because the user asked for that file.
 - **Deferred:** staging selected lines in Files view (line selection still works where the gutter offers it).
+
+
+### 22f. Merge and Rebase ask first (2026-10-04)
+
+- **Accepted:** the sidebar's Merge and Rebase buttons and the branch menu entries open one dialog (`integrate` in `gitui.js`) rather than running `git merge` / `git rebase` on whatever the branch dropdown held. The dialog states the direction (the source branch comes into the checked-out branch), offers Merge or Rebase, and previews from `/api/git/relation` (`HEAD...ref` counts, `merge-base --is-ancestor` for fast-forward, up to eight incoming subjects, a count of files with uncommitted changes). Nothing runs until the confirm button, which names what it will do. The preview is advisory: Git still decides, and its conflicts go to the existing banner.
+- **Not changed:** interactive rebase keeps its own screen; Abort / Continue / Skip behave as before.

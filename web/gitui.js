@@ -52,19 +52,65 @@ export function showOutput(action, text, ok) {
   wrap.innerHTML = `<summary>git ${c().esc(action)}${ok ? ' output' : ' failed'}</summary><pre>${c().esc(text)}</pre>`
 }
 
-// ---------- merge ----------
-export async function mergeInto(ref) {
-  const cur = c().state.status?.branch || 'the current branch'
+// ---------- merge and rebase ----------
+// One dialog for both: pick the branch to bring in, choose Merge or Rebase, read what will happen
+// (from /api/git/relation), then confirm. The target is always the branch that is checked out.
+export function integrate(from, method = 'merge') {
+  const { state, esc, api, setStatus, plural } = c(), st = state.status || {}, cur = st.branch
+  if (!cur) return setStatus('Check out a branch first: Merge and Rebase work on the current branch', 'err')
+  const names = (st.branches || []).filter(b => b !== cur)
+  if (!names.length) return setStatus('There is no other branch to bring changes from', 'err')
+  if (!from || from === cur) from = names.find(b => /^(origin\/)?(main|master|develop)$/.test(b)) || names[0]
+  let rel = null, seq = 0
   const m = openModal({
-    title: `Merge ${ref} into ${cur}`, kicker: 'merge',
-    body: `<div class="set-sec"><label class="check"><input type="radio" name="mm" value="" checked> <b>Merge</b> <span class="faint">fast-forward when possible, otherwise a merge commit</span></label>
-      <label class="check"><input type="radio" name="mm" value="noff"> <b>Always a merge commit</b> <span class="faint">--no-ff</span></label>
-      <label class="check"><input type="radio" name="mm" value="squash"> <b>Squash</b> <span class="faint">stage everything as one change; you commit it</span></label></div>`,
+    title: 'Bring changes into ' + cur, kicker: 'merge or rebase',
+    body: `<div class="im">
+      <label class="im-row">From <select class="field" data-im="from">${names.map(b => `<option ${b === from ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select><span class="faint">into <b>${esc(cur)}</b>, the branch you are on</span></label>
+      <div class="seg" data-im="method" role="tablist"><button data-m="merge" role="tab">Merge</button><button data-m="rebase" role="tab">Rebase</button></div>
+      <div class="im-info" data-im="info" aria-live="polite">Checking…</div>
+      <div class="set-sec" data-im="opts"></div></div>`,
     actions: [{ label: 'Cancel' }, { label: 'Merge', primary: true, run: async mod => {
-      const v = mod.el.querySelector('input[name=mm]:checked').value
-      await c().gitAction({ action: 'merge', from: ref, noff: v === 'noff', squash: v === 'squash' })
+      if (!rel || !rel.incoming) return false
+      const v = mod.el.querySelector('input[name=mm]:checked')?.value
+      await c().gitAction(method === 'rebase' ? { action: 'rebase', from } : { action: 'merge', from, noff: v === 'noff', squash: v === 'squash' })
     } }],
   })
+  const q = s => m.el.querySelector(`[data-im="${s}"]`), go = m.root.querySelector('.xmodal-actions .primary')
+  const draw = () => {
+    m.el.querySelectorAll('[data-m]').forEach(b => b.classList.toggle('on', b.dataset.m === method))
+    go.textContent = method === 'rebase' ? `Rebase ${cur} onto ${from}` : `Merge ${from} into ${cur}`
+    const info = q('info'), opts = q('opts')
+    if (!rel) { info.textContent = 'Checking…'; opts.innerHTML = ''; go.disabled = true; return }
+    if (rel.error) { info.innerHTML = `<span class="im-bad">${esc(rel.error)}</span>`; opts.innerHTML = ''; go.disabled = true; return }
+    const n = rel.incoming, f = `<b>${esc(from)}</b>`, t = `<b>${esc(cur)}</b>`
+    go.disabled = !n
+    let say
+    if (!n) say = `Already up to date: ${f} has nothing that ${t} lacks.`
+    else if (method === 'rebase') say = rel.ours
+      ? `${plural(rel.ours, 'commit')} of ${t} will be replayed on top of ${f}, after its ${plural(n, 'new commit')}. This rewrites ${t}'s history, so avoid it once ${t} is pushed and shared.`
+      : `${t} has nothing of its own, so it simply moves forward to ${f} (${plural(n, 'commit')}).`
+    else say = rel.ff
+      ? `${t} can fast-forward: it moves ahead ${plural(n, 'commit')} to ${f}, with no merge commit.`
+      : `${plural(n, 'commit')} from ${f} come into ${t}, and a merge commit joins the two histories (${t} also has ${plural(rel.ours, 'commit')} of its own).`
+    const list = n ? `<ul class="im-commits">${rel.commits.map(x => `<li><span class="mono">${esc(x.slice(0, 7))}</span> ${esc(x.slice(8))}</li>`).join('')}${n > rel.commits.length ? `<li class="faint">and ${n - rel.commits.length} more</li>` : ''}</ul>` : ''
+    const dirty = rel.dirty ? `<p class="im-warn">${plural(rel.dirty, 'file')} with uncommitted changes. Commit or stash first; Git may refuse otherwise.</p>` : ''
+    info.innerHTML = `<p>${say}</p>${list}${dirty}`
+    opts.hidden = method !== 'merge' || !n
+    opts.innerHTML = method === 'merge' && n ? `<label class="check"><input type="radio" name="mm" value="" checked> <b>${rel.ff ? 'Fast-forward' : 'Merge commit'}</b> <span class="faint">Git's default</span></label>
+      ${rel.ff ? '<label class="check"><input type="radio" name="mm" value="noff"> <b>Always a merge commit</b> <span class="faint">--no-ff, keeps the branch visible in the log</span></label>' : ''}
+      <label class="check"><input type="radio" name="mm" value="squash"> <b>Squash</b> <span class="faint">stage everything as one change; you commit it</span></label>` : ''
+  }
+  const load = async () => {
+    const my = ++seq
+    rel = null; draw()
+    let r
+    try { r = await api('/api/git/relation?from=' + encodeURIComponent(from)) } catch (e) { r = { error: e.message } }
+    if (my !== seq) return
+    rel = r; draw()
+  }
+  q('from').onchange = e => { from = e.target.value; load() }
+  m.el.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { method = b.dataset.m; draw() })
+  load()
   return m
 }
 

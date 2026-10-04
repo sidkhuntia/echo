@@ -389,6 +389,7 @@ func (a *App) mux() *http.ServeMux {
 	a.addEndpoints(mux)
 	mux.HandleFunc("/api/commit/contains", a.handleContains)
 	mux.HandleFunc("/api/reset/preview", a.handleResetPreview)
+	mux.HandleFunc("/api/git/relation", a.handleRelation)
 	mux.HandleFunc("/api/stream", a.handleStream)
 	mux.HandleFunc("/api/config", a.handleConfig)
 	mux.HandleFunc("/api/instance", a.handleInstance)

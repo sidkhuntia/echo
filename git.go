@@ -1287,3 +1287,61 @@ func (a *App) markUnpushed(commits []Commit) {
 		commits[i].Unpushed = local[commits[i].Hash]
 	}
 }
+
+// Relation says how another ref stands against HEAD, so Merge and Rebase can preview what they will do.
+type Relation struct {
+	Branch   string   `json:"branch"`
+	From     string   `json:"from"`
+	Incoming int      `json:"incoming"` // commits in From that HEAD lacks
+	Ours     int      `json:"ours"`     // commits in HEAD that From lacks
+	FF       bool     `json:"ff"`       // HEAD is an ancestor of From: a merge can fast-forward
+	Commits  []string `json:"commits"`  // the newest incoming subjects, at most 8
+	Dirty    int      `json:"dirty"`    // files with uncommitted changes
+}
+
+func (a *App) relation(from string) (Relation, error) {
+	if err := validRef(from); err != nil {
+		return Relation{}, err
+	}
+	rel := Relation{From: from, Commits: []string{}}
+	if _, err := a.git("rev-parse", "--verify", "--quiet", from+"^{commit}"); err != nil {
+		return rel, fmt.Errorf("%s is not a branch or commit", from)
+	}
+	rel.Branch = strings.TrimSpace(firstOut(a.git("branch", "--show-current")))
+	counts, err := a.git("rev-list", "--left-right", "--count", "HEAD..."+from)
+	if err != nil {
+		return rel, err
+	}
+	if f := strings.Fields(counts); len(f) == 2 {
+		rel.Ours, _ = strconv.Atoi(f[0])
+		rel.Incoming, _ = strconv.Atoi(f[1])
+	}
+	_, err = a.git("merge-base", "--is-ancestor", "HEAD", from)
+	rel.FF = err == nil
+	if log, err := a.git("log", "--max-count=8", "--format=%h %s", "HEAD.."+from); err == nil {
+		for _, l := range strings.Split(strings.TrimSpace(log), "\n") {
+			if l != "" {
+				rel.Commits = append(rel.Commits, l)
+			}
+		}
+	}
+	if st, err := a.git("status", "--porcelain", "--untracked-files=no"); err == nil {
+		for _, l := range strings.Split(st, "\n") {
+			if strings.TrimSpace(l) != "" {
+				rel.Dirty++
+			}
+		}
+	}
+	return rel, nil
+}
+
+func firstOut(s string, _ error) string { return s }
+
+func (a *App) handleRelation(w http.ResponseWriter, r *http.Request) {
+	rel, err := a.relation(r.URL.Query().Get("from"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, rel)
+}

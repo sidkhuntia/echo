@@ -1395,3 +1395,41 @@ func TestSecurityHeaders(t *testing.T) {
 		t.Error("index.html has an inline script that the CSP would block")
 	}
 }
+
+func TestRelationPreviewsMergeAndRebase(t *testing.T) {
+	a := testRepo(t)
+	run := func(args ...string) {
+		t.Helper()
+		out, err := a.gitCombined(append([]string{"-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("stash", "-u", "-q")
+	run("switch", "-q", "-c", "feature")
+	for _, n := range []string{"f1", "f2"} {
+		os.WriteFile(filepath.Join(a.root, n), []byte(n), 0o644)
+		run("add", n)
+		run("commit", "-q", "-m", "add "+n)
+	}
+	run("switch", "-q", "main")
+	rel, err := a.relation("feature")
+	if err != nil || rel.Branch != "main" || rel.Incoming != 2 || rel.Ours != 0 || !rel.FF || len(rel.Commits) != 2 {
+		t.Fatalf("fast-forwardable: %+v, %v", rel, err)
+	}
+	os.WriteFile(filepath.Join(a.root, "m1"), []byte("m"), 0o644)
+	run("add", "m1")
+	run("commit", "-q", "-m", "main moves on")
+	if rel, _ = a.relation("feature"); rel.Incoming != 2 || rel.Ours != 1 || rel.FF {
+		t.Errorf("diverged: %+v", rel)
+	}
+	if rel, _ = a.relation("main"); rel.Incoming != 0 {
+		t.Errorf("own branch has nothing incoming: %+v", rel)
+	}
+	if _, err := a.relation("--upload-pack=x"); err == nil {
+		t.Error("an option-looking ref must be refused")
+	}
+	if _, err := a.relation("nope"); err == nil {
+		t.Error("an unknown ref must be refused")
+	}
+}

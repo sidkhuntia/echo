@@ -1374,3 +1374,12 @@ a.ws-row:hover { background: var(--hover); }
 #diff.fileview .hunk-head { display: none; }
 #diff.fileview .hunk + .hunk { margin-top: 0; border-top: 0; }
 #file-nav button:disabled { opacity: .35; cursor: default; }
+
+/* Merge / rebase dialog */
+.im { display: grid; gap: 10px; min-width: min(460px, 86vw); }
+.im-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.im-info p { margin: 0 0 6px; line-height: 1.5; }
+.im-commits { margin: 0 0 6px; padding: 6px 10px; list-style: none; max-height: 160px; overflow: auto; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); font-size: 12px; }
+.im-commits li { padding: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.im-warn { color: var(--warn); }
+.im-bad { color: var(--del); }

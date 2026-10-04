@@ -2205,7 +2205,7 @@ function refActions(ref, kind) {
   if (kind === 'local') a.push(['Rename…', 'rename'])
   if (!isCur && cur) {
     a.push([`Merge into ${cur}…`, 'merge'])
-    a.push([`Rebase ${cur} onto this`, { action: 'rebase', from: ref }])
+    a.push([`Rebase ${cur} onto this…`, 'rebase'])
     a.push([`Rebase ${cur} onto this interactively…`, 'irebase'])
     a.push(['Cherry-pick its commits…', 'pickrange'])
     a.push([`Compare with ${cur}`, 'compare'])
@@ -2241,7 +2241,7 @@ async function runRefAction(i) {
     const name = await ask({ title: 'Name the new branch', ok: 'Create', html: `<p class="note">Starts from <b>${esc(ref)}</b>.</p>`, input: { label: 'Branch name', placeholder: 'feature/name' } })
     if (name) await gitAction({ action: 'branch:create', from: name, to: ref })
   } else if (what === 'rename') await G.renameBranch(ref)
-  else if (what === 'merge') G.mergeInto(ref)
+  else if (what === 'merge' || what === 'rebase') G.integrate(ref, what)
   else if (what === 'delete') await G.deleteBranch(ref)
   else if (what === 'delete-remote') await G.deleteRemoteBranch(ref)
   else if (what === 'irebase') ctx.rebaseUI?.(ref)
@@ -3887,8 +3887,8 @@ $('#push-menu').addEventListener('click', e => {
 })
 document.addEventListener('click', e => { if (!e.target.closest('#push-menu, #push-more')) togglePushMenu(false) })
 setInterval(renderTracking, 30000)
-$('#merge').onclick = () => gitAction({ action: 'merge', from: $('#branch-select').value })
-$('#rebase').onclick = () => gitAction({ action: 'rebase', from: $('#branch-select').value })
+$('#merge').onclick = () => G.integrate($('#branch-select').value, 'merge')
+$('#rebase').onclick = () => G.integrate($('#branch-select').value, 'rebase')
 $('#stash-create').onclick = () => gitAction({ action: 'stash:create', message: $('#stash-message').value }).then(() => { $('#stash-message').value = '' })
 $('#file-filter').oninput = () => { renderQueue(); renderTree(); renderBranches() }
 $('#diff-scope').onchange = () => { syncScopeInputs(); $('#diff').scrollTop = 0; loadDiff() }
