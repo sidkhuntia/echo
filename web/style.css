@@ -231,13 +231,15 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .swatch i { width: 9px; height: 16px; }
 
 /* repository switcher */
-.repo-pop { left: 34px; right: auto; width: 360px; }
-.rp-row { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 10px; }
+.repo-pop { left: 34px; right: auto; width: 380px; }
+.rp-row { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.rp-main { display: flex; flex-direction: column; min-width: 0; }
 .rp-row .nm, .rp-row .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-row .path { font: 11px var(--mono); color: var(--faint); }
 .rp-row .nm { display: flex; align-items: baseline; gap: 8px; }
 .rp-row .nm b { font-weight: 500; flex: none; }
-.rp-row .meta { color: var(--muted); font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; }
+.rp-row .meta { color: var(--muted); font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.rp-row .rp-stop { margin-left: 2px; }
 .rp-n { font: 600 11px var(--mono); padding: 1px 7px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
 .rp-row .port { font: 11px var(--mono); color: var(--faint); }
 .rp-end { display: flex; align-items: center; gap: 6px; }
@@ -361,7 +363,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 .rail-switch button.on, .mode-switch button.on, .insp-switch button.on { background: none; box-shadow: none; color: var(--fg); }
 .rail-switch button.on::after, .mode-switch button.on::after, .insp-switch button.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1.5px; border-radius: 1px; background: var(--accent); }
 /* Four tabs do not fit the 272px rail as words, so Search is an icon at the end, like VS Code's activity bar. */
-.rail-switch button[data-rail="search"] { margin-left: auto; }
+.rail-switch button.ico { display: inline-flex; align-items: center; gap: 4px; }
+.rail-switch button.ico .i { width: 15px; height: 15px; }
+.rail-switch button[data-rail="branches"] { margin-left: auto; }
 .rail-switch .count, .rail-switch button.on .count { background: none; padding: 0; color: var(--accent); font-size: 11px; }
 
 /* ---------- sidebar ---------- */

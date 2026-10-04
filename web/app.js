@@ -856,11 +856,8 @@ function fileHTML(f, i) {
   const canUnstage = c && c.index && !conflicted(c) && sc !== 'worktree'
   // Discard sits alone at the far left, away from Stage, and is an icon that only turns red on hover.
   const acts = [
-    c ? `<button class="btn quiet icon xs danger" data-act="discard" aria-label="Discard" title="${sc === 'worktree' ? 'Discard unstaged changes' : 'Discard every change since HEAD, staged or not'}">${ICON.discard}</button><span class="vr"></span>` : '',
     R.notable() ? '<button class="btn quiet sm" data-act="note" title="Add a note for the agent on this whole file">Note</button>' : '',
-    f.hunks.length ? `<button class="btn quiet sm" data-act="context" title="Show more lines around the changes: 3, 12, the whole file">${f.ctx === 100000 ? 'Whole file' : `±${f.ctx || 3}`}</button>` : '',
-    !f.isDeleted ? '<button class="btn quiet sm" data-act="open" title="Open the file (o)">Open</button>' : '',
-    state.status?.git ? '<button class="btn quiet sm" data-act="history" title="Commits that changed this file">History</button>' : '',
+    `<button class="btn quiet icon xs" data-act="more" aria-haspopup="menu" aria-label="More actions" title="Open, history, more context, discard"><svg class="i" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="12.5" cy="8" r="1"/></svg></button>`,
     canUnstage ? `<button class="btn quiet sm" data-act="unstage" title="Unstage (u)">${ICON.minus}Unstage</button>` : '',
     canStage ? `<button class="btn sm do-stage" data-act="stage" title="Stage and go to the next file (s)">${ICON.plus}Stage</button>` : '',
   ].join('')
@@ -2214,9 +2211,8 @@ function renderRepoPop() {
   repoSel = Math.min(repoSel, Math.max(0, list.length - 1))
   $('#repo-list').innerHTML = list.map((r, i) => `<div class="th rp-row ${r.key === here ? 'on' : ''} ${i === repoSel ? 'sel' : ''}" data-key="${esc(r.key)}" data-i="${i}" title="${esc(r.root)}">
     <span class="ok">${r.key === here ? '✓' : ''}</span>
-    <span><div class="nm"><b>${esc(basename(r.root))}</b>${r.branch ? `<span class="meta">${esc(r.branch)}</span>` : ''}</div>${BASE ? '' : `<div class="path">${esc(r.root)}</div>`}</span>
-    ${r.changes ? `<span class="rp-n" title="${r.changes} changed files">${r.changes}</span>` : '<span></span>'}
-    ${BASE ? '' : `<span class="rp-end"><span class="port">:${r.port}</span><button class="rp-stop" data-repo-stop="${r.port}" title="Stop this echo process">Stop</button></span>`}</div>`).join('')
+    <span class="rp-main"><span class="nm"><b>${esc(basename(r.root))}</b>${r.branch ? `<span class="meta">${esc(r.branch)}</span>` : ''}</span></span>
+    <span class="rp-end">${r.changes ? `<span class="rp-n" title="${r.changes} changed files">${r.changes}</span>` : ''}${BASE ? '' : `<span class="port">:${r.port}</span><button class="rp-stop" data-repo-stop="${r.port}" title="Stop this echo process">Stop</button>`}</span></div>`).join('')
     || `<div class="bp-more faint">${repos.length ? 'No open repository matches.' : 'Looking for open repositories…'}</div>`
   $('#repo-list .sel')?.scrollIntoView({ block: 'nearest' })
 }
@@ -3113,11 +3109,21 @@ $('#diff').addEventListener('click', e => {
   else if (act === 'stage') { stage([f.path]); advanceFrom(i) }
   else if (act === 'unstage') unstage([f.path])
   else if (act === 'discard') discard([f.path], scope() === 'worktree')
-  else if (act === 'history') openFileHistory(f.path)
-  else if (act === 'context') expandFile(i)
+  else if (act === 'more') fileMenu(i, e.target.closest('[data-act]'))
   else if (act === 'note') R.addFileNote(f.path)
   else if (e.target.closest('.dfile-head')) toggleFold(i)
 })
+// What a file header keeps out of sight: opening it, its history, more context, and discarding.
+function fileMenu(i, anchor) {
+  const f = state.diffFiles[i], r = anchor.getBoundingClientRect(), sc = scope()
+  popMenu([
+    !f.isDeleted && { label: 'Open file', kbd: 'o', run: () => openFile(f.path, { fromReview: true }) },
+    state.status?.git && { label: 'File history', run: () => openFileHistory(f.path) },
+    f.hunks.length && { label: `Context lines: ${f.ctx === 100000 ? 'whole file' : f.ctx || 3} — show more`, run: () => expandFile(i) },
+    state.changes.has(f.path) && { sep: true },
+    state.changes.has(f.path) && { label: sc === 'worktree' ? 'Discard unstaged changes' : 'Discard all changes to this file', danger: true, run: () => discard([f.path], sc === 'worktree') },
+  ].filter(Boolean), r.right - 220, r.bottom + 4)
+}
 $('#diff').addEventListener('click', e => { if (e.target.closest('[data-empty="sync"]')) $('#sync').click() })
 $('#diff').addEventListener('dblclick', e => {
   const cell = e.target.closest('.tx[data-n]')
