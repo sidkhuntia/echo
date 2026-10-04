@@ -14,6 +14,7 @@
 - Log: opening it closes an open History drawer; clicking a commit only selects it and shows its details (like History); clicking one of its files opens that diff, and the Log's commits move into the left nav (a Log tab appears there) so another commit is one click away. Esc returns to the full Log.
 - Tabs can be dragged into the order you like: the sidebar tabs, Review/Editor/Log, the Git panel tabs (saved in the config as `tabOrder`), and the open-file tabs.
 - Hunk header: note and discard are quiet icons and the one action that moves the hunk (Stage hunk / Unstage hunk) sits last, tinted; the line range shows on hover.
+- The repository bar is a row of pills: a dot and a count where something changed, the open repository filled, and the shared name prefix (`provider-`) left off (the tooltip has the full name). Settings → Layout → Repository bar turns it off (shown by default); `⌘⇧O` still switches.
 - Messages in the bottom-left corner disappear after four seconds (eight for errors); "Lost the echo server" stays until the connection returns.
 - The repository switcher searches names and branches by every word you type (the folder path no longer matches everything), and one row is highlighted instead of two competing boxes. The theme picker now moves with ↑/↓, previews the highlighted theme, applies it with Enter, and Escape puts the old one back.
 

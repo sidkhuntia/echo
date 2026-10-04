@@ -302,3 +302,11 @@ func TestValidateConfigTabOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkspaceBarDefaultsOn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if !loadConfig().WorkspaceBar {
+		t.Error("the repository bar should be shown unless turned off")
+	}
+}

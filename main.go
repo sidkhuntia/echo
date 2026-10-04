@@ -99,6 +99,8 @@ type Config struct {
 	// ShowRail keeps the Git rail (Commit, History, Branches) visible beside the review. Off by
 	// default: the title bar's Git button and ⌘J open the panel, and the button carries the badge.
 	ShowRail bool `json:"showRail"`
+	// WorkspaceBar shows the row of repository chips under the title bar in a workspace. On by default.
+	WorkspaceBar bool `json:"workspaceBar"`
 	// Review: rename detection in diffs, and marking the changed words inside a changed line.
 	Renames  bool `json:"renames"`
 	WordDiff bool `json:"wordDiff"`
@@ -689,7 +691,7 @@ func (a *App) shutdown(why string) {
 
 func loadConfig() Config {
 	cfg := Config{DiffMode: "unified", GutterBase: "head", Blame: "line", Panels: []string{"tree", "editor", "git"}, PanelSizes: map[string]int{},
-		Renames: true, WordDiff: true, Indent: "auto", FontSize: 12, IndentGuides: true, Sticky: true, AutoClose: true, Occurrences: true}
+		Renames: true, WordDiff: true, Indent: "auto", FontSize: 12, IndentGuides: true, Sticky: true, AutoClose: true, Occurrences: true, WorkspaceBar: true}
 	data, err := os.ReadFile(configPath())
 	if err == nil {
 		_ = json.Unmarshal(data, &cfg)
