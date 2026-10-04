@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The Git panel starts collapsed even when pinned (pinning docks it as a column; the title-bar button or ⌘J opens it). The staged-count badge on its button is no longer clipped by the button group's border.
+
+### Files tree
+
+- Files are ordered naturally, so `V2__x.sql` comes before `V10__y.sql` (it was `V1, V10, V11, … V2`). Folders still come first.
+- Dotfiles and dot-folders (`.github`, `.env`, `.gitignore`) are shown; only `.git` is left out.
+- Empty folders are shown.
+- Ignored files and folders (`node_modules`, build output, `.env`) are shown dimmed. An ignored folder is listed only when you open it (`/api/tree?dir=`), so a huge one costs nothing until asked for, and it stays out of search, "Expand all" and the quick-open list. This is how px0 keeps large repositories fast.
+
 ## 0.2.0 (2026-10-04)
 
 ### Workspaces

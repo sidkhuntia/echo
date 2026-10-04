@@ -167,7 +167,9 @@ func TestWorkspaceRoutesToRepos(t *testing.T) {
 	}
 	var paths []string
 	for _, n := range tree {
-		paths = append(paths, n.Path)
+		if !n.Ignored {
+			paths = append(paths, n.Path)
+		}
 	}
 	if strings.Join(paths, ",") != "docker-compose.yaml,docs/plan.md" {
 		t.Errorf("workspace files = %v", paths)

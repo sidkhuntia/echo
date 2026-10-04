@@ -22,7 +22,7 @@ import * as TD from './tabdrag.js'
 
 const $ = s => document.querySelector(s)
 const state = {
-  tree: [], treeStale: true, tabs: [], active: -1, selected: '',
+  tree: [], treeExtra: [], ignKids: new Map(), ignoredFiles: new Set(), treeStale: true, tabs: [], active: -1, selected: '',
   status: null, changes: new Map(), folded: new Map(),
   config: { vim: false, theme: 'system', diffMode: 'unified' }, mode: 'diff', rail: 'changes', dirOpen: new Map(),
   diffFiles: [], diffSeq: 0, current: -1, hunk: -1, commit: '', returnTo: '', statusSeq: 0,
@@ -199,7 +199,17 @@ async function refreshAll() {
 async function ensureTree() {
   if (!state.treeStale) return
   state.treeStale = false
-  try { state.tree = await api('/api/tree') } catch (e) { setStatus(e.message, 'err') }
+  try {
+    // Plain files drive search and the rest of the page; empty and ignored folders and ignored files only shape the Files tree.
+    const nodes = await api('/api/tree')
+    state.tree = nodes.filter(n => !n.dir && !n.ignored)
+    state.treeExtra = nodes.filter(n => n.dir || n.ignored)
+    // Opened ignored folders are listed again, so a build that rewrites them shows.
+    state.ignoredFiles.clear()
+    for (const dir of [...state.ignKids.keys()]) {
+      try { state.ignKids.set(dir, await api('/api/tree?dir=' + encodeURIComponent(dir))) } catch { state.ignKids.delete(dir) }
+    }
+  } catch (e) { setStatus(e.message, 'err') }
 }
 
 // ---------- file index ----------
@@ -455,23 +465,43 @@ async function discardAll() {
 }
 
 // Build a folder tree from the flat, sorted path list. Folders open by default when they hold a change or the open file.
-function buildTree(paths) {
+function buildTree(paths, extra = []) {
   const root = { dirs: new Map(), files: [], changed: 0 }
-  for (const p of paths) {
-    const parts = p.split('/')
+  const ensure = (parts, upto) => {
     let node = root
     const lineage = [root]
-    for (let i = 0; i < parts.length - 1; i++) {
-      const dir = parts.slice(0, i + 1).join('/')
-      if (!node.dirs.has(parts[i])) node.dirs.set(parts[i], { path: dir, dirs: new Map(), files: [], changed: 0 })
+    for (let i = 0; i < upto; i++) {
+      if (!node.dirs.has(parts[i])) node.dirs.set(parts[i], { path: parts.slice(0, i + 1).join('/'), dirs: new Map(), files: [], changed: 0 })
       node = node.dirs.get(parts[i])
       lineage.push(node)
     }
-    node.files.push(p)
+    return lineage
+  }
+  for (const p of paths) {
+    const parts = p.split('/')
+    const lineage = ensure(parts, parts.length - 1)
+    lineage[lineage.length - 1].files.push(p)
     if (state.changes.has(p)) lineage.forEach(n => n.changed++)
+  }
+  // Empty and ignored folders, ignored files, and what an opened ignored folder listed.
+  for (const n of extra) {
+    const parts = n.path.split('/')
+    if (n.dir) {
+      const lineage = ensure(parts, parts.length)
+      if (n.ignored) lineage[lineage.length - 1].ignored = true
+    } else {
+      const lineage = ensure(parts, parts.length - 1)
+      lineage[lineage.length - 1].files.push(n.path)
+      if (n.ignored) state.ignoredFiles.add(n.path)
+    }
   }
   return root
 }
+
+// Numeric-aware, so V2 sorts before V10; punctuation (dotfiles) first.
+const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare
+// What the Files tree adds to the file list: not while filtering, and an ignored folder's loaded listing.
+const treeExtra = () => $('#file-filter').value ? [] : [...state.treeExtra, ...[...state.ignKids.values()].flat()]
 
 // The paths the tree shows: the filter applied; the window below decides how many are drawn.
 const treePaths = () => {
@@ -481,7 +511,7 @@ const treePaths = () => {
 // A folder opens by default when it holds a change or the open file; a choice the user made wins.
 const dirIsOpen = (d, filter, open) => filter ? true : state.dirOpen.has(d.path) ? state.dirOpen.get(d.path) : d.changed > 0 || (open || '').startsWith(d.path + '/')
 const allDirs = (node, out = []) => {
-  for (const [, d] of node.dirs) { out.push(d); allDirs(d, out) }
+  for (const [, d] of node.dirs) if (!d.ignored) { out.push(d); allDirs(d, out) }
   return out
 }
 
@@ -494,7 +524,7 @@ function renderTree() {
   if (state.rail !== 'files') return
   const filter = $('#file-filter').value.toLowerCase()
   const open = activeTab()?.path
-  const root = buildTree(treePaths())
+  const root = buildTree(treePaths(), treeExtra())
   const isOpen = d => dirIsOpen(d, filter, open)
   const pad = depth => `style="padding-left:${6 + depth * 14}px"`
   const name = n => {
@@ -504,14 +534,14 @@ function renderTree() {
   }
   const rows = []
   const render = (node, depth) => {
-    for (const [n, d] of [...node.dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
+    for (const [n, d] of [...node.dirs].sort((a, b) => natural(a[0], b[0]))) {
       const o = isOpen(d)
-      rows.push(`<div class="tnode dir" draggable="true" data-dir="${esc(d.path)}" ${pad(depth)} title="${esc(d.path)}"><span class="tw">${o ? '▾' : '▸'}</span><svg class="i ic" viewBox="0 0 16 16"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><span class="nm">${esc(n)}</span>${d.changed ? `<span class="count">${d.changed}</span>` : ''}</div>`)
+      rows.push(`<div class="tnode dir${d.ignored ? ' ignored' : ''}" draggable="true" data-dir="${esc(d.path)}" ${pad(depth)} title="${esc(d.path)}"><span class="tw">${o ? '▾' : '▸'}</span><svg class="i ic" viewBox="0 0 16 16"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><span class="nm">${esc(n)}</span>${d.changed ? `<span class="count">${d.changed}</span>` : ''}</div>`)
       if (o) render(d, depth + 1)
     }
-    for (const p of node.files) {
+    for (const p of [...node.files].sort((a, b) => natural(basename(a), basename(b)))) {
       const c = state.changes.get(p)
-      rows.push(`<div class="tnode ${state.selected === p || open === p ? 'active' : ''}" draggable="true" data-path="${esc(p)}" ${pad(depth)} title="${esc(p)}"><span class="tw"></span><svg class="i ic" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg><span class="nm">${name(basename(p))}</span>${c ? codeTag(c) : ''}</div>`)
+      rows.push(`<div class="tnode ${state.ignoredFiles.has(p) ? 'ignored ' : ''}${state.selected === p || open === p ? 'active' : ''}" draggable="true" data-path="${esc(p)}" ${pad(depth)} title="${esc(p)}"><span class="tw"></span><svg class="i ic" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg><span class="nm">${name(basename(p))}</span>${c ? codeTag(c) : ''}</div>`)
     }
   }
   render(root, 0)
@@ -533,15 +563,20 @@ function paintTreeWindow(force = false) {
 let treeFrame
 $('#tree').addEventListener('scroll', () => { cancelAnimationFrame(treeFrame); treeFrame = requestAnimationFrame(() => paintTreeWindow()) })
 
-function toggleDir(path) {
+async function toggleDir(path) {
   const row = $(`#tree .tnode.dir[data-dir="${CSS.escape(path)}"]`)
-  state.dirOpen.set(path, row?.querySelector('.tw').textContent !== '▾')
+  const open = row?.querySelector('.tw').textContent !== '▾'
+  state.dirOpen.set(path, open)
+  // An ignored folder is listed only when opened, so a huge node_modules costs nothing until asked for.
+  if (open && row.classList.contains('ignored') && !state.ignKids.has(path)) {
+    try { state.ignKids.set(path, await api('/api/tree?dir=' + encodeURIComponent(path))) } catch (e) { setStatus(e.message, 'err') }
+  }
   renderTree()
 }
 
 // One button folds every folder in the tree and unfolds them again. A filter already shows the tree
 // flattened, so there is nothing to fold while one is typed and the button steps out of the way.
-function syncTreeCollapse(root = buildTree(treePaths())) {
+function syncTreeCollapse(root = buildTree(treePaths(), treeExtra())) {
   if (state.rail !== 'files') return
   const b = $('#tree-collapse')
   b.hidden = !!$('#file-filter').value.trim()
@@ -551,7 +586,7 @@ function syncTreeCollapse(root = buildTree(treePaths())) {
 }
 
 $('#tree-collapse').onclick = () => {
-  const dirs = allDirs(buildTree(treePaths()))
+  const dirs = allDirs(buildTree(treePaths(), treeExtra()))
   const open = !dirs.some(d => dirIsOpen(d, false, activeTab()?.path))
   dirs.forEach(d => state.dirOpen.set(d.path, open))
   renderTree()
@@ -2968,14 +3003,14 @@ function toggleGit(open = !gitOpen(), tab = '') {
   if (!open && document.activeElement?.closest('#git-panel')) document.activeElement.blur()
 }
 // Layout settings: the Git panel docked or as a drawer, and which side each panel sits on.
-function applyLayout() {
+function applyLayout(changed = false) {
   const desk = $('.desk'), pinned = gitPinned()
   desk.classList.toggle('pinned', pinned)
   desk.classList.toggle('swap', !!state.config.swapPanels)
   desk.classList.toggle('no-rail', !state.config.showRail)
   document.body.classList.toggle('git-shown-rail', !!state.config.showRail)
-  // Pinning opens the panel; unpinning leaves the review full width.
-  desk.classList.toggle('git-open', pinned)
+  // Choosing pin opens the panel and unpinning closes it; loading the page leaves it collapsed, pinned or not.
+  if (changed) desk.classList.toggle('git-open', pinned)
   $('#git-pin').setAttribute('aria-pressed', pinned)
   $('#git-pin').title = pinned ? 'Unpin: open the Git panel as a drawer' : 'Pin the Git panel beside the review'
   markRail()
@@ -3613,7 +3648,7 @@ const toggleTree = () => $('.desk').classList.toggle('no-tree')
 $('#tree-toggle').onclick = toggleTree
 $('#git-toggle').onclick = () => toggleGit()
 $('#git-close').onclick = () => toggleGit(false)
-$('#git-pin').onclick = () => { saveSetting({ gitPinned: !gitPinned() }); applyLayout() }
+$('#git-pin').onclick = () => { saveSetting({ gitPinned: !gitPinned() }); applyLayout(true) }
 $('#settings-open').onclick = openSettings
 document.querySelector('[data-open-settings]').onclick = openSettings
 $('#settings').addEventListener('click', e => {
@@ -3627,7 +3662,7 @@ $('#settings').addEventListener('click', e => {
   const k = b.dataset.set, v = b.dataset.val
   if (k === 'diffMode') { setDiffMode(v); renderSettings(); return }
   saveSetting({ [k]: v === '1' })
-  applyLayout()
+  applyLayout(k === 'gitPinned')
 })
 $('#settings').addEventListener('change', async e => {
   const el = e.target.closest('[data-cfg]')

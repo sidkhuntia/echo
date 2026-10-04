@@ -321,7 +321,7 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .desk.swap #git-panel { right: auto; left: calc(var(--rail-c) + 8px); transform: translateX(-10px); }
 #git-toggle { position: relative; }
 #git-toggle[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
-#git-toggle .badge { position: absolute; top: -3px; right: -4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: 600 9.5px/15px var(--mono); font-style: normal; text-align: center; }
+#git-toggle .badge { position: absolute; top: -5px; right: -5px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: 600 9.5px/15px var(--mono); font-style: normal; text-align: center; }
 /* The rail shows the badge when it is there, so the title bar does not repeat it. */
 .git-shown-rail #git-toggle .badge { display: none; }
 .desk.git-open #git-panel { visibility: visible; opacity: 1; transform: none; transition: opacity .18s cubic-bezier(.23, 1, .32, 1), transform .18s cubic-bezier(.23, 1, .32, 1); }
@@ -422,6 +422,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .tnode:hover { background: var(--hover); }
 .tnode.active { background: var(--accent-soft); color: var(--fg); }
 .tnode.dir { color: var(--fg); }
+.tnode.ignored { opacity: .5; }
 .tnode .tw { width: 10px; color: var(--faint); font-size: 9px; text-align: center; flex: none; }
 .tnode .ic { color: var(--faint); }
 .tnode .nm { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -1199,8 +1200,8 @@ label.set-row { cursor: pointer; }
 #log-extra .field { height: 24px; }
 
 /* ---------- layout pass: title bar, view menu, commit under the staged list ---------- */
-.tb-group { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; margin: 0 4px; }
-.tb-group .btn { border-radius: 0; border: 0; } .tb-group .btn + .btn { border-left: 1px solid var(--line); }
+.tb-group { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); margin: 0 4px; }
+.tb-group .btn { border-radius: 0; border: 0; } .tb-group .btn:first-child { border-radius: calc(var(--r) - 1px) 0 0 calc(var(--r) - 1px); } .tb-group .btn:last-child { border-radius: 0 calc(var(--r) - 1px) calc(var(--r) - 1px) 0; } .tb-group .btn + .btn { border-left: 1px solid var(--line); }
 #sync { color: var(--muted); } #sync.attn { color: var(--accent); }
 #sync-more { margin-left: -4px; }
 .layout-switch button { padding: 0 8px; }

@@ -220,20 +220,50 @@ func TestDiscardWorktreeKeepsStaged(t *testing.T) {
 	}
 }
 
-func TestTreeSkipsIgnoredFiles(t *testing.T) {
+func TestTreeShowsDotfilesEmptyAndIgnored(t *testing.T) {
 	a := testRepo(t)
-	for name, content := range map[string]string{".gitignore": "data/\n", "data/blob.bin": "x", "src/Main.java": "class Main {}\n"} {
+	for name, content := range map[string]string{".gitignore": "data/\n.env\n", "data/blob.bin": "x", ".env": "S=1\n", ".github/ci.yml": "a: 1\n", "src/Main.java": "class Main {}\n"} {
 		os.MkdirAll(filepath.Join(a.root, filepath.Dir(name)), 0o755)
 		if err := os.WriteFile(filepath.Join(a.root, name), []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	var got []string
+	os.MkdirAll(filepath.Join(a.root, "src", "empty"), 0o755)
+	got := map[string]TreeNode{}
 	for _, n := range a.tree() {
-		got = append(got, n.Path)
+		got[n.Path] = n
 	}
-	if want := "agent.txt keep.txt src/Main.java"; strings.Join(got, " ") != want {
-		t.Errorf("tree = %v, want %s", got, want)
+	for _, p := range []string{"agent.txt", "keep.txt", "src/Main.java", ".gitignore", ".github/ci.yml"} {
+		if n, ok := got[p]; !ok || n.Dir || n.Ignored {
+			t.Errorf("%s should be a plain file: %+v", p, n)
+		}
+	}
+	if n := got["src/empty"]; !n.Dir || n.Ignored {
+		t.Errorf("src/empty = %+v, want an empty folder", n)
+	}
+	if n := got["data"]; !n.Dir || !n.Ignored {
+		t.Errorf("data = %+v, want an ignored folder", n)
+	}
+	if n := got[".env"]; n.Dir || !n.Ignored {
+		t.Errorf(".env = %+v, want an ignored file", n)
+	}
+	if _, ok := got["data/blob.bin"]; ok {
+		t.Error("an ignored folder is listed, not descended")
+	}
+	for p := range got {
+		if inGitDir(p) {
+			t.Errorf(".git leaked into the tree: %s", p)
+		}
+	}
+	kids, err := a.listDir("data")
+	if err != nil || len(kids) != 1 || kids[0].Path != "data/blob.bin" {
+		t.Errorf("listDir(data) = %+v, %v", kids, err)
+	}
+	if _, err := a.listDir(".git"); err == nil {
+		t.Error("listDir must refuse .git")
+	}
+	if _, err := a.listDir("../x"); err == nil {
+		t.Error("listDir must refuse paths outside the repository")
 	}
 }
 

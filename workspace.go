@@ -62,7 +62,7 @@ func discoverRepos(dir string, depth int) []string {
 	}
 	var out []string
 	for _, e := range ents {
-		if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 || skipDir(e.Name()) {
+		if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 || strings.HasPrefix(e.Name(), ".") || skipDir(e.Name()) {
 			continue
 		}
 		p := filepath.Join(dir, e.Name())

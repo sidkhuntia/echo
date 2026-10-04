@@ -625,3 +625,9 @@ The trigger: a folder such as `EH-Provider-Portal` that is not a repository but 
 - **Accepted:** Review's scope is All (HEAD to working tree, the default), Unstaged or Staged, as a switch. "Compare refs" and "One commit" are no longer choices: they are reached from the Log, History and Compare, and show as a chip with a way back. The hidden `#diff-scope` select still holds the value, so session restore and every caller work as before.
 - **Accepted:** the review's filter box lives in the toolbar row, not a second row of its own, to give the diff the height. The editor's secondary actions are one menu; Save shows only when there is something to save.
 
+### 22d. Files tree shows everything on disk (2026-10-04)
+
+- **Accepted:** the tree shows dotfiles and empty folders, and orders names numerically (`Intl.Collator` with `numeric`), because migration scripts (`V2` before `V10`) were unreadable in byte order. Only `.git` is hidden.
+- **Accepted:** ignored files and folders are listed, dimmed, and never descended. `/api/tree` marks them `ignored`; an ignored folder's entries come from `/api/tree?dir=` when the user opens it (cap 5,000 entries, symlinked folders skipped, `.git` refused). This is px0's approach (list ignored, index only what Git tracks, load a folder on demand). Search, quick open and the review keep using plain files only.
+- **Accepted:** empty folders are found by one walk that skips `.git`, symlinks and ignored folders, bounded at 100,000 folders. Outside Git, the old skip list (`node_modules`, `dist`, `build`, `.cache`, `.next`) becomes ignored folders the same way.
+- **Not taken from px0:** a per-folder index for the whole tree. echo's flat file list already feeds filter, quick open and file operations, and the rows are windowed.

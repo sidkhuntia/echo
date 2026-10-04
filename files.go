@@ -41,15 +41,33 @@ type TreeNode struct {
 	Name     string     `json:"name"`
 	Path     string     `json:"path"`
 	Dir      bool       `json:"dir"`
+	Ignored  bool       `json:"ignored,omitempty"`
 	Children []TreeNode `json:"children,omitempty"`
 }
 
+// maxTreeDirs bounds the walk that looks for empty folders; maxDirEntries bounds one folder listing.
+const (
+	maxTreeDirs   = 100000
+	maxDirEntries = 5000
+)
+
+// handleTree lists the whole tree, or with ?dir= the entries of one folder (how an ignored folder opens).
 func (a *App) handleTree(w http.ResponseWriter, r *http.Request) {
+	if dir := strings.Trim(r.URL.Query().Get("dir"), "/"); dir != "" {
+		kids, err := a.listDir(dir)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, kids)
+		return
+	}
 	writeJSON(w, a.tree())
 }
 
-// tree lists the repository's files. In a Git repository it asks Git, so ignored files
-// (build output, local data) stay out and cannot crowd real sources past the browser's cap.
+// tree lists the repository's files, plus the folders a file list cannot show: empty ones, and
+// ignored ones (build output, dependencies), which are listed but not descended. Ignored top-level
+// files come with ignored set. Dotfiles are files like any other; only .git is left out.
 func (a *App) tree() []TreeNode {
 	if !a.noGit {
 		if out, err := a.gitTree(); err == nil {
@@ -57,28 +75,38 @@ func (a *App) tree() []TreeNode {
 		}
 	}
 	var out []TreeNode
-	_ = filepath.WalkDir(a.root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
+	_ = filepath.WalkDir(a.root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || p == a.root {
 			return nil
 		}
-		if path == a.root {
-			return nil
-		}
-		rel, _ := filepath.Rel(a.root, path)
-		if skipDir(d.Name()) && d.IsDir() || d.IsDir() && a.skipRel != nil && a.skipRel(filepath.ToSlash(rel)) {
+		rel, _ := filepath.Rel(a.root, p)
+		rel = filepath.ToSlash(rel)
+		if d.Name() == ".git" || d.Type()&fs.ModeSymlink != 0 && d.IsDir() {
 			return filepath.SkipDir
 		}
-		if strings.HasPrefix(rel, ".") && !d.IsDir() {
-			return nil
-		}
 		if d.IsDir() {
+			if a.skipRel != nil && a.skipRel(rel) {
+				return filepath.SkipDir
+			}
+			if skipDir(d.Name()) {
+				out = append(out, TreeNode{Name: d.Name(), Path: rel, Dir: true, Ignored: true})
+				return filepath.SkipDir
+			}
+			if empty, _ := isEmptyDir(p); empty {
+				out = append(out, TreeNode{Name: d.Name(), Path: rel, Dir: true})
+			}
 			return nil
 		}
-		out = append(out, TreeNode{Name: d.Name(), Path: filepath.ToSlash(rel)})
+		out = append(out, TreeNode{Name: d.Name(), Path: rel})
 		return nil
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+func isEmptyDir(p string) (bool, error) {
+	ents, err := os.ReadDir(p)
+	return len(ents) == 0, err
 }
 
 func (a *App) gitTree() ([]TreeNode, error) {
@@ -87,9 +115,15 @@ func (a *App) gitTree() ([]TreeNode, error) {
 		return nil, err
 	}
 	seen := map[string]bool{}
+	has := map[string]bool{} // folders that hold a file, so they are not "empty"
 	var out []TreeNode
+	mark := func(rel string) {
+		for d := path.Dir(rel); d != "." && !has[d]; d = path.Dir(d) {
+			has[d] = true
+		}
+	}
 	for _, rel := range strings.Split(list, "\x00") {
-		if rel == "" || seen[rel] || skipPath(rel) {
+		if rel == "" || seen[rel] || inGitDir(rel) {
 			continue
 		}
 		seen[rel] = true
@@ -98,26 +132,79 @@ func (a *App) gitTree() ([]TreeNode, error) {
 			continue
 		}
 		out = append(out, TreeNode{Name: path.Base(rel), Path: rel})
+		mark(rel)
 	}
+	// Ignored entries: --directory collapses a wholly ignored folder to one "dir/" line.
+	ignored := map[string]bool{}
+	if ign, err := a.git("ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"); err == nil {
+		for _, rel := range strings.Split(ign, "\x00") {
+			isDir := strings.HasSuffix(rel, "/")
+			rel = strings.TrimSuffix(rel, "/")
+			if rel == "" || inGitDir(rel) || seen[rel] {
+				continue
+			}
+			seen[rel] = true
+			ignored[rel] = true
+			out = append(out, TreeNode{Name: path.Base(rel), Path: rel, Dir: isDir, Ignored: true})
+			mark(rel)
+		}
+	}
+	// Empty folders: Git does not track them, so look on disk, never entering an ignored folder.
+	dirs := 0
+	var walk func(rel string)
+	walk = func(rel string) {
+		ents, err := os.ReadDir(filepath.Join(a.root, filepath.FromSlash(rel)))
+		if err != nil {
+			return
+		}
+		for _, e := range ents {
+			if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 || e.Name() == ".git" || dirs >= maxTreeDirs {
+				continue
+			}
+			sub := path.Join(rel, e.Name())
+			if ignored[sub] || a.skipRel != nil && a.skipRel(sub) {
+				continue
+			}
+			dirs++
+			walk(sub)
+		}
+		if rel != "" && !has[rel] && len(ents) == 0 {
+			out = append(out, TreeNode{Name: path.Base(rel), Path: rel, Dir: true})
+		}
+	}
+	walk("")
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
 }
 
-// skipPath applies the walk's rules to a slash path: no skipped directories, no hidden files.
-func skipPath(rel string) bool {
-	parts := strings.Split(rel, "/")
-	for _, dir := range parts[:len(parts)-1] {
-		if skipDir(dir) {
-			return true
-		}
+// listDir lists one folder's entries as ignored nodes: the folder is only asked for when it is
+// ignored (or skipped), since the main tree already holds everything else.
+func (a *App) listDir(rel string) ([]TreeNode, error) {
+	if inGitDir(rel) {
+		return nil, errors.New("the .git directory cannot be listed")
 	}
-	return strings.HasPrefix(rel, ".")
+	p, err := a.safeContent(rel)
+	if err != nil {
+		return nil, err
+	}
+	ents, err := os.ReadDir(p)
+	if err != nil {
+		return nil, err
+	}
+	out := []TreeNode{}
+	for _, e := range ents {
+		if e.Name() == ".git" || e.IsDir() && e.Type()&fs.ModeSymlink != 0 {
+			continue
+		}
+		if len(out) >= maxDirEntries {
+			break
+		}
+		out = append(out, TreeNode{Name: e.Name(), Path: path.Join(rel, e.Name()), Dir: e.IsDir(), Ignored: true})
+	}
+	return out, nil
 }
 
 func skipDir(name string) bool {
-	if strings.HasPrefix(name, ".") {
-		return true
-	}
 	switch name {
 	case "node_modules", "dist", "build", ".cache", ".next":
 		return true
