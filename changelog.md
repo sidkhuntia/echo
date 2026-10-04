@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 (2026-10-04)
 
+- A small button in the title bar opens the repository's remote page (GitHub, GitLab or Bitbucket; `origin` first) in a new browser tab. It is hidden when no remote has a web page.
 - History: an open commit now shows its full subject at the top of its details, at once and before the details load. The row clips a long subject to one line, and the detail used to show only the body, so a long message could not be read anywhere.
 - Review: going from Files back to Hunks restores each file's normal hunks. A file viewed whole in Files kept its whole-file context, so Hunks showed it as one big hunk.
 

@@ -2125,6 +2125,12 @@ function renderGit() {
   $('#repo-name').textContent = s.root ? basename(s.root) : ''
   document.title = s.root ? `${basename(s.root)} — ${s.branch || 'echo'}` : 'echo'
   renderTracking()
+  G.remotes().then(list => {
+    const web = (list.find(r => r.name === 'origin' && r.web) || list.find(r => r.web))?.web
+    const a = $('#remote-open')
+    a.hidden = !web
+    if (web) a.href = web
+  })
   const keep = $('#branch-select').value
   const local = new Map((s.local || []).map(b => [b.name, b]))
   $('#branch-select').innerHTML = (s.branches || []).map(b => `<option value="${esc(b)}" ${b === (keep || s.branch) ? 'selected' : ''}>${esc(b)}${counts(local.get(b))}</option>`).join('')
