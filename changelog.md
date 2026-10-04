@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- History: an open commit now shows its full subject at the top of its details, at once and before the details load. The row clips a long subject to one line, and the detail used to show only the body, so a long message could not be read anywhere.
+- Review: going from Files back to Hunks restores each file's normal hunks. A file viewed whole in Files kept its whole-file context, so Hunks showed it as one big hunk.
+
 ## 0.3.0 (2026-10-04)
 
 - The status poll and the file tree load faster. Git's independent calls (branch, status, and the three line-count diffs; the two file listings) now run at the same time instead of one after another. Same results; on a repository with 400 changes the status went from about 260 ms to 140 ms.

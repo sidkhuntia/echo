@@ -814,6 +814,7 @@ async function wholeFile(i) {
     const nf = parseDiff((await api('/api/diff?' + p)).text)[0]
     if (!nf || state.diffFiles[i]?.path !== f.path) return
     nf.ctx = 100000
+    nf.compact = f.compact || f
     state.diffFiles[i] = nf
     const j = state.diffAll.findIndex(x => x.path === f.path)
     if (j >= 0) state.diffAll[j] = nf
@@ -852,6 +853,12 @@ function setFileView(on) {
   document.querySelectorAll('#view-seg button').forEach(b => b.classList.toggle('on', (b.dataset.view === 'file') === on))
   const at = state.diffFiles[state.current]?.path || state.filePath
   if (on && at) state.filePath = at
+  // Files that were fetched whole go back to their normal hunks, or Hunks would show them as one big hunk.
+  if (!on) {
+    const back = f => f.compact || f
+    state.diffFiles = state.diffFiles.map(back)
+    if (state.diffAll) state.diffAll = state.diffAll.map(back)
+  }
   if (state.diffFiles.length) {
     renderDiff()
     if (!on && at) { const i = state.diffFiles.findIndex(f => f.path === at); if (i >= 0) goFile(i) }
@@ -2532,7 +2539,7 @@ function renderLogSide() {
       <span class="c-graph">${graphSVG(L.rows[i], HIST_H, w)}</span>
       <div class="c-main"><div class="c-subject">${refChips(c.refs)}${esc(c.subject)}</div>
       <div class="c-meta">${pushMark(c)}<b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time">${ago(c.time)}</span></div></div>
-    </div>${c.hash === L.sel ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(L.rows[i].after, w)}</span><div class="c-dbody">${detailHTML(c.hash)}</div></div>` : ''}`).join('')
+    </div>${c.hash === L.sel ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(L.rows[i].after, w)}</span><div class="c-dbody">${historyDetailHTML(c.hash)}</div></div>` : ''}`).join('')
   view.querySelector('.commit-row.open')?.scrollIntoView({ block: 'nearest' })
 }
 const showLogSide = () => { if (state.log.commits.length) setRail('logside') }
@@ -2595,9 +2602,15 @@ function renderHistory() {
       <span class="c-graph">${graphSVG(rows[i], HIST_H, w)}</span>
       <div class="c-main"><div class="c-subject">${refChips(c.refs)}${esc(c.subject)}</div>
       <div class="c-meta">${pushMark(c)}<b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div></div>
-    </div>${c.hash === state.expanded ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(rows[i].after, w)}</span><div class="c-dbody">${detailHTML(c.hash)}</div></div>` : ''}`).join('')
+    </div>${c.hash === state.expanded ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(rows[i].after, w)}</span><div class="c-dbody">${historyDetailHTML(c.hash)}</div></div>` : ''}`).join('')
     || `<div class="list-row muted"><span>${state.hist.error ? `Couldn’t load history (${esc(state.hist.error)}). Retrying…` : 'No commits yet'}</span></div>`
   renderHistoryCurrent()
+}
+
+// The History row clips a long subject to one line, so the open detail repeats it in full, before anything loads.
+function historyDetailHTML(hash) {
+  const c = state.hist.commits.find(c => c.hash === hash)
+  return `${c ? `<div class="c-subj">${esc(c.subject)}</div>` : ''}${detailHTML(hash)}`
 }
 
 function detailHTML(hash) {
@@ -2666,7 +2679,7 @@ async function loadDetail(hash) {
 
 function paintDetail(hash) {
   const el = $(`#history .commit-row[data-hash="${CSS.escape(hash)}"] + .c-detail .c-dbody`)
-  if (el) el.innerHTML = detailHTML(hash)
+  if (el) el.innerHTML = historyDetailHTML(hash)
   const side = $(`#log-side .commit-row[data-hash="${CSS.escape(hash)}"] + .c-detail .c-dbody`)
   if (side) side.innerHTML = detailHTML(hash)
   if (state.log.sel === hash) paintLogDetail()
