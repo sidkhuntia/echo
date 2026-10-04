@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The commit button's menu (Amend, Undo) opens upward when there is no room below it, so it is no longer cut off at the bottom of the window.
+
 - The Git panel starts collapsed even when pinned (pinning docks it as a column; the title-bar button or ⌘J opens it). The staged-count badge on its button is no longer clipped by the button group's border.
 
 ### Review: Files view

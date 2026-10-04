@@ -2057,8 +2057,10 @@ function toggleCommitMenu(open) {
   m.hidden = !open
   if (!open) return
   const r = $('#commit-more').getBoundingClientRect()
-  m.style.left = Math.max(8, r.right - m.offsetWidth) + 'px'
-  m.style.top = r.bottom + 4 + 'px'
+  m.style.left = Math.max(8, Math.min(r.right - m.offsetWidth, innerWidth - m.offsetWidth - 8)) + 'px'
+  // Below the button when it fits, else above it, and never past the top of the window.
+  const h = m.offsetHeight, below = r.bottom + 4
+  m.style.top = Math.max(8, below + h > innerHeight - 8 ? r.top - 4 - h : below) + 'px'
   m.querySelector('.menu-item')?.focus()
 }
 
