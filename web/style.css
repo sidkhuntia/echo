@@ -1099,8 +1099,6 @@ label.set-row { cursor: pointer; }
 .insp[data-insp="tools"] [data-for="commit"], .insp[data-insp="tools"] [data-for="history"] { display: none; }
 .insp[data-insp="tools"] [data-for="tools"] { border: 0; }
 .commit-extras { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
-.commit-extras .field { flex: 1; min-width: 120px; height: 24px; }
-.commit-extras .check { font-size: 12px; color: var(--fg-2); display: inline-flex; gap: 4px; align-items: center; }
 .meter { font: 11px var(--mono); color: var(--muted); min-width: 70px; }
 .meter.warn { color: var(--warn); } .meter.bad { color: var(--del); }
 .git-out { margin-top: 6px; font-size: 12px; }

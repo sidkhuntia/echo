@@ -4,15 +4,11 @@ import { ctx } from './ctx.js'
 import { openModal, popMenu } from './ui.js'
 
 const c = () => ctx
-const store = {
-  get: k => { try { return localStorage.getItem('echo:' + k) } catch { return null } },
-  set: (k, v) => { try { localStorage.setItem('echo:' + k, v) } catch {} },
-}
 
 // ---------- commit box: options, meter, template, output ----------
+// Sign off and Co-author were removed from the commit box; commits go without trailers.
 export function commitOpts() {
-  const co = c().$('#opt-coauthor').value.split(/[,\n]/).map(s => s.trim()).filter(Boolean)
-  return { signoff: c().$('#opt-signoff').checked, coAuthors: co }
+  return { signoff: false, coAuthors: [] }
 }
 
 function meter() {
@@ -264,11 +260,6 @@ export function pushMenuHTML() {
 export function init() {
   const box = c().$('#commit-message')
   box.addEventListener('input', meter)
-  const so = c().$('#opt-signoff'), co = c().$('#opt-coauthor')
-  so.checked = store.get('signoff') === '1'
-  co.value = store.get('coauthor') || ''
-  so.onchange = () => store.set('signoff', so.checked ? '1' : '0')
-  co.oninput = () => store.set('coauthor', co.value)
   meter()
   loadTemplate()
   c().$('#pull-more')?.addEventListener('click', e => { e.stopPropagation(); togglePullMenu(c().$('#pull-menu').hidden) })

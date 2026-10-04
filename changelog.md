@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Removed Sign off and Co-author from the commit box. Commits go without trailers; the message length meter stays.
+- The Git panel always starts collapsed. Only opening it yourself (the rail, ⌘J, or the title-bar button) shows it; the session no longer restores it open.
+
 - Merge and Rebase open one dialog instead of acting at once. It says the direction ("From `feature` into `main`, the branch you are on"), lets you change the source branch and switch between Merge and Rebase, and previews the result before you confirm: how many commits come in (with their subjects), whether a merge can fast-forward or will create a merge commit, how many of your own commits a rebase would replay, and a warning when files have uncommitted changes. The confirm button names the action ("Merge feature into main"), and is disabled when there is nothing to bring in. Merge keeps its fast-forward / always a merge commit / squash choices. The branch menu's "Merge into…" and "Rebase … onto this…" open the same dialog. New read-only endpoint `/api/git/relation?from=`.
 - Amend works in one step, like `git commit --amend`: choosing "Amend last commit (edit message)" fills the box with the last message and turns the commit button into "Amend last commit + N staged files"; one press adds the staged changes (unstaged ones stay out) and rewrites the message. "Cancel amend" in the same menu backs out. Before, the menu item had to be chosen a second time.
 - The commit button's menu (Amend, Undo) opens upward when there is no room below it, so it is no longer cut off at the bottom of the window.

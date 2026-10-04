@@ -4065,7 +4065,7 @@ function snapshotSession() {
   const L = state.log, sec = state.mode === 'log' && state.railBeforeLog ? state.railBeforeLog : state.rail
   return [kept, {
     v: 1, t: Date.now(), root: state.status?.root || '',
-    mode: state.mode, rail: sec, insp: $('#insp').dataset.insp, drawer: gitOpen() && !gitPinned(),
+    mode: state.mode, rail: sec, insp: $('#insp').dataset.insp, drawer: false,
     scope: scope(), from: $('#diff-from').value, to: $('#diff-to').value, commit: $('#diff-commit').value, full: state.commit,
     ws: $('#ignore-ws').checked, dots: state.rangeDots,
     tabs, active: editing ? activeTab().path : state.tabs[state.active]?.path || '', selected: state.selected,
@@ -4168,8 +4168,7 @@ async function restoreView(s) {
   }
   setRail(document.querySelector(`.rail-switch [data-rail="${s.rail}"]`) && s.rail !== 'logside' ? s.rail : state.rail)
   if (document.querySelector(`.insp-switch [data-insp="${s.insp}"]`)) setInspector(s.insp)
-  // Applied after the config, which decides whether the drawer is pinned open.
-  if (s.drawer && !gitPinned()) { $('.desk').classList.add('git-open'); markRail() }
+  // The Git panel always starts collapsed; only an explicit open (rail, ⌘J, title bar) shows it.
   const mode = s.mode === 'file' && !activeTab() ? 'diff' : s.mode
   if (['file', 'log'].includes(mode)) await setMode(mode)
   renderTabs(); renderTree(); renderQueue()
