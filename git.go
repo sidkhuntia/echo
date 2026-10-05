@@ -98,6 +98,8 @@ type Branch struct {
 	Ahead    int    `json:"ahead"`
 	Behind   int    `json:"behind"`
 	Gone     bool   `json:"gone,omitempty"`
+	// Merged: every commit of the branch is already in the checked-out one, so deleting it loses nothing.
+	Merged bool `json:"merged,omitempty"`
 }
 
 type GitStatus struct {
@@ -108,9 +110,11 @@ type GitStatus struct {
 	Tracking *Branch  `json:"tracking,omitempty"`
 	Local    []Branch `json:"local"`
 	// Remote holds remote-tracking branches ("origin/main", without origin/HEAD); Tags holds tag names.
-	Remote  []string `json:"remote"`
-	Tags    []string `json:"tags"`
-	Remotes []string `json:"remotes"`
+	Remote []string `json:"remote"`
+	// RemoteMerged is the part of Remote already merged into the checked-out branch (see parseMergedRemotes).
+	RemoteMerged []string `json:"remoteMerged"`
+	Tags         []string `json:"tags"`
+	Remotes      []string `json:"remotes"`
 	// FetchedAt is the Unix time of the last fetch (FETCH_HEAD's mtime), 0 if never.
 	FetchedAt int64    `json:"fetchedAt"`
 	Changes   []Change `json:"changes"`
@@ -1150,17 +1154,18 @@ const logFormat = "--format=%H%x1f%h%x1f%P%x1f%D%x1f%aN%x1f%at%x1f%s%x1e"
 // refsPart is the half of the status that only changes when a ref, the stash, the remotes or the
 // config change. It is recomputed only when refsStamp says one did, instead of on every poll.
 type refsPart struct {
-	stamp       string
-	head        string
-	refsSig     string
-	branches    []string
-	stashes     []Stash
-	local       []Branch
-	remotes     []string
-	remote      []string
-	tags        []string
-	fetchedAt   int64
-	lastDiscard *DiscardInfo
+	stamp        string
+	head         string
+	refsSig      string
+	branches     []string
+	stashes      []Stash
+	local        []Branch
+	remotes      []string
+	remote       []string
+	remoteMerged []string
+	tags         []string
+	fetchedAt    int64
+	lastDiscard  *DiscardInfo
 }
 
 func (a *App) fillRefs(status *GitStatus) {
@@ -1174,6 +1179,7 @@ func (a *App) fillRefs(status *GitStatus) {
 	p := &a.refs
 	status.Head, status.RefsSig, status.Branches, status.Stashes = p.head, p.refsSig, p.branches, p.stashes
 	status.Remotes, status.Remote, status.Tags, status.FetchedAt = p.remotes, p.remote, p.tags, p.fetchedAt
+	status.RemoteMerged = p.remoteMerged
 	status.LastDiscard = p.lastDiscard
 	status.Local = append([]Branch(nil), p.local...)
 	for i := range status.Local {
@@ -1199,6 +1205,9 @@ func (a *App) computeRefs() refsPart {
 	}
 	if out, err := a.git("for-each-ref", "--format=%(refname:short)%09%(upstream:short)%09%(upstream:track,nobracket)", "refs/heads"); err == nil {
 		p.local = parseBranches(out)
+		if m, err := a.git("for-each-ref", "--merged", "HEAD", "--format=%(HEAD)%(refname:short)", "refs/heads"); err == nil {
+			markMerged(p.local, m)
+		}
 	}
 	if out, err := a.git("remote"); err == nil {
 		p.remotes = parseLines(out)
@@ -1207,6 +1216,11 @@ func (a *App) computeRefs() refsPart {
 	if out, err := a.git("for-each-ref", "--format=%(refname)", "refs/remotes", "refs/tags"); err == nil {
 		c := parseContains(out)
 		p.remote, p.tags = c.Remotes, c.Tags
+	}
+	p.remoteMerged = []string{}
+	if out, err := a.git("for-each-ref", "--merged", "HEAD", "--format=%(refname)%09%(symref)", "refs/remotes"); err == nil {
+		up, _ := a.git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+		p.remoteMerged = parseMergedRemotes(out, strings.TrimSpace(up))
 	}
 	if info, err := os.Stat(filepath.Join(a.commonDir(), "FETCH_HEAD")); err == nil {
 		p.fetchedAt = info.ModTime().Unix()

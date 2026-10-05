@@ -167,6 +167,7 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .track { display: inline-flex; gap: 6px; font: 600 11.5px/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .track .in { color: var(--info); }
 .track .out { color: var(--add); }
+.merged { font: 500 10.5px/1 var(--sans); color: var(--faint); border: 1px solid currentColor; border-radius: 8px; padding: 1px 5px; opacity: .75; white-space: nowrap; }
 .track .gone { color: var(--warn); font: 500 11.5px/1 var(--sans); }
 .crumbs .net { flex: none; gap: 5px; }
 .crumbs .net .i { width: 13px; height: 13px; }
@@ -177,7 +178,8 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .net.busy::before { content: ""; flex: none; width: 10px; height: 10px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
 .btn.search { gap: 6px; margin-right: 4px; border: 1px solid var(--line); }
 .btn.search kbd { border: 0; padding: 0; opacity: 1; font-size: 11px; }
-.tb-right { display: flex; justify-content: flex-end; align-items: center; gap: 2px; }
+/* Column 3 even when the trace (column 2) is switched off in Settings. */
+.tb-right { grid-column: 3; display: flex; justify-content: flex-end; align-items: center; gap: 2px; }
 
 /* change trace: one segment per changed file, one tick per hunk; additions rise above the baseline,
    deletions drop below it. The playhead is the current hunk. */

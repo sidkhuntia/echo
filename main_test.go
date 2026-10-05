@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1431,5 +1432,21 @@ func TestRelationPreviewsMergeAndRebase(t *testing.T) {
 	}
 	if _, err := a.relation("nope"); err == nil {
 		t.Error("an unknown ref must be refused")
+	}
+}
+
+func TestParseMergedRemotes(t *testing.T) {
+	in := "refs/remotes/origin/HEAD\trefs/remotes/origin/main\nrefs/remotes/origin/main\t\nrefs/remotes/origin/feat/a\t\nrefs/remotes/origin/mine\t\nrefs/remotes/up/old\t\n"
+	got := parseMergedRemotes(in, "origin/mine")
+	if want := []string{"origin/feat/a", "up/old"}; !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v (the default branch, the HEAD alias and the upstream are never offered)", got, want)
+	}
+}
+
+func TestMarkMerged(t *testing.T) {
+	bs := []Branch{{Name: "main"}, {Name: "feat/a"}, {Name: "wip"}}
+	markMerged(bs, "*main\n feat/a\n")
+	if bs[0].Merged || !bs[1].Merged || bs[2].Merged {
+		t.Fatalf("got %+v", bs)
 	}
 }

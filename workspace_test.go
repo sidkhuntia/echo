@@ -312,3 +312,11 @@ func TestWorkspaceBarDefaultsOn(t *testing.T) {
 		t.Error("the repository bar should be shown unless turned off")
 	}
 }
+
+func TestTraceDefaultsOn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if !loadConfig().Trace {
+		t.Error("the change trace should be shown unless turned off")
+	}
+}

@@ -880,6 +880,8 @@ const fullyStaged = f => { const c = scope() === 'head' && state.changes.get(f.p
 
 function renderTrace() {
   const files = state.diffFiles, box = $('#trace')
+  box.hidden = state.config.trace === false
+  if (box.hidden) { box.innerHTML = ''; return }
   box.classList.toggle('idle', !files.length)
   if (!files.length) { box.innerHTML = ''; return }
   const added = files.reduce((s, f) => s + f.added, 0), deleted = files.reduce((s, f) => s + f.deleted, 0)
@@ -2164,6 +2166,8 @@ const ICONS = {
 }
 
 const trackHTML = b => b && !b.gone && (b.ahead || b.behind) ? `<span class="track">${b.behind ? `<span class="in">↓${b.behind}</span>` : ''}${b.ahead ? `<span class="out">↑${b.ahead}</span>` : ''}</span>` : b?.gone ? '<span class="track"><span class="gone">gone</span></span>' : ''
+const mergedHTML = b => b?.merged ? '<span class="merged" title="Merged into the current branch: safe to delete">merged</span>' : ''
+const remoteMergedHTML = (s, ref) => s.remoteMerged?.includes(ref) ? '<span class="merged" title="Merged into the current branch: safe to delete from the remote">merged</span>' : ''
 
 function renderBranches() {
   if (state.rail !== 'branches') return
@@ -2181,7 +2185,7 @@ function renderBranches() {
         h += `<div class="tnode dir" data-bdir="${esc(key + ':' + dir.path)}" style="padding-left:${6 + d * 14}px"><span class="tw">${open ? '▾' : '▸'}</span>${ICONS.dir}<span class="nm">${esc(n)}</span></div>`
         if (open) h += render(dir, d + 1)
       }
-      for (const p of node.files) h += row(p, kind, basename(p), d, kind === 'local' ? trackHTML(local.get(p)) : '')
+      for (const p of node.files) h += row(p, kind, basename(p), d, kind === 'local' ? trackHTML(local.get(p)) + mergedHTML(local.get(p)) : kind === 'remote' ? remoteMergedHTML(s, p) : '')
       return h
     }
     return render(buildTree(names.filter(match)), depth)
@@ -2302,8 +2306,8 @@ function renderBranchPop() {
   const local = (s.local || []).filter(b => match(b.name))
   const remote = (s.remote || []).filter(match)
   const tags = (s.tags || []).filter(match)
-  $('#branch-list').innerHTML = sec('Local', local.map(b => item(b.name, 'local', trackHTML(b))))
-    + sec('Remote', remote.slice(0, 50).map(r => item(r, 'remote')), Math.max(0, remote.length - 50))
+  $('#branch-list').innerHTML = sec('Local', local.map(b => item(b.name, 'local', trackHTML(b) + mergedHTML(b))))
+    + sec('Remote', remote.slice(0, 50).map(r => item(r, 'remote', remoteMergedHTML(s, r))), Math.max(0, remote.length - 50))
     + sec('Tags', tags.slice(0, 30).map(t => item(t, 'tag')), Math.max(0, tags.length - 30))
     || '<div class="bp-more faint">No branch or tag matches.</div>'
 }
@@ -3760,6 +3764,7 @@ $('#settings').addEventListener('change', async e => {
   let v = el.type === 'checkbox' ? el.checked : el.dataset.type === 'int' ? Math.round(Number(el.value) || 0) : el.value
   await saveSetting({ [key]: v })
   ctx.onConfig?.(key)
+  if (key === 'trace') renderTrace()
   if (key === 'renames' || key === 'wordDiff') {
     for (const f of state.diffAll || []) for (const h of f.hunks) h.colored = false
     loadDiff()

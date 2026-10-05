@@ -658,3 +658,13 @@ Every repository page asks `/ws/repos` on load for the chip bar, and that runs `
 - **Accepted:** `ls`, `open`, `stop`, `stop --all` and `update` (`cli.go`). They reuse the instance scan and `/api/shutdown` the switcher already uses, so there is no new server surface. A target is a port or a repository path; no argument means the current folder.
 - **Accepted:** `update` compares the latest release tag (read from the `/releases/latest` redirect, as `install.sh` does) with the running version. A binary under a Homebrew `Cellar` is upgraded with `brew upgrade`; any other is replaced by `install.sh` run with `INSTALL_DIR` set to the binary's folder. No in-process binary replacement.
 - **Not taken:** a version check on every launch.
+
+### 22j. Merged branches are marked (2026-10-04)
+
+Local branches reachable from `HEAD` (`for-each-ref --merged HEAD`) get `merged: true` and a "merged" chip in the Branches rail and picker, so stale ones are easy to spot. The checked-out branch is never marked. A branch with no commits of its own also counts as merged, which matches what `git branch -d` allows.
+
+### 22k. Merged remote branches, and a setting for the change trace (2026-10-05)
+
+- **Accepted:** `for-each-ref --merged HEAD refs/remotes` feeds `remoteMerged` in the status (a list of names beside `remote`, so `remote` stays plain strings), and the Branches rail and picker show the same "merged" chip on those rows. It is computed with the rest of `refsPart`, so it costs nothing on a poll that moved no ref, and it is as fresh as the last fetch. This reverses the "local only" line in 22j: the marker only informs; the delete is still a confirmed push (`git push <remote> --delete`).
+- **Default:** never marked, because they are merged into almost any branch and deleting them is not cleanup: each remote's HEAD alias and the branch it points to (the default branch), and the checked-out branch's upstream (`@{upstream}`). Squash-merged branches are not detected, as with local ones.
+- **Accepted:** `trace` in the config (default on) hides the change trace from the title bar; Settings → Review has the toggle. Off, the strip, the file count and +/− totals, and the staged count are not drawn; the title bar keeps its layout (the right-hand buttons stay in their column).

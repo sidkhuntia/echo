@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0 (2026-10-05)
+
+- Branches already merged into the checked-out branch carry a `merged` marker in the Branches rail and the branch picker; deleting them loses nothing. The checked-out branch itself is never marked.
+- Remote branches get the same `merged` marker when the remote-tracking branch is already merged into the checked-out branch. Each remote's default branch (what `origin/HEAD` points to) and the checked-out branch's own upstream are never marked, since deleting those is not cleanup. The marker reflects the last fetch.
+- Settings → Review → **Change trace**: turns the title bar's per-file, per-hunk chart on or off (on by default). Off frees the title bar; the file count, +/− totals and staged count go with it.
+
 ## 0.4.0 (2026-10-04)
 
 - Command-line subcommands manage running servers without a browser tab: `echo-desk ls` (port, branch, changes, path), `echo-desk open [path|port]`, `echo-desk stop [path|port]` (default: the current folder), `echo-desk stop --all`, and `echo-desk update` (Homebrew's `brew upgrade` when it installed the binary, otherwise the install script into the binary's own folder; running servers keep the old version until restarted). A folder named like a subcommand is still reachable as `./ls`.

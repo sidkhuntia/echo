@@ -101,6 +101,8 @@ type Config struct {
 	ShowRail bool `json:"showRail"`
 	// WorkspaceBar shows the row of repository chips under the title bar in a workspace. On by default.
 	WorkspaceBar bool `json:"workspaceBar"`
+	// Trace shows the change trace (the per-file, per-hunk chart) in the title bar. On by default.
+	Trace bool `json:"trace"`
 	// Review: rename detection in diffs, and marking the changed words inside a changed line.
 	Renames  bool `json:"renames"`
 	WordDiff bool `json:"wordDiff"`
@@ -699,7 +701,7 @@ func (a *App) shutdown(why string) {
 
 func loadConfig() Config {
 	cfg := Config{DiffMode: "unified", GutterBase: "head", Blame: "line", Panels: []string{"tree", "editor", "git"}, PanelSizes: map[string]int{},
-		Renames: true, WordDiff: true, Indent: "auto", FontSize: 12, IndentGuides: true, Sticky: true, AutoClose: true, Occurrences: true, WorkspaceBar: true}
+		Renames: true, WordDiff: true, Indent: "auto", FontSize: 12, IndentGuides: true, Sticky: true, AutoClose: true, Occurrences: true, WorkspaceBar: true, Trace: true}
 	data, err := os.ReadFile(configPath())
 	if err == nil {
 		_ = json.Unmarshal(data, &cfg)

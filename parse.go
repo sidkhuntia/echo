@@ -148,6 +148,49 @@ func parseBranches(s string) []Branch {
 	return out
 }
 
+// markMerged sets Merged on the branches named in "%(HEAD)%(refname:short)" lines (the checked-out
+// branch starts with "*" and is skipped: it is the one the others are merged into).
+func markMerged(bs []Branch, s string) {
+	merged := map[string]bool{}
+	for _, line := range strings.Split(s, "\n") {
+		if name, ok := strings.CutPrefix(line, " "); ok && name != "" {
+			merged[name] = true
+		}
+	}
+	for i := range bs {
+		bs[i].Merged = merged[bs[i].Name]
+	}
+}
+
+// parseMergedRemotes reads "refname\tsymref" lines of remote-tracking refs already merged into HEAD and
+// returns their short names ("origin/feat"). Left out, because deleting them is never the cleanup the
+// marker suggests: each remote's HEAD alias and the branch it points to (the default branch), and keep
+// (the checked-out branch's upstream, which the branch is still tracking).
+func parseMergedRemotes(s, keep string) []string {
+	out := []string{}
+	skip := map[string]bool{}
+	var names []string
+	for _, line := range strings.Split(s, "\n") {
+		ref, sym, _ := strings.Cut(line, "\t")
+		name, ok := strings.CutPrefix(ref, "refs/remotes/")
+		if !ok || name == "" {
+			continue
+		}
+		if sym != "" || strings.HasSuffix(name, "/HEAD") {
+			skip[name] = true
+			skip[strings.TrimPrefix(sym, "refs/remotes/")] = true
+			continue
+		}
+		names = append(names, name)
+	}
+	for _, n := range names {
+		if !skip[n] && n != keep {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // parseCommitDetail reads NUL-separated hash, parents, author, email, time, committer, time, message.
 func parseCommitDetail(s string) (CommitDetail, bool) {
 	parts := strings.SplitN(s, "\x00", 8)

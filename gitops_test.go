@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -523,5 +524,27 @@ func TestLogMarksUnpushedCommits(t *testing.T) {
 	}
 	if !flags["local only"] || flags["init"] {
 		t.Errorf("flags = %v (head %s)", flags, pushed[:7])
+	}
+}
+
+func TestStatusMarksMergedRemoteBranches(t *testing.T) {
+	a := cleanRepo(t)
+	bare := filepath.Join(t.TempDir(), "remote.git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", bare).CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	act(t, a, map[string]any{"action": "remote:add", "from": "origin", "url": bare})
+	gitIn(t, a, "push", "-q", "-u", "origin", "main")
+	gitIn(t, a, "push", "-q", "origin", "main:done")
+	gitIn(t, a, "switch", "-q", "-c", "wip")
+	commitFile(t, a, "wip.txt", "x\n", "wip")
+	gitIn(t, a, "push", "-q", "origin", "wip")
+	gitIn(t, a, "switch", "-q", "main")
+	gitIn(t, a, "fetch", "-q", "origin")
+	var st GitStatus
+	_ = json.Unmarshal(request(a, "GET", "/api/git/status", "").Body.Bytes(), &st)
+	// done is at main's commit; wip has a commit main lacks; origin/main is main's own upstream.
+	if want := []string{"origin/done"}; !slices.Equal(st.RemoteMerged, want) {
+		t.Errorf("RemoteMerged = %v, want %v", st.RemoteMerged, want)
 	}
 }
