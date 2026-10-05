@@ -2235,6 +2235,8 @@ function refActions(ref, kind) {
     a.push([kind === 'tag' ? 'Checkout (detached)' : kind === 'remote' && !localNames.has(short) ? `Checkout as ${short}` : 'Checkout', checkout])
   }
   a.push(['New branch from here…', 'new'])
+  a.push(['Tag here…', 'tag'])
+  if (kind === 'tag') a.push(['Push tag…', 'pushtag'])
   if (kind === 'local') a.push(['Rename…', 'rename'])
   if (!isCur && cur) {
     a.push([`Merge into ${cur}…`, 'merge'])
@@ -2266,13 +2268,19 @@ function openRefMenu(ref, kind, anchor) {
 const closeRefMenu = () => { $('#ref-menu').hidden = true; menuFor = null }
 
 async function runRefAction(i) {
-  const { ref, acts } = menuFor
+  const { ref, kind, acts } = menuFor
   const [, what] = acts[i]
   closeRefMenu()
   toggleBranchPop(false)
   if (what === 'new') {
     const name = await ask({ title: 'Name the new branch', ok: 'Create', html: `<p class="note">Starts from <b>${esc(ref)}</b>.</p>`, input: { label: 'Branch name', placeholder: 'feature/name' } })
     if (name) await gitAction({ action: 'branch:create', from: name, to: ref })
+  } else if (what === 'tag') {
+    const name = await ask({ title: 'Name the new tag', ok: 'Create tag', html: `<p class="note">An annotated tag at <b>${esc(ref)}</b>. It stays on this computer until you push it.</p>`, input: { label: 'Tag name', placeholder: 'v1.2.3' } })
+    if (name) await gitAction({ action: 'tag:create', from: name, to: kind === 'tag' ? ref + '^{commit}' : ref })
+  } else if (what === 'pushtag') {
+    const ok = await ask({ title: `Push tag ${ref}`, kicker: 'publishes', tone: 'danger', ok: 'Push tag', html: `<p>Sends <b>${esc(ref)}</b> to the remote. Others can fetch it at once, and a repository that builds releases from tags will start one. A pushed tag is not meant to be changed or removed afterwards.</p>` })
+    if (ok) await gitAction({ action: 'push:tag', from: ref })
   } else if (what === 'rename') await G.renameBranch(ref)
   else if (what === 'merge' || what === 'rebase') G.integrate(ref, what)
   else if (what === 'delete') await G.deleteBranch(ref)
@@ -2919,7 +2927,7 @@ $('#toast').addEventListener('click', e => {
   else { clearTimeout(toastTimer); t.hidden = true }
 })
 
-const NET = new Set(['fetch', 'pull', 'push', 'push:lease', 'push:force', 'sync', 'publish', 'branch:delete:remote', 'submodule:update'])
+const NET = new Set(['fetch', 'pull', 'push', 'push:tag', 'push:lease', 'push:force', 'sync', 'publish', 'branch:delete:remote', 'submodule:update'])
 
 async function gitAction(body, button) {
   const net = NET.has(body.action)
@@ -2928,7 +2936,7 @@ async function gitAction(body, button) {
     setStatus(`git ${body.action}…`)
     const out = await post('/api/git', body)
     // Remote output leads with "To <url>" or progress lines; say what happened and keep Git's text in the tooltip.
-    const done = { fetch: 'Fetched all remotes', pull: 'Pulled', push: 'Pushed', 'push:lease': 'Force pushed (with lease)', 'push:force': 'Force pushed', sync: 'Synced', publish: 'Published' }[body.action]
+    const done = { 'tag:create': 'Tag created', 'push:tag': 'Tag pushed', fetch: 'Fetched all remotes', pull: 'Pulled', push: 'Pushed', 'push:lease': 'Force pushed (with lease)', 'push:force': 'Force pushed', sync: 'Synced', publish: 'Published' }[body.action]
     setStatus(done ? `${done}\n${out.output || ''}` : out.output || `git ${body.action} done`, 'ok')
     G.showOutput(body.action, out.output, true)
     if (out.pr) showToast('Branch published', out.pr)

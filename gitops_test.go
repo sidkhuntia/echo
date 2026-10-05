@@ -548,3 +548,51 @@ func TestStatusMarksMergedRemoteBranches(t *testing.T) {
 		t.Errorf("RemoteMerged = %v, want %v", st.RemoteMerged, want)
 	}
 }
+
+func TestTagCreateAndPush(t *testing.T) {
+	a := cleanRepo(t)
+	bare := filepath.Join(t.TempDir(), "remote.git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", bare).CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	act(t, a, map[string]any{"action": "remote:add", "from": "origin", "url": bare})
+	gitIn(t, a, "push", "-q", "-u", "origin", "main")
+
+	act(t, a, map[string]any{"action": "tag:create", "from": "v1.0.0"})
+	// Annotated, with the name as its message, and pointing at HEAD.
+	if got := strings.TrimSpace(gitIn(t, a, "cat-file", "-t", "refs/tags/v1.0.0")); got != "tag" {
+		t.Errorf("tag object type = %q, want tag", got)
+	}
+	if got := strings.TrimSpace(gitIn(t, a, "tag", "-l", "--format=%(contents)", "v1.0.0")); got != "v1.0.0" {
+		t.Errorf("default message = %q", got)
+	}
+	// A taken name is refused, so a tag never moves.
+	actFails(t, a, map[string]any{"action": "tag:create", "from": "v1.0.0"})
+	for _, bad := range []string{"-x", "a b", "a..b", "a~1", "v1.lock"} {
+		actFails(t, a, map[string]any{"action": "tag:create", "from": bad})
+	}
+
+	// Creating a tag publishes nothing.
+	if out, _ := exec.Command("git", "--git-dir", bare, "tag", "-l").Output(); len(out) != 0 {
+		t.Fatalf("remote has tags before push: %s", out)
+	}
+	actFails(t, a, map[string]any{"action": "push:tag", "from": "nope"})
+	act(t, a, map[string]any{"action": "push:tag", "from": "v1.0.0"})
+	if out, _ := exec.Command("git", "--git-dir", bare, "tag", "-l").Output(); strings.TrimSpace(string(out)) != "v1.0.0" {
+		t.Errorf("remote tags = %q", out)
+	}
+
+	// A second tag at an earlier commit with a message; pushing one tag does not push the others.
+	first := strings.TrimSpace(gitIn(t, a, "rev-parse", "HEAD"))
+	commitFile(t, a, "later.txt", "x\n", "later")
+	act(t, a, map[string]any{"action": "tag:create", "from": "v1.1.0", "to": first, "message": "second"})
+	act(t, a, map[string]any{"action": "tag:create", "from": "v1.2.0"})
+	act(t, a, map[string]any{"action": "push:tag", "from": "v1.1.0"})
+	if out, _ := exec.Command("git", "--git-dir", bare, "tag", "-l").Output(); strings.TrimSpace(strings.ReplaceAll(string(out), "\n", " ")) != "v1.0.0 v1.1.0" {
+		t.Errorf("remote tags = %q, want v1.0.0 v1.1.0 only", out)
+	}
+
+	// A tag the remote already holds at another commit is not overwritten.
+	gitIn(t, a, "tag", "-f", "-a", "-m", "moved", "v1.0.0", "HEAD")
+	actFails(t, a, map[string]any{"action": "push:tag", "from": "v1.0.0"})
+}

@@ -172,6 +172,8 @@ func (a *App) extraGit(req gitRequest) (out string, err error, ok bool) {
 		out, err = a.gitCombined("-c", "core.editor=true", "cherry-pick", "--"+verb)
 	case "rebase:interactive":
 		out, err = a.rebaseInteractive(req.From, req.Todo)
+	case "tag:create":
+		out, err = a.createTag(req)
 	case "branch:rename":
 		if err = validRef(req.From); err == nil {
 			if err = validRef(req.To); err == nil {
@@ -466,4 +468,35 @@ func (a *App) rebasePlan(base string) ([]Commit, error) {
 		return nil, err
 	}
 	return parseCommits(out), nil
+}
+
+// validTagName holds a tag name to what Git accepts under refs/tags/, on top of validRef.
+func validTagName(a *App, name string) error {
+	if err := validRef(name); err != nil {
+		return err
+	}
+	if _, err := a.git("check-ref-format", "refs/tags/"+name); err != nil {
+		return fmt.Errorf("invalid tag name %q", name)
+	}
+	return nil
+}
+
+// createTag makes an annotated tag named req.From at req.To (default HEAD). An annotated tag needs a
+// message, so it defaults to the name. It never moves a tag: Git refuses a name that is taken.
+func (a *App) createTag(req gitRequest) (string, error) {
+	if err := validTagName(a, req.From); err != nil {
+		return "", err
+	}
+	msg := strings.TrimSpace(req.Message)
+	if msg == "" {
+		msg = req.From
+	}
+	args := []string{"tag", "-a", req.From, "-m", msg}
+	if req.To != "" {
+		if err := validRef(req.To); err != nil {
+			return "", err
+		}
+		args = append(args, req.To)
+	}
+	return a.gitCombined(args...)
 }
