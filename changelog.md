@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- A copy button on branch names: in the title bar beside the branch, and on hover in the Branches rail and the branch picker (local, remote and tag rows). It copies the ref exactly as shown, for example `origin/main`. The title-bar button is hidden on a detached HEAD.
+- The Sync tab's sections (Branch & sync, Stash) now start open, and each one reopens the way you last left it. The choice is kept in the browser's storage, so it is per repository.
+
 ## 0.5.0 (2026-10-05)
 
 - Branches already merged into the checked-out branch carry a `merged` marker in the Branches rail and the branch picker; deleting them loses nothing. The checked-out branch itself is never marked.
