@@ -2124,6 +2124,9 @@ async function doCommit(all) {
 function renderGit() {
   const s = state.status || {}
   $('#branch').textContent = s.branch || (s.git === false ? 'no repository' : '—')
+  const named = s.branch && !s.branch.startsWith('detached@')
+  $('#branch-copy').hidden = !named
+  $('#branch-copy').dataset.copyref = named ? s.branch : ''
   $('#repo-name').textContent = s.root ? basename(s.root) : ''
   document.title = s.root ? `${basename(s.root)} — ${s.branch || 'echo'}` : 'echo'
   renderTracking()
@@ -2165,6 +2168,19 @@ const ICONS = {
   dir: '<svg class="i ic" viewBox="0 0 16 16"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg>',
 }
 
+const COPY_ICON = '<svg class="i" viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5"/></svg>'
+const CHECK_ICON = '<svg class="i" viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7"/></svg>'
+const copyBtn = (ref, cls) => `<button class="${cls}" data-copyref="${esc(ref)}" title="Copy name" aria-label="Copy ${esc(ref)}">${COPY_ICON}</button>`
+async function copyRef(btn) {
+  const ref = btn.dataset.copyref
+  try {
+    await copyText(ref)
+    btn.innerHTML = CHECK_ICON
+    setStatus('Copied ' + ref)
+    setTimeout(() => { btn.innerHTML = COPY_ICON }, 1200)
+  } catch (e) { setStatus('Could not copy: ' + e.message, 'err') }
+}
+
 const trackHTML = b => b && !b.gone && (b.ahead || b.behind) ? `<span class="track">${b.behind ? `<span class="in">↓${b.behind}</span>` : ''}${b.ahead ? `<span class="out">↑${b.ahead}</span>` : ''}</span>` : b?.gone ? '<span class="track"><span class="gone">gone</span></span>' : ''
 const mergedHTML = b => b?.merged ? '<span class="merged" title="Merged into the current branch: safe to delete">merged</span>' : ''
 const remoteMergedHTML = (s, ref) => s.remoteMerged?.includes(ref) ? '<span class="merged" title="Merged into the current branch: safe to delete from the remote">merged</span>' : ''
@@ -2175,7 +2191,7 @@ function renderBranches() {
   const inLog = state.mode === 'log' ? $('#log-ref').value : ''
   const local = new Map((s.local || []).map(b => [b.name, b]))
   const match = n => !f || n.toLowerCase().includes(f)
-  const row = (ref, kind, label, depth, extra = '') => `<div class="tnode bref ${ref === inLog ? 'active' : ''} ${kind === 'local' && ref === s.branch ? 'current' : ''}" data-ref="${esc(ref)}" data-kind="${kind}" style="padding-left:${6 + depth * 14}px" title="${esc(ref)}\nClick to show in the Log"><span class="tw"></span>${kind === 'tag' ? ICONS.tag : ICONS.branch}<span class="nm">${esc(label)}</span>${extra}<button class="bmore" data-more title="Actions" aria-label="Actions for ${esc(ref)}">⋯</button></div>`
+  const row = (ref, kind, label, depth, extra = '') => `<div class="tnode bref ${ref === inLog ? 'active' : ''} ${kind === 'local' && ref === s.branch ? 'current' : ''}" data-ref="${esc(ref)}" data-kind="${kind}" style="padding-left:${6 + depth * 14}px" title="${esc(ref)}\nClick to show in the Log"><span class="tw"></span>${kind === 'tag' ? ICONS.tag : ICONS.branch}<span class="nm">${esc(label)}</span>${extra}${copyBtn(ref, 'bcopy')}<button class="bmore" data-more title="Actions" aria-label="Actions for ${esc(ref)}">⋯</button></div>`
   // Names group into folders by their "/" prefixes, as IntelliJ does ("feat/x" sits under "feat").
   const tree = (key, names, kind, depth) => {
     const render = (node, d) => {
@@ -2301,7 +2317,7 @@ function toggleBranchPop(open = $('#branch-pop').hidden) {
 function renderBranchPop() {
   const s = state.status || {}, f = $('#branch-filter').value.toLowerCase()
   const match = n => !f || n.toLowerCase().includes(f)
-  const item = (ref, kind, extra = '') => `<div class="th bp-row ${kind === 'local' && ref === s.branch ? 'on' : ''}" data-ref="${esc(ref)}" data-kind="${kind}" title="${esc(ref)}"><span class="ok">${kind === 'local' && ref === s.branch ? '✓' : ''}</span><span class="nm">${esc(ref)}</span>${extra}<span class="go">›</span></div>`
+  const item = (ref, kind, extra = '') => `<div class="th bp-row ${kind === 'local' && ref === s.branch ? 'on' : ''}" data-ref="${esc(ref)}" data-kind="${kind}" title="${esc(ref)}"><span class="ok">${kind === 'local' && ref === s.branch ? '✓' : ''}</span><span class="nm">${esc(ref)}</span>${extra}${copyBtn(ref, 'bcopy')}<span class="go">›</span></div>`
   const sec = (title, rows, more = 0) => rows.length ? `<h5>${title}</h5>${rows.join('')}${more ? `<div class="bp-more faint">${more} more — keep typing</div>` : ''}` : ''
   const local = (s.local || []).filter(b => match(b.name))
   const remote = (s.remote || []).filter(match)
@@ -3372,6 +3388,16 @@ $('#banner').addEventListener('click', async e => {
 document.querySelectorAll('.mode-switch button').forEach(b => b.onclick = () => setMode(b.dataset.mode))
 document.querySelectorAll('.rail-switch button').forEach(b => b.onclick = () => setRail(b.dataset.rail))
 document.querySelectorAll('.insp-switch button').forEach(b => b.onclick = () => setInspector(b.dataset.insp))
+// The Sync tab's sections start open; each one then comes back the way it was last left.
+const FOLD_KEY = storeKey('echo:folds')
+const folds = (() => { try { return JSON.parse(localStorage.getItem(FOLD_KEY)) || {} } catch { return {} } })()
+document.querySelectorAll('details[data-fold]').forEach(d => {
+  d.open = folds[d.dataset.fold] ?? true
+  d.addEventListener('toggle', () => {
+    folds[d.dataset.fold] = d.open
+    try { localStorage.setItem(FOLD_KEY, JSON.stringify(folds)) } catch {}
+  })
+})
 $('#search-open').onclick = () => openPalette()
 $('#search-contents').onclick = () => { const q = $('#file-filter').value.trim(); setRail('search'); if (q) { $('#search-input').value = q; scheduleSearch(0) } $('#search-input').focus() }
 
@@ -3583,6 +3609,8 @@ let logTimer
 for (const id of ['#log-q', '#log-author', '#log-path', '#log-since', '#log-until', '#log-merges']) $(id).addEventListener('input', () => { clearTimeout(logTimer); logTimer = setTimeout(() => loadLog(), 250) })
 $('#log-ref').onchange = () => { loadLog(); renderBranches() }
 $('#branches').addEventListener('click', e => {
+  const cp = e.target.closest('[data-copyref]')
+  if (cp) return copyRef(cp)
   const dir = e.target.closest('[data-bdir]')
   if (dir) {
     const k = dir.dataset.bdir
@@ -3602,6 +3630,8 @@ $('#branches').addEventListener('contextmenu', e => {
   openRefMenu(row.dataset.ref, row.dataset.kind, row)
 })
 $('#branch').onclick = e => { e.stopPropagation(); toggleBranchPop() }
+$('#branch-copy').innerHTML = COPY_ICON
+$('#branch-copy').onclick = e => { e.stopPropagation(); copyRef(e.currentTarget) }
 $('#repo').onclick = e => { e.stopPropagation(); toggleRepoPop() }
 $('#repo-filter').oninput = () => { repoSel = 0; renderRepoPop() }
 $('#repo-filter').addEventListener('keydown', e => {
@@ -3632,6 +3662,8 @@ $('#branch-filter').addEventListener('keydown', e => {
   if (e.key === 'Enter' && rows.length === 1) { e.preventDefault(); openRefMenu(rows[0].dataset.ref, rows[0].dataset.kind, rows[0]) }
 })
 $('#branch-list').addEventListener('click', e => {
+  const cp = e.target.closest('[data-copyref]')
+  if (cp) return copyRef(cp)
   const row = e.target.closest('.bp-row')
   if (row) openRefMenu(row.dataset.ref, row.dataset.kind, row)
 })

@@ -668,3 +668,9 @@ Local branches reachable from `HEAD` (`for-each-ref --merged HEAD`) get `merged:
 - **Accepted:** `for-each-ref --merged HEAD refs/remotes` feeds `remoteMerged` in the status (a list of names beside `remote`, so `remote` stays plain strings), and the Branches rail and picker show the same "merged" chip on those rows. It is computed with the rest of `refsPart`, so it costs nothing on a poll that moved no ref, and it is as fresh as the last fetch. This reverses the "local only" line in 22j: the marker only informs; the delete is still a confirmed push (`git push <remote> --delete`).
 - **Default:** never marked, because they are merged into almost any branch and deleting them is not cleanup: each remote's HEAD alias and the branch it points to (the default branch), and the checked-out branch's upstream (`@{upstream}`). Squash-merged branches are not detected, as with local ones.
 - **Accepted:** `trace` in the config (default on) hides the change trace from the title bar; Settings → Review has the toggle. Off, the strip, the file count and +/− totals, and the staged count are not drawn; the title bar keeps its layout (the right-hand buttons stay in their column).
+
+### 22l. Copy branch names; Sync sections remember their fold state (2026-10-05)
+
+- **Accepted:** a `copyBtn` on every ref row (rail and picker) and a `#branch-copy` button in the title bar, all handled by one `copyRef` over the existing `copyText`. The title-bar button is a sibling of `#branch`, not a child, because it is a button inside a button otherwise.
+- **Accepted:** `<details data-fold="…">` sections open by default; the last open/closed state is stored under `echo:folds` (keyed per repository in a workspace, like `echo:fileView`).
+- **Not taken:** the Tools tab's sections keep their in-memory state; only the Sync tab was asked for.

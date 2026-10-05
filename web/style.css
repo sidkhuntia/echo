@@ -272,9 +272,11 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .bref .nm { flex: 1; }
 .bref.current .nm { font-weight: 600; color: var(--fg); }
 .bref.current .nm::after { content: " ✓"; color: var(--accent); font-weight: 400; }
-.bref .bmore { visibility: hidden; border: 0; background: none; color: var(--muted); padding: 0 4px; border-radius: 4px; cursor: pointer; font-size: 13px; line-height: 18px; }
-.bref:hover .bmore { visibility: visible; }
-.bref .bmore:hover { background: var(--hover); color: var(--fg); }
+.bref .bmore, .bref .bcopy, .bp-row .bcopy { visibility: hidden; border: 0; background: none; color: var(--muted); padding: 0 4px; border-radius: 4px; cursor: pointer; font-size: 13px; line-height: 18px; }
+.bref .bcopy, .bp-row .bcopy { display: inline-grid; place-items: center; padding: 0 3px; }
+.bref .bcopy .i, .bp-row .bcopy .i { width: 13px; height: 13px; }
+.bref:hover .bmore, .bref:hover .bcopy, .bp-row:hover .bcopy { visibility: visible; }
+.bref .bmore:hover, .bref .bcopy:hover, .bp-row .bcopy:hover { background: var(--hover); color: var(--fg); }
 .bsec { margin-top: 6px; font-size: 11px; font-weight: 600; color: var(--muted); }
 .bsec .count { margin-left: auto; }
 
