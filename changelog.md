@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-10-05)
+
+- Branch, remote and tag rows have **Tag here…** in their menu: it makes an annotated tag at that ref, named by you, with the name as its message. It is local until you push it, and Git refuses a name that is already taken, so a tag never moves.
+- Tag rows also have **Push tag…**. It asks first (naming the tag, and saying that a repository that builds releases from tags will start one), then pushes that one tag, never `--tags` and never forced.
 
 - A copy button on branch names: in the title bar beside the branch, and on hover in the Branches rail and the branch picker (local, remote and tag rows). It copies the ref exactly as shown, for example `origin/main`. The title-bar button is hidden on a detached HEAD.
 - The Sync tab's sections (Branch & sync, Stash) now start open, and each one reopens the way you last left it. The choice is kept in the browser's storage, so it is per repository.

@@ -674,3 +674,11 @@ Local branches reachable from `HEAD` (`for-each-ref --merged HEAD`) get `merged:
 - **Accepted:** a `copyBtn` on every ref row (rail and picker) and a `#branch-copy` button in the title bar, all handled by one `copyRef` over the existing `copyText`. The title-bar button is a sibling of `#branch`, not a child, because it is a button inside a button otherwise.
 - **Accepted:** `<details data-fold="…">` sections open by default; the last open/closed state is stored under `echo:folds` (keyed per repository in a workspace, like `echo:fileView`).
 - **Not taken:** the Tools tab's sections keep their in-memory state; only the Sync tab was asked for.
+
+### 22m. Tag and push a tag (2026-10-05)
+
+- **Accepted:** `tag:create` (`git tag -a <name> -m <message> [<start>]`; message defaults to the name, start to `HEAD`) and `push:tag` (`git push <remote> refs/tags/<name>:refs/tags/<name>`, a network action like the others). They are separate steps on purpose: creating a tag publishes nothing, and the push is the irreversible one.
+- **Accepted:** names are checked with `git check-ref-format refs/tags/<name>`. A name already in use fails (no `-f`), and the push is never forced, so a tag the remote holds at another commit is refused by Git.
+- **Accepted:** the push asks first and says it may start a release. Echo does not know about release workflows; whether a tag push releases is the repository's business.
+- **Not taken:** `--tags` (it pushes every local tag), deleting tags, a one-step "tag and push", and a message field in the dialog (the API takes `message`; the dialog only asks for the name).
+

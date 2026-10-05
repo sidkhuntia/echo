@@ -450,7 +450,7 @@ func (a *App) gitArgs(req gitRequest) ([]string, error) {
 	}
 }
 
-var netActions = map[string]bool{"branch:delete:remote": true, "submodule:update": true, "fetch": true, "pull": true, "push": true, "push:lease": true, "push:force": true, "sync": true, "publish": true}
+var netActions = map[string]bool{"branch:delete:remote": true, "submodule:update": true, "fetch": true, "pull": true, "push": true, "push:lease": true, "push:force": true, "sync": true, "publish": true, "push:tag": true}
 
 // forcePush overwrites the current branch's upstream with the local branch. The remote and ref are
 // spelled out so a push.default of "matching" cannot drag other branches into a force push. With a
@@ -553,17 +553,35 @@ func (a *App) network(req gitRequest) (string, error) {
 		if err != nil || branch == "" {
 			return "", errors.New("publish needs a checked-out branch")
 		}
-		remote := req.Remote
-		if remote == "" {
-			remotes, _ := a.git("remote")
-			var err error
-			if remote, err = pickRemote(parseLines(remotes)); err != nil {
-				return "", err
-			}
+		remote, err := a.remoteFor(req.Remote)
+		if err != nil {
+			return "", err
 		}
 		return a.gitNet(ctx, "push", "-u", remote, branch)
+	case "push:tag":
+		// One named tag, never --tags, and never forced: a tag the remote already has differently is refused.
+		if err := validTagName(a, req.From); err != nil {
+			return "", err
+		}
+		if _, err := a.git("rev-parse", "--verify", "--quiet", "refs/tags/"+req.From); err != nil {
+			return "", fmt.Errorf("there is no local tag %q", req.From)
+		}
+		remote, err := a.remoteFor(req.Remote)
+		if err != nil {
+			return "", err
+		}
+		return a.gitNet(ctx, "push", remote, "refs/tags/"+req.From+":refs/tags/"+req.From)
 	}
 	return "", fmt.Errorf("unknown git action: %s", action)
+}
+
+// remoteFor is the remote a request names, or the one pickRemote chooses.
+func (a *App) remoteFor(name string) (string, error) {
+	if name != "" {
+		return name, nil
+	}
+	remotes, _ := a.git("remote")
+	return pickRemote(parseLines(remotes))
 }
 
 // pickRemote chooses where a new branch is published: origin, else the only remote.
