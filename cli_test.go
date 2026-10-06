@@ -80,8 +80,21 @@ func TestParseGlobalArgs(t *testing.T) {
 				c.args, port, noOpen, version, help, rest, c.port, c.noOpen, c.version, c.help, c.rest)
 		}
 	}
-	for _, args := range [][]string{{"-port"}, {"-port", "abc"}, {"-port=", "/tmp"}, {"-no-open=maybe"}} {
+	for _, args := range [][]string{{"-port"}, {"-port", "abc"}, {"-port=", "/tmp"}, {"-no-open=maybe"}, {"-port", "0"}, {"-port", "-1"}, {"-port", "99999"}, {"--port=70000"}} {
 		if _, _, _, _, _, err := parseGlobalArgs(args); err == nil {
+			t.Errorf("%q should fail", args)
+		}
+	}
+}
+
+func TestCheckCommandArgs(t *testing.T) {
+	for _, args := range [][]string{{"ls"}, {"list"}, {"update"}, {"open"}, {"stop"}, {"open", "/a"}, {"stop", "6030"}, {"stop", "--all"}} {
+		if err := checkCommandArgs(args); err != nil {
+			t.Errorf("%q should pass: %v", args, err)
+		}
+	}
+	for _, args := range [][]string{{"ls", "x"}, {"update", "x"}, {"open", "a", "b"}, {"stop", "a", "b"}} {
+		if err := checkCommandArgs(args); err == nil {
 			t.Errorf("%q should fail", args)
 		}
 	}

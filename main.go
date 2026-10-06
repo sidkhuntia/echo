@@ -184,9 +184,9 @@ func main() {
 	}
 	if helpFlag {
 		fmt.Fprintln(os.Stderr, cliUsage)
-		fmt.Fprintf(os.Stderr, "  -no-open\t do not launch a browser\n")
-		fmt.Fprintf(os.Stderr, "  -port int\t port to listen on (default: this repository's last port, else the first free one in %d-%d)\n", firstPort, lastPort)
-		fmt.Fprintf(os.Stderr, "  -version\t print the version and exit\n")
+		fmt.Fprintf(os.Stderr, "  -no-open (--no-open)\t do not launch a browser\n")
+		fmt.Fprintf(os.Stderr, "  -port N (--port N)\t port to listen on (default: this repository's last port, else the first free one in %d-%d)\n", firstPort, lastPort)
+		fmt.Fprintf(os.Stderr, "  -version (--version)\t print the version and exit\n")
 		return
 	}
 	if versionFlag {

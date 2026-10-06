@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.6.2 (2026-10-07)
 
 - Fixed `echo-desk -no-open` (and `-port`) being silently ignored when the path comes first (`echo-desk /repo -no-open` opened a browser anyway). Server flags are now recognized before or after the path; `echo-desk open` also respects `-no-open`. Unknown flags and extra paths now fail with usage instead of being ignored.
+- `echo-desk update` no longer sits silent while the network works: it shows a spinner while checking the latest release and while downloading (Homebrew upgrades keep brew's own output instead). CLI flags are stricter too: ports must be 1–65535, and extra arguments to `ls`, `update`, `open` and `stop` fail with usage rather than being ignored.
 
 ## 0.6.1 (2026-10-06)
 

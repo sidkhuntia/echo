@@ -692,3 +692,8 @@ Local branches reachable from `HEAD` (`for-each-ref --merged HEAD`) get `merged:
 - **Fixed:** `echo-desk /repo -no-open` opened a browser anyway, and `echo-desk /repo -port N` ignored the port. Go's `flag` package stops at the first positional arg, so anything after the path never parsed. `parseGlobalArgs` (`cli.go`) now hoists `-no-open`, `-port`, `-version` and `-h/--help` (both dash forms, `=value` forms, `--` terminator) wherever they appear, leaving subcommand flags like `stop --all` in place.
 - **Default:** in serve mode an unknown `-flag` or more than one path fails with usage (exit 2) instead of being silently ignored; a path starting with `-` stays reachable as `./-foo` or after `--`. `open` respects `-no-open` (prints the URL, does not launch). No new dependencies.
 
+### 22p. Update shows progress; CLI flags are stricter (2026-10-07)
+
+- **Fixed:** `echo-desk update` looked hung: the release check (up to 10 s) and the silent `curl` downloads printed nothing until done. It now shows a braille spinner on stderr while checking the release and while the install script downloads. The Homebrew path keeps brew's own output instead of a spinner, since the two would garble each other; off a terminal the steps print as plain lines. Still standard library only.
+- **Default:** ports must be 1–65535 with a clear error; extra arguments to `ls`, `update` (none take any) and `open`, `stop` (at most one) fail with usage (exit 2) instead of being silently ignored. Usage documents the `--` forms.
+

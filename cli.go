@@ -19,9 +19,11 @@ const cliUsage = `usage:
   echo-desk open [path|port]    open a running server in the browser
   echo-desk stop [path|port]    stop one server (default: the current folder's)
   echo-desk stop --all          stop every server
-  echo-desk update              install the latest release
-  echo-desk -version
-  flags (-no-open, -port) may appear before or after the path.`
+  echo-desk update              install the latest release (shows progress while it downloads)
+  echo-desk -version            print the version and exit
+  echo-desk -help               show this help
+  -no-open, -port, -version and -help all accept a -- double dash too, and server
+  flags may appear before or after the path.`
 
 // parseGlobalArgs extracts echo-desk's server flags wherever they appear on the command
 // line. The standard flag package stops at the first path, so `echo-desk /repo -no-open`
@@ -53,8 +55,8 @@ func parseGlobalArgs(args []string) (port int, noOpen, showVersion, showHelp boo
 				return 0, false, false, false, nil, fmt.Errorf("-port needs a port number")
 			}
 			p, perr := strconv.Atoi(args[i+1])
-			if perr != nil {
-				return 0, false, false, false, nil, fmt.Errorf("invalid port %q", args[i+1])
+			if perr != nil || p < 1 || p > 65535 {
+				return 0, false, false, false, nil, fmt.Errorf("invalid port %q (want 1-65535)", args[i+1])
 			}
 			port = p
 			i++
@@ -62,8 +64,8 @@ func parseGlobalArgs(args []string) (port int, noOpen, showVersion, showHelp boo
 		}
 		if s, ok := cutFlagValue(a, "port"); ok {
 			p, perr := strconv.Atoi(s)
-			if perr != nil {
-				return 0, false, false, false, nil, fmt.Errorf("invalid port %q", s)
+			if perr != nil || p < 1 || p > 65535 {
+				return 0, false, false, false, nil, fmt.Errorf("invalid port %q (want 1-65535)", s)
 			}
 			port = p
 			continue
@@ -99,6 +101,22 @@ func cutFlagValue(s, name string) (string, bool) {
 	return "", false
 }
 
+// checkCommandArgs rejects extra arguments to subcommands that do not take them, so a
+// typo like `echo-desk ls foo` fails instead of silently ignoring foo.
+func checkCommandArgs(args []string) error {
+	switch args[0] {
+	case "ls", "list", "update":
+		if len(args) != 1 {
+			return fmt.Errorf("%s takes no arguments", args[0])
+		}
+	case "open", "stop":
+		if len(args) > 2 {
+			return fmt.Errorf("%s takes at most one path or port", args[0])
+		}
+	}
+	return nil
+}
+
 // runCommand runs a subcommand and reports whether args named one. A folder with one of these names
 // is still reachable as ./ls.
 func runCommand(args []string, noOpen bool) bool {
@@ -109,6 +127,11 @@ func runCommand(args []string, noOpen bool) bool {
 	case "ls", "list", "open", "stop", "update":
 	default:
 		return false
+	}
+	if err := checkCommandArgs(args); err != nil {
+		fmt.Fprintln(os.Stderr, "echo:", err)
+		fmt.Fprintln(os.Stderr, cliUsage)
+		os.Exit(2)
 	}
 	authToken = loadToken()
 	var err error
@@ -275,10 +298,42 @@ func latestRelease() (string, error) {
 	return strings.TrimPrefix(tag, "v"), nil
 }
 
+// spin shows a downloading animation on stderr while a silent network step runs, so
+// `echo-desk update` no longer sits quiet for seconds. It returns a stop function that
+// finishes the line. Off a terminal it just prints the message once.
+func spin(msg string) func() {
+	if f, err := os.Stderr.Stat(); err != nil || f.Mode()&os.ModeCharDevice == 0 {
+		fmt.Fprintln(os.Stderr, msg+"…")
+		return func() {}
+	}
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(80 * time.Millisecond)
+		defer t.Stop()
+		i := 0
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				fmt.Fprintf(os.Stderr, "\r%s %s", msg, frames[i%len(frames)])
+				i++
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		fmt.Fprintf(os.Stderr, "\r%s done\n", msg)
+	}
+}
+
 // updateCmd upgrades through Homebrew when that installed this binary, and otherwise runs the
 // published install script into the folder this binary lives in.
 func updateCmd() error {
+	stop := spin("Checking for the latest release")
 	latest, err := latestRelease()
+	stop()
 	if err != nil {
 		return err
 	}
@@ -296,14 +351,23 @@ func updateCmd() error {
 		exe = real
 	}
 	var cmd *exec.Cmd
+	var stopSpin func()
 	if strings.Contains(exe, "/Cellar/") {
+		// brew prints its own progress; a spinner would garble it.
+		fmt.Println("upgrading via Homebrew…")
 		cmd = exec.Command("brew", "upgrade", "sidkhuntia/tap/echo-desk")
 	} else {
 		cmd = exec.Command("sh", "-c", "curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/sidkhuntia/echo/main/install.sh | sh")
 		cmd.Env = append(os.Environ(), "INSTALL_DIR="+filepath.Dir(exe), "VERSION="+latest)
+		// The install script's curls are silent, so this is the quiet stretch.
+		stopSpin = spin(fmt.Sprintf("Downloading echo %s", latest))
 	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
+	err = cmd.Run()
+	if stopSpin != nil {
+		stopSpin()
+	}
+	if err != nil {
 		return fmt.Errorf("update failed: %w", err)
 	}
 	if n := len(instances()); n > 0 {
