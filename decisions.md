@@ -546,7 +546,7 @@ Everything below was proposed in a review of the v1 code and accepted item by it
 
 - **Accepted:** every path from the page reaches Git as a literal name (`GIT_LITERAL_PATHSPECS=1`). A file called `[id].tsx` is not a glob, and discarding it never touches `i.tsx` or `d.tsx`.
 - **Accepted:** `create` and `rename` refuse to replace an existing file (409). A save needs the hash the file was opened with, or an explicit `force`; it is written to a temporary file and renamed, so an agent never sees half a file, and the file's mode is kept. Saves are serialized per process.
-- **Accepted:** every discard (a file, a hunk, a hard reset, a restore over a file) is first written to a snapshot commit under `refs/echo/discards/` (newest 20 kept) from a private index, so nothing the page throws away is unrecoverable. "Restore" in the Changes list puts the last one back.
+- **Accepted:** every discard (a file, a hunk, a hard reset, a restore over a file) is first written to a snapshot commit under `refs/echo/discards/` (newest 20 kept) from a private index, so nothing the page throws away is unrecoverable. "Restore the last discard" in the command palette (`⌘⇧P`) puts the last one back; there is no banner in the Changes list.
 - **Accepted:** the editor loads files up to 10 MB; larger ones show a notice with "Open in default app". Reading anything under `.git` through the page is refused, as writing it already was.
 - **Accepted:** the API needs a per-user secret. It lives in `<config dir>/echo/token` (`0600`), is created on first run and shared by every echo process of the user. The printed link carries it once (`/?t=`), which becomes an `HttpOnly`, `SameSite=Strict` cookie; sibling processes send it as `X-Echo-Token`. The Host and Origin checks stay, and run first.
 - **Accepted:** ssh gets `BatchMode=yes` for network commands unless the user configured their own ssh command, so a passphrase prompt cannot hang a request until the timeout. `/api/config` validates what it stores.
@@ -681,4 +681,9 @@ Local branches reachable from `HEAD` (`for-each-ref --merged HEAD`) get `merged:
 - **Accepted:** names are checked with `git check-ref-format refs/tags/<name>`. A name already in use fails (no `-f`), and the push is never forced, so a tag the remote holds at another commit is refused by Git.
 - **Accepted:** the push asks first and says it may start a release. Echo does not know about release workflows; whether a tag push releases is the repository's business.
 - **Not taken:** `--tags` (it pushes every local tag), deleting tags, a one-step "tag and push", and a message field in the dialog (the API takes `message`; the dialog only asks for the name).
+
+### 22n. Lazy diff follows folding; the discard banner is gone (2026-10-06)
+
+- **Fixed:** folding (or expanding) a file in a lazily-drawn diff left the next file blank until the next scroll. Huge diffs draw bodies only near the viewport, and folding shifts files without firing a scroll event, so the placeholder that moved into view stayed empty. `rerenderFile` now draws what is visible after replacing the file, which also covers unfold-on-jump, show-more-context and the optimistic stage/unstage repaint.
+- **Accepted:** the "Discarded N files … · Restore" banner in the Changes list is removed. It lingered for hours after the discard it described. Snapshots are still kept and `discard:restore` still works; the way back is `⌘⇧P` → "Restore the last discard", and the discard dialogs say so.
 

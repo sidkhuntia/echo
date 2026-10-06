@@ -157,7 +157,7 @@ export function resetChoice(hash, soft) {
     title: `Reset ${c().state.status?.branch || 'the branch'} to ${hash.slice(0, 7)}`, kicker: 'moves the branch',
     body: `<div class="set-sec"><label class="check"><input type="radio" name="rm" value="soft" checked> <b>Soft</b> <span class="faint">undone commits' changes stay staged</span></label>
       <label class="check"><input type="radio" name="rm" value="mixed"> <b>Mixed</b> <span class="faint">changes stay in the working tree, unstaged</span></label>
-      <label class="check"><input type="radio" name="rm" value="hard"> <b>Hard</b> <span class="faint">throws away uncommitted work too — a snapshot is kept, and Restore in the Changes list brings it back</span></label></div>`,
+      <label class="check"><input type="radio" name="rm" value="hard"> <b>Hard</b> <span class="faint">throws away uncommitted work too — a snapshot is kept, and ⌘⇧P → Restore the last discard brings it back</span></label></div>`,
     actions: [{ label: 'Cancel' }, { label: 'Reset', primary: true, run: async mod => {
       const v = mod.el.querySelector('input[name=rm]:checked').value
       if (v === 'soft') { await soft(hash); return }

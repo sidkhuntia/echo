@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1 (2026-10-06)
+
+- Review: folding or expanding a file in a large diff no longer leaves the next file blank until you scroll. Bodies near the viewport are drawn right after the fold changes the layout.
+- The "Discarded N files … · Restore" banner in the Changes list is gone. Discards are still snapshotted; bring the last one back with `⌘⇧P` → Restore the last discard.
+
 ## 0.6.0 (2026-10-05)
 
 - Branch, remote and tag rows have **Tag here…** in their menu: it makes an annotated tag at that ref, named by you, with the name as its message. It is local until you push it, and Git refuses a name that is already taken, so a tag never moves.

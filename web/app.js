@@ -363,7 +363,7 @@ function renderQueue() {
     return
   }
   if (!all.length) {
-    q.innerHTML = discardBar() + `<div class="empty"><b>No changes</b>The working tree matches HEAD.</div>`
+    q.innerHTML = `<div class="empty"><b>No changes</b>The working tree matches HEAD.</div>`
     return
   }
   const filter = $('#file-filter').value.toLowerCase()
@@ -387,7 +387,7 @@ function renderQueue() {
     </div>`
   }
   const bulk = { staged: iconBtn('unstage-all', ICON.minus, 'Unstage all'), work: iconBtn('discard-all', ICON.discard, 'Discard all unstaged changes') + iconBtn('stage-all', ICON.plus, 'Stage all changes'), merge: iconBtn('stage-all', ICON.plus, 'Mark all resolved (stage)') }
-  let h = discardBar() + pickBar()
+  let h = pickBar()
   for (const g of GROUPS) {
     const rows = list.filter(g.has)
     if (!rows.length) continue
@@ -404,12 +404,6 @@ function renderQueue() {
 const qkey = (sec, path) => sec + '\t' + path
 const pickedIn = sec => [...state.qsel].filter(k => k.startsWith(sec + '\t')).map(k => k.slice(sec.length + 1))
 const pickedSec = () => state.qsel.size ? [...state.qsel][0].split('\t')[0] : ''
-
-function discardBar() {
-  const d = state.status?.lastDiscard
-  if (!d) return ''
-  return `<div class="pickbar restore"><span>Discarded ${plural(d.files, 'file')} ${ago(d.time)}</span><span class="grow"></span><button class="btn sm" data-restore-discard title="Put the files of the last discard back">Restore</button></div>`
-}
 
 function pickBar() {
   const sec = pickedSec()
@@ -927,6 +921,10 @@ function rerenderFile(i) {
   sec.outerHTML = fileHTML(state.diffFiles[i], i)
   state.current = -1
   updateCurrent()
+  // Folding (or expanding) one file shifts every file below it, which can pull a lazily-drawn
+  // placeholder into view without a scroll event. Draw what is now visible, or the next file
+  // sits blank until the next scroll.
+  renderNear()
 }
 
 function toggleFold(i) {
@@ -3174,7 +3172,6 @@ function markRail() {
 
 // ---------- wiring ----------
 $('#queue').addEventListener('click', e => {
-  if (e.target.closest('[data-restore-discard]')) return void gitAction({ action: 'discard:restore' })
   const bar = e.target.closest('[data-pick]')?.dataset.pick
   if (bar) {
     const paths = pickedIn(pickedSec())
@@ -3534,7 +3531,7 @@ async function viewAtCommit(hash, path) {
 }
 
 async function restoreFromCommit(hash, path) {
-  const ok = await ask({ title: `Restore ${basename(path)}`, kicker: 'overwrites', tone: 'warn', ok: 'Restore', html: `<p>The working-tree copy of <b>${esc(path)}</b> becomes the version from <span class="mono">${esc(hash.slice(0, 7))}</span>. What is there now is snapshotted first, so Restore in the Changes list can bring it back.</p>` })
+  const ok = await ask({ title: `Restore ${basename(path)}`, kicker: 'overwrites', tone: 'warn', ok: 'Restore', html: `<p>The working-tree copy of <b>${esc(path)}</b> becomes the version from <span class="mono">${esc(hash.slice(0, 7))}</span>. What is there now is snapshotted first, so ⌘⇧P → Restore the last discard can bring it back.</p>` })
   if (ok) gitAction({ action: 'restore:file', from: hash, paths: [path] })
 }
 

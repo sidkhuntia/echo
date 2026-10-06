@@ -185,7 +185,7 @@ async function hunkAction(act, f, hi) {
   if (!patch) return ctx.setStatus('Nothing selected to apply', 'err')
   if (act === 'discard') {
     const what = picked ? `${picked.size} selected line${picked.size === 1 ? '' : 's'}` : 'this hunk'
-    const ok = await ctx.ask({ title: `Discard ${what}`, kicker: 'restorable', tone: 'danger', ok: 'Discard', html: `<p class="say">${esc(f.path)} — ${esc(h.range)}</p><p class="note">A snapshot is kept, so Restore in the Changes list brings it back.</p>` })
+    const ok = await ctx.ask({ title: `Discard ${what}`, kicker: 'restorable', tone: 'danger', ok: 'Discard', html: `<p class="say">${esc(f.path)} — ${esc(h.range)}</p><p class="note">A snapshot is kept, so ⌘⇧P → Restore the last discard brings it back.</p>` })
     if (!ok) return
   }
   review.sel = null
