@@ -687,3 +687,8 @@ Local branches reachable from `HEAD` (`for-each-ref --merged HEAD`) get `merged:
 - **Fixed:** folding (or expanding) a file in a lazily-drawn diff left the next file blank until the next scroll. Huge diffs draw bodies only near the viewport, and folding shifts files without firing a scroll event, so the placeholder that moved into view stayed empty. `rerenderFile` now draws what is visible after replacing the file, which also covers unfold-on-jump, show-more-context and the optimistic stage/unstage repaint.
 - **Accepted:** the "Discarded N files … · Restore" banner in the Changes list is removed. It lingered for hours after the discard it described. Snapshots are still kept and `discard:restore` still works; the way back is `⌘⇧P` → "Restore the last discard", and the discard dialogs say so.
 
+### 22o. Server flags work before or after the path (2026-10-07)
+
+- **Fixed:** `echo-desk /repo -no-open` opened a browser anyway, and `echo-desk /repo -port N` ignored the port. Go's `flag` package stops at the first positional arg, so anything after the path never parsed. `parseGlobalArgs` (`cli.go`) now hoists `-no-open`, `-port`, `-version` and `-h/--help` (both dash forms, `=value` forms, `--` terminator) wherever they appear, leaving subcommand flags like `stop --all` in place.
+- **Default:** in serve mode an unknown `-flag` or more than one path fails with usage (exit 2) instead of being silently ignored; a path starting with `-` stays reachable as `./-foo` or after `--`. `open` respects `-no-open` (prints the URL, does not launch). No new dependencies.
+

@@ -42,3 +42,47 @@ func TestListInstances(t *testing.T) {
 		t.Fatal(b.String())
 	}
 }
+
+func TestParseGlobalArgs(t *testing.T) {
+	// Flags work before or after the path; the standard flag package stopped at the
+	// first path and silently dropped what came after it.
+	for _, c := range []struct {
+		args                  []string
+		port                  int
+		noOpen, version, help bool
+		rest                  []string
+	}{
+		{nil, 0, false, false, false, []string{}},
+		{[]string{"-no-open"}, 0, true, false, false, []string{}},
+		{[]string{"--no-open"}, 0, true, false, false, []string{}},
+		{[]string{"/tmp", "-no-open"}, 0, true, false, false, []string{"/tmp"}},
+		{[]string{"-no-open", "/tmp"}, 0, true, false, false, []string{"/tmp"}},
+		{[]string{"/tmp", "--no-open"}, 0, true, false, false, []string{"/tmp"}},
+		{[]string{"-no-open=false"}, 0, false, false, false, []string{}},
+		{[]string{"-port", "6031", "/tmp"}, 6031, false, false, false, []string{"/tmp"}},
+		{[]string{"/tmp", "-port", "6031"}, 6031, false, false, false, []string{"/tmp"}},
+		{[]string{"-port=6031"}, 6031, false, false, false, []string{}},
+		{[]string{"/tmp", "--port=6031", "-no-open"}, 6031, true, false, false, []string{"/tmp"}},
+		{[]string{"-version"}, 0, false, true, false, []string{}},
+		{[]string{"/tmp", "-version"}, 0, false, true, false, []string{"/tmp"}},
+		{[]string{"-h"}, 0, false, false, true, []string{}},
+		{[]string{"stop", "--all"}, 0, false, false, false, []string{"stop", "--all"}},
+		{[]string{"-no-open", "stop", "--all"}, 0, true, false, false, []string{"stop", "--all"}},
+		{[]string{"--", "-no-open"}, 0, false, false, false, []string{"-no-open"}},
+	} {
+		port, noOpen, version, help, rest, err := parseGlobalArgs(c.args)
+		if err != nil {
+			t.Errorf("%q: %v", c.args, err)
+			continue
+		}
+		if port != c.port || noOpen != c.noOpen || version != c.version || help != c.help || strings.Join(rest, "\x00") != strings.Join(c.rest, "\x00") {
+			t.Errorf("%q = port %d noOpen %v version %v help %v rest %q, want port %d noOpen %v version %v help %v rest %q",
+				c.args, port, noOpen, version, help, rest, c.port, c.noOpen, c.version, c.help, c.rest)
+		}
+	}
+	for _, args := range [][]string{{"-port"}, {"-port", "abc"}, {"-port=", "/tmp"}, {"-no-open=maybe"}} {
+		if _, _, _, _, _, err := parseGlobalArgs(args); err == nil {
+			t.Errorf("%q should fail", args)
+		}
+	}
+}

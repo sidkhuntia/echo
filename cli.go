@@ -14,17 +14,94 @@ import (
 )
 
 const cliUsage = `usage:
-  echo-desk [path]              open a repository or workspace (default: the current folder)
+  echo-desk [-no-open] [-port N] [path]  open a repository or workspace (default: the current folder)
   echo-desk ls                  list the running echo servers
   echo-desk open [path|port]    open a running server in the browser
   echo-desk stop [path|port]    stop one server (default: the current folder's)
   echo-desk stop --all          stop every server
   echo-desk update              install the latest release
-  echo-desk -version`
+  echo-desk -version
+  flags (-no-open, -port) may appear before or after the path.`
+
+// parseGlobalArgs extracts echo-desk's server flags wherever they appear on the command
+// line. The standard flag package stops at the first path, so `echo-desk /repo -no-open`
+// silently ignored the flag and opened a browser anyway (and `echo-desk /repo -port N`
+// silently ignored the port). Known flags are hoisted; everything else stays in rest in
+// order, so subcommand flags like `stop --all` keep working.
+func parseGlobalArgs(args []string) (port int, noOpen, showVersion, showHelp bool, rest []string, err error) {
+	rest = []string{}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			rest = append(rest, args[i+1:]...)
+			break
+		}
+		if a == "-no-open" || a == "--no-open" {
+			noOpen = true
+			continue
+		}
+		if s, ok := cutFlagValue(a, "no-open"); ok {
+			v, perr := strconv.ParseBool(s)
+			if perr != nil {
+				return 0, false, false, false, nil, fmt.Errorf("invalid value %q for -no-open", a)
+			}
+			noOpen = v
+			continue
+		}
+		if a == "-port" || a == "--port" {
+			if i+1 >= len(args) {
+				return 0, false, false, false, nil, fmt.Errorf("-port needs a port number")
+			}
+			p, perr := strconv.Atoi(args[i+1])
+			if perr != nil {
+				return 0, false, false, false, nil, fmt.Errorf("invalid port %q", args[i+1])
+			}
+			port = p
+			i++
+			continue
+		}
+		if s, ok := cutFlagValue(a, "port"); ok {
+			p, perr := strconv.Atoi(s)
+			if perr != nil {
+				return 0, false, false, false, nil, fmt.Errorf("invalid port %q", s)
+			}
+			port = p
+			continue
+		}
+		if a == "-version" || a == "--version" {
+			showVersion = true
+			continue
+		}
+		if s, ok := cutFlagValue(a, "version"); ok {
+			v, perr := strconv.ParseBool(s)
+			if perr != nil {
+				return 0, false, false, false, nil, fmt.Errorf("invalid value %q for -version", a)
+			}
+			showVersion = v
+			continue
+		}
+		if a == "-h" || a == "-help" || a == "--help" {
+			showHelp = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return port, noOpen, showVersion, showHelp, rest, nil
+}
+
+// cutFlagValue reports whether s is -name=value or --name=value and returns the value.
+func cutFlagValue(s, name string) (string, bool) {
+	for _, p := range []string{"-" + name + "=", "--" + name + "="} {
+		if strings.HasPrefix(s, p) {
+			return s[len(p):], true
+		}
+	}
+	return "", false
+}
 
 // runCommand runs a subcommand and reports whether args named one. A folder with one of these names
 // is still reachable as ./ls.
-func runCommand(args []string) bool {
+func runCommand(args []string, noOpen bool) bool {
 	if len(args) == 0 {
 		return false
 	}
@@ -39,7 +116,7 @@ func runCommand(args []string) bool {
 	case "ls", "list":
 		listInstances(os.Stdout, instances())
 	case "open":
-		err = openCmd(args[1:])
+		err = openCmd(args[1:], noOpen)
 	case "stop":
 		err = stopCmd(args[1:])
 	case "update":
@@ -94,7 +171,7 @@ func resolveTarget(arg string, list []Instance) (Instance, error) {
 	return Instance{}, fmt.Errorf("no echo is running for %s (see: echo-desk ls)", root)
 }
 
-func openCmd(args []string) error {
+func openCmd(args []string, noOpen bool) error {
 	arg := ""
 	if len(args) > 0 {
 		arg = args[0]
@@ -109,6 +186,9 @@ func openCmd(args []string) error {
 	}
 	url := "http://127.0.0.1:" + strconv.Itoa(in.Port) + "/?t=" + authToken
 	fmt.Println("echo", in.Root, "at", url)
+	if noOpen {
+		return nil
+	}
 	return openBrowser(url)
 }
 

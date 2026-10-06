@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -177,28 +176,47 @@ type Instance struct {
 }
 
 func main() {
-	if runCommand(os.Args[1:]) {
+	portFlag, noOpenFlag, versionFlag, helpFlag, rest, err := parseGlobalArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "echo:", err)
+		fmt.Fprintln(os.Stderr, cliUsage)
+		os.Exit(2)
+	}
+	if helpFlag {
+		fmt.Fprintln(os.Stderr, cliUsage)
+		fmt.Fprintf(os.Stderr, "  -no-open\t do not launch a browser\n")
+		fmt.Fprintf(os.Stderr, "  -port int\t port to listen on (default: this repository's last port, else the first free one in %d-%d)\n", firstPort, lastPort)
+		fmt.Fprintf(os.Stderr, "  -version\t print the version and exit\n")
 		return
 	}
-	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, cliUsage)
-		flag.PrintDefaults()
-	}
-	port := flag.Int("port", 0, fmt.Sprintf("port to listen on (default: this repository's last port, else the first free one in %d-%d)", firstPort, lastPort))
-	noOpen := flag.Bool("no-open", false, "do not launch a browser")
-	showVersion := flag.Bool("version", false, "print the version and exit")
-	flag.Parse()
-	if *showVersion {
+	if versionFlag {
 		fmt.Println("echo", buildVersion())
 		return
+	}
+	if runCommand(rest, noOpenFlag) {
+		return
+	}
+	for _, r := range rest {
+		if strings.HasPrefix(r, "-") {
+			// A flag-like arg here is a typo or a subcommand flag in the wrong place,
+			// not a path. A path starting with "-" stays reachable as ./-foo or via --.
+			fmt.Fprintf(os.Stderr, "echo: unknown flag %s\n", r)
+			fmt.Fprintln(os.Stderr, cliUsage)
+			os.Exit(2)
+		}
+	}
+	if len(rest) > 1 {
+		fmt.Fprintln(os.Stderr, "echo: too many paths (want at most one)")
+		fmt.Fprintln(os.Stderr, cliUsage)
+		os.Exit(2)
 	}
 
 	root, err := os.Getwd()
 	if err != nil {
 		fatal(err)
 	}
-	if flag.NArg() > 0 {
-		root = flag.Arg(0)
+	if len(rest) > 0 {
+		root = rest[0]
 	}
 	root, err = filepath.Abs(root)
 	if err != nil {
@@ -206,12 +224,12 @@ func main() {
 	}
 
 	open := func(url string) {
-		if !*noOpen {
+		if !noOpenFlag {
 			_ = openBrowser(url)
 		}
 	}
 	authToken = loadToken()
-	if *port == 0 {
+	if portFlag == 0 {
 		if p, sub := locate(root, instances()); p != 0 {
 			url := "http://127.0.0.1:" + strconv.Itoa(p) + sub + "?t=" + authToken
 			fmt.Printf("echo %s is already open at %s\n", root, url)
@@ -219,12 +237,12 @@ func main() {
 			return
 		}
 	}
-	ln, err := listen(root, *port)
+	ln, err := listen(root, portFlag)
 	if err != nil {
 		fatal(err)
 	}
 	bound := ln.Addr().(*net.TCPAddr).Port
-	if *port == 0 {
+	if portFlag == 0 {
 		rememberPort(root, bound)
 	}
 

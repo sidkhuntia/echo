@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fixed `echo-desk -no-open` (and `-port`) being silently ignored when the path comes first (`echo-desk /repo -no-open` opened a browser anyway). Server flags are now recognized before or after the path; `echo-desk open` also respects `-no-open`. Unknown flags and extra paths now fail with usage instead of being ignored.
+
 ## 0.6.1 (2026-10-06)
 
 - Review: folding or expanding a file in a large diff no longer leaves the next file blank until you scroll. Bodies near the viewport are drawn right after the fold changes the layout.
