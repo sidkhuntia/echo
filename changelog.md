@@ -5,6 +5,7 @@
 - Ignoring a path no longer rewrites `.gitignore` when the file exists but cannot be read. The ignore action now fails with the read error, instead of replacing the file with only the new patterns.
 - Fixed a save that marked newer typing as saved. The tab's saved text is now the text the save request sent, not whatever the editor holds when the response arrives, so an edit typed while a save is in flight stays unsaved (the tab keeps its dirty marker, and closing it asks first).
 - Review: after a hunk is staged, unstaged or discarded, the current hunk is the one that took its place (in Unstaged and Staged, where the acted hunk leaves the list), or the next hunk (in All changes, where it stays). Before, the highlight and `hunk i/n` stayed on the hunk above, so the next `j` landed on the one after it.
+- Keyboard focus stays put around overlays. The command palette and the in-app dialogs (Compare, merge and rebase, stash and commit viewers, and the rest) now give focus back to the control that opened them when they close, whatever closes them (Esc, a click outside, or choosing a command). Tab stays inside an open dialog instead of moving to the page behind it, and inside the palette it does nothing.
 
 ## 0.8.0 (2026-10-07)
 
