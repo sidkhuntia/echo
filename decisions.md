@@ -1,6 +1,6 @@
 # echo decisions
 
-> v2 (October 2026) is recorded in section 21. Where an earlier section disagrees, section 21 wins.
+> v2 (October 2026) is recorded in section 21, and later work (workspaces, the 0.2.0 to 0.8.0 changes) in sections 22 and after. Where an earlier section disagrees with a later one, the later section wins. Entries marked **Superseded**, **Done in v2** or **Not implemented** point at the section that replaced them.
 
 This file is the complete decision log for echo. It records decisions chosen during requirements discovery and defaults chosen while implementing v1.
 
@@ -30,7 +30,7 @@ Status meanings:
 - **Accepted:** the app is launched from Terminal.
 - **Accepted:** the app is not a double-click `.app` bundle in v1.
 - **Accepted:** the app opens its interface in the default browser.
-- **Accepted:** one repository is opened per process/session.
+- **Accepted:** one repository is opened per process/session. **Superseded by §22:** a folder of repositories is one process with one `App` per child repository.
 - **Accepted:** the app starts in the current Terminal directory every time.
 - **Default:** the default port is `6030`. Without `-port`, echo takes the repository's last port, else the first free port in `6030`–`6049`, so several repositories can be open at once, each in its own process and browser tab. `-port N` binds exactly `N` or fails.
 - **Accepted:** a repository keeps its port across restarts (`echo/ports.json` beside the config), because browser storage such as the saved theme is scoped to the origin, and so to the port.
@@ -39,11 +39,11 @@ Status meanings:
 - **Accepted:** the browser never starts echo processes; opening another repository is done from Terminal.
 - **Accepted:** the browser may stop them. The switcher has a Stop button per running repository and a Quit all button, and both go through `POST /api/shutdown`, because ending a process is the opposite of taking over the machine: it is the safe direction, and it is what makes a dozen open repositories manageable. The request is answered before the server stops, so the tab can confirm it, and a stopped repository reopens with the usual Terminal command.
 - **Default:** `POST /api/shutdown` takes an optional `port` (a sibling, stopped by this process asking it, so the page still makes no cross-origin request) or `all` (every running process, this one last, so the list the page is looking at is still there). A stop request that has already happened is not repeated.
-- **Default:** a stop is graceful. The status stream ends first, because it waits on a tick and would otherwise hold the drain open; in-flight requests then get three seconds, which is far longer than a git call or a read, and anything still running is closed. `Ctrl-C` (`SIGINT`) and `SIGTERM` take the same path, so a Terminal interrupt and the page's Stop behave identically. Language servers are stopped either way, so a Ctrl-C does not leave gopls and friends behind.
+- **Default:** a stop is graceful. The status stream ends first, because it waits on a tick and would otherwise hold the drain open; in-flight requests then get three seconds, which is far longer than a git call or a read, and anything still running is closed. `Ctrl-C` (`SIGINT`) and `SIGTERM` take the same path, so a Terminal interrupt and the page's Stop behave identically. Language servers were removed (§8), so there is nothing extra to stop.
 - **Default:** the app binds to `127.0.0.1` only.
 - **Default:** the app does not support LAN, remote, or container access in v1.
 
-- **Accepted:** echo is distributed as prebuilt macOS binaries (arm64 and amd64), named `echo-desk` so the name never collides with the shell's `echo`. Channels: Homebrew tap (`brew install sidkhuntia/tap/echo-desk`), `install.sh` (curl), a GitHub Release tarball, and building from source. Releases are cut by pushing a `v*` tag; GoReleaser builds, archives, checksums and updates the tap.
+- **Accepted:** echo is distributed as prebuilt macOS binaries (arm64 and amd64; Linux builds too, §21), named `echo-desk` so the name never collides with the shell's `echo`. Channels: Homebrew tap (`brew install sidkhuntia/tap/echo-desk`), `install.sh` (curl), a GitHub Release tarball, and building from source. Releases are cut by pushing a `v*` tag; GoReleaser builds, archives, checksums and updates the tap.
 - **Default:** `install.sh` downloads over HTTPS only and refuses an archive whose SHA-256 does not match the release's `checksums.txt`. It installs to `~/.local/bin` (no sudo) and prints a PATH hint instead of editing shell profiles.
 - **Default:** release binaries are built `CGO_ENABLED=0 -trimpath -ldflags "-s -w"`, which takes the binary from 11.9 MB to 8.9 MB (about 4.7 MB as a tarball). UPX is not used: it breaks macOS code signing and slows start-up.
 - **Default:** `-version` prints the release version (stamped by the build, or read from the module for `go install`).
@@ -120,10 +120,10 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** the default diff scope is "all changes": the working tree against `HEAD` (or the empty tree before the first commit), so staging a file never hides it from review.
 - **Accepted:** untracked files appear in working-tree diffs as new-file diffs, because agents create files constantly.
 - **Default:** untracked files larger than 1 MB are listed without their contents.
-- **Default:** diffs use `--no-renames`, so every diff entry maps to exactly one path in the change list.
+- **Default:** diffs use `--no-renames`, so every diff entry maps to exactly one path in the change list. **Superseded by §21:** rename detection is a setting (`renames`, on by default, which passes `-M`).
 - **Default:** the review surface renders one section per file with old/new line numbers and a sticky file header.
 - **Default:** lockfiles, generated files, and files with more than 1500 diff lines start folded.
-- **Accepted:** clicking a commit in history shows that commit's diff (`git show`, first parent for merges).
+- **Accepted:** clicking a commit in history shows that commit's diff (`git show`, first parent for merges). **Superseded by §21 (layout pass):** in History a click expands the commit, and its diff opens from one of its files. The Log still opens the diff on click.
 - **Corrected decision:** clicking a commit no longer copies its id; browsing history would overwrite the clipboard on every click. The expanded commit has a Copy button for the full id instead.
 - **Accepted:** history rows show the subject, short hash, the author's full name, and a relative time.
 - **Default:** the author name uses `%aN`, so `.mailmap` maps it to the canonical full name.
@@ -134,7 +134,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** split view pairs a run of deletions with the additions that follow it row by row, pads the shorter side with empty cells, and wraps long lines so both sides stay visible.
 - **Default:** the v1 UI supports the ignore-whitespace option using `--ignore-all-space`.
 - **Default:** range diffs use Git ref syntax such as `from..to`.
-- **Default:** the UI includes all-changes, unstaged, staged, ref-range, and single-commit scope selectors.
+- **Default:** the UI includes all-changes, unstaged, staged, ref-range, and single-commit scope selectors. **Superseded by §22c:** Review's scope is All, Unstaged or Staged; ranges and single commits are reached from the Log or History as a chip.
 - **Deferred:** word-level diff rendering.
 
 ## 6. Files and navigation
@@ -157,7 +157,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Corrected decision:** the Changes view is grouped like VS Code's Source Control instead of a review queue: "Merge changes" (conflicts), "Staged changes" (HEAD to index), and "Changes" (index to working tree, untracked included). A partly staged file is listed in both groups, each with that side's own +/− counts and status letter.
 - **Accepted:** each row stages with a `+` icon or unstages with a `−` icon, shown on hover; the group headers carry Stage all (`+`) and Unstage all (`−`), limited to the paths the filter shows. A conflicted row's `+` stages it, which marks it resolved.
 - **Accepted:** discarding a row in "Changes" restores only the working tree from the index, so staged work survives; the untracked-file case still deletes the file. The diff header's Discard does the same in the Unstaged view and returns the file to HEAD in the others.
-- **Default:** there is no "Discard all" in the group header; a one-click, unconfirmed discard of every file is too easy to hit.
+- **Default:** there is no "Discard all" in the group header; a one-click, unconfirmed discard of every file is too easy to hit. **Superseded by §12b:** the Changes group header has a Discard all that asks first.
 - **Default:** clicking a row while the diff shows Unstaged or Staged switches to that row's side; All changes stays as it is. Groups fold from their header for the session.
 - **Default:** the status API carries each change's staged side as `index` and unstaged side as `work` (`added`, `deleted`, `binary`), from `git diff --cached --numstat` and `git diff --numstat`.
 - **Accepted:** group headers total the lines added and deleted across the group, beside the file count. The total is summed in the browser from the per-side counts the status already carries, so no new Git call is made and the number can never disagree with the rows above it. Each group totals its own side, so a partly staged file is counted once per group it appears in.
@@ -167,14 +167,14 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** hovering a group header swaps its total for that group's Stage all or Unstage all button, matching how a row's own counts give way to its actions, so the header never shifts under the pointer.
 - **Accepted:** `⌘K`/`⌘P` open a fuzzy path finder instead of a browser prompt.
 - **Default:** the initial implementation skips `.git`, hidden directories, `node_modules`, `dist`, `build`, `.cache`, and `.next` from the tree.
-- **Accepted:** in a Git repository the tree comes from `git ls-files --cached --others --exclude-standard`, so ignored files stay out; the same skip rules still apply. Outside Git it walks the directory.
+- **Accepted:** in a Git repository the tree comes from `git ls-files --cached --others --exclude-standard`, so ignored files stay out; the same skip rules still apply. Outside Git it walks the directory. **Superseded by §22d:** ignored files and folders are listed dimmed, and an ignored folder's contents load when it is opened.
 - **Default:** file create, rename, and delete use the local filesystem directly in the first version; Git-aware rename behavior can be tightened later.
 - **Default:** file delete removes the selected file without a confirmation dialog.
-- **Default:** file create and rename use browser prompts for the path input, not confirmation dialogs.
+- **Default:** file create and rename use browser prompts for the path input, not confirmation dialogs. **Superseded by §20:** no browser prompt or confirm remains; path input uses the in-app `ask()` dialog.
 - **Deferred:** richer context menus.
-- **Corrected decision:** content search was deferred, then added: a fourth sidebar tab, **Search** (a magnifier icon, `⌘⇧F`), like VS Code's search view. Clicking a result opens the Files editor at that line.
+- **Corrected decision:** content search was deferred, then added: a fourth sidebar tab, **Search** (a magnifier icon, `⌘⇧F`), like VS Code's search view. **Superseded by §21:** Search is no longer a tab; the magnifier sits in the filter row and searches the text typed there. Clicking a result opens the Files editor at that line.
 - **Accepted:** the server runs `git grep -n --column -I -z`, with `--untracked` in a repository so files an agent just created are included, and `--no-index --exclude-standard` in a plain folder. Ignored and binary files are never searched, and there is no option to include them.
-- **Accepted:** the options are match case, whole word, and regular expression (`-i` off, `-w`, `-E`; otherwise `-F`). There are no include/exclude globs and no Replace; Replace would be a multi-file write outside the editor's stale-save check.
+- **Accepted:** the options are match case, whole word, and regular expression (`-i` off, `-w`, `-E`; otherwise `-F`). There are no include/exclude globs and no Replace; Replace would be a multi-file write outside the editor's stale-save check. **Superseded by §21:** find and replace across files is built (`web/replace.js`). It lists the files and asks first, and skips files with unsaved edits in an open tab.
 - **Accepted:** results are grouped by file, with match counts, groups that fold, and the matches marked. git grep reports only where a line matched, so the browser rebuilds the query as a JavaScript regular expression to mark them.
 - **Accepted:** search runs as you type, 250 ms after the last key, once the query has two characters. A new query aborts the request in flight, and the server's request context kills that git grep.
 - **Default:** results stop at 2,000 matches and say "2,000+ results — refine your search", with no paging; lines are trimmed to about 200 bytes around the match. Results rerun when the repository status changes, so line numbers follow the agent's edits.
@@ -225,7 +225,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** clean tabs reload automatically when their file changes on disk; dirty tabs show a banner offering the disk version or an explicit overwrite.
 - **Default:** tabs can be closed; closing a dirty tab asks first because the unsaved edits exist nowhere else.
 - **Default:** binary files are detected (NUL bytes in the first 8000 bytes) and not shown or saved.
-- **Deferred:** split editor panes.
+- **Deferred:** split editor panes. A read-only side view is built (§21); it is the one split view.
 - **Deferred:** editor undo/redo features beyond native textarea behavior.
 
 ## 8. Syntax highlighting
@@ -233,16 +233,16 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted (supersedes language servers):** highlighting runs in the browser on a vendored copy of highlight.js (`web/vendor/hljs.js`, v11.11.1 "common" build, BSD-3, byte-identical to `@highlightjs/cdn-assets` on npm; license beside it). `web/highlight.js` is a thin wrapper. It colors the editor, both diff layouts (stacked and split) and Markdown fences the same way, using `.hljs-*` rules in `style.css` built from theme colors.
 - **Why not language servers:** the only LSP feature echo used was semantic tokens. That needed per-language installs, a background process each, a status chip and a popover. Go-to-definition, hover and diagnostics were never built.
 - **Why not chroma/goldmark:** goldmark is a Markdown parser, not a highlighter. Chroma runs server-side, so the editor would pay a round trip per keystroke, and it is a Go dependency. A vendored browser library keeps highlighting local and instant, with the precedent of the vendored mermaid.
-- **Default:** the language comes from the file name (extension or `Makefile`). An unknown language or a buffer over 200 KB stays plain text. The common build has no Dockerfile grammar; Dockerfiles stay plain. To add a language, re-vendor a build that includes it.
+- **Default:** the language comes from the file name (extension or `Makefile`). An unknown language or a buffer over 200,000 characters stays plain text (`web/highlight.js`, `MAX`). The common build has no Dockerfile grammar; Dockerfiles stay plain. To add a language, re-vendor a build that includes it.
 - **Default:** a diff hunk is colored as two streams, old (context + deleted) and new (context + added), so multi-line comments and strings color correctly inside a hunk. A token opened above the hunk is not seen.
 - **Deferred:** anything semantic (diagnostics, completion, hover, go-to-definition, references). It would mean bringing a language server back.
 
 ## 9. Tabs and workspace model
 
 - **Accepted:** support multiple file tabs.
-- **Accepted:** do not restore closed tabs in v1.
-- **Accepted:** one repository per session.
-- **Accepted:** no multi-repository workspace in v1.
+- **Accepted:** do not restore closed tabs in v1. **Superseded by §18 (struck) and §21:** Reopen closed tab (`⌘⌥T`) brings the last one back.
+- **Accepted:** one repository per session. **Superseded by §22.**
+- **Accepted:** no multi-repository workspace in v1. **Superseded by §22.**
 - **Default:** each tab stores `path`, current content, last-saved content, and editor mode.
 - **Default:** the active tab is the only tab rendered in the editor surface.
 - **Default:** a dirty tab is indicated visually.
@@ -275,8 +275,8 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** stash creation includes untracked files with `git stash push -u`.
 - **Default:** stash messages are optional in the API, with a fallback message used by the UI.
 - **Default:** stash entries are shown with Git’s stash ref and subject.
-- **Deferred:** stash pop from the main UI.
-- **Deferred:** stash diff previews.
+- **Deferred:** stash pop from the main UI. **Done in v2 (§19 item 9):** stash pop is in the Git panel.
+- **Deferred:** stash diff previews. **Done in v2 (§19 item 9):** stash show previews a stash's diff.
 
 ## 12. Git refresh and live updates
 
@@ -305,7 +305,7 @@ The following Git capabilities were accepted as part of the product direction:
 
 ## 12c. Reset and Revert
 
-- **Accepted:** Reset branch here (soft only) and Revert are actions on a commit, shown in the commit details of the History tab and the Log. Mixed and hard reset are not offered: hard fits badly with the rule that echo's destructive actions are immediate, and soft loses no work.
+- **Accepted:** Reset branch here (soft only) and Revert are actions on a commit, shown in the commit details of the History tab and the Log. Mixed and hard reset are not offered: hard fits badly with the rule that echo's destructive actions are immediate, and soft loses no work. **Superseded by §21:** reset soft, mixed and hard are all offered (`reset:mixed`, `reset:hard` in `gitops.go`).
 - **Default:** `reset:soft` asks first (unlike discard, it rewrites history), listing up to ten commits it will undo and counting those already on the upstream. It warns about pushed commits; pushing them afterwards is a force push (section 12d). Recovery is the reflog, and the success message names the old tip.
 - **Default:** the server allows a soft reset only to a strict ancestor of HEAD on a checked-out branch, with no merge, revert, cherry-pick, or rebase in progress (`/api/reset/preview` runs the same check for the dialog).
 - **Default:** `revert` runs `git revert --no-edit` with no confirmation, since it only adds a commit that can be reverted in turn. A merge commit needs a mainline `parent` (1-based, `-m`); the dialog asks, defaulting to 1, and the server rejects a missing or out-of-range parent.
@@ -336,7 +336,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** the sidebar has a third rail, Branches: "All branches", "Current branch", then Local, Remote, and Tags, with names grouped into folders by their `/` prefixes and local branches showing ↓/↑. Clicking an entry shows it in the Log. Entering the Log switches the sidebar to Branches and leaving it restores the previous rail. The sidebar filter box filters branches on this rail.
 - **Default:** every branch or tag has one action menu, opened from ⋯ or right-click in the sidebar or from a row in the branches popup: Checkout (a remote branch checks out its local branch, creating a tracking one if needed; a tag checks out detached), New branch from here, Merge into the current branch, Rebase the current branch onto it, Compare with the current branch, Show in Log, and Delete for local branches.
 - **Default:** Delete uses `git branch -d`, so Git refuses to delete unmerged work; there is no force delete and no remote branch delete in the UI.
-- **Default:** new branch names are asked with a browser prompt, like file paths.
+- **Default:** new branch names are asked with a browser prompt, like file paths. **Superseded by §20:** the in-app `ask()` dialog is used.
 - **Default:** in the branches popup, typing filters; Enter on a single match opens its menu, and Enter again runs the first action (usually Checkout).
 - **Default:** the Log adapts to its own width (a container query), not the window's: below 860px the details pane moves under the graph, and below 620px the author column hides.
 - **Accepted:** GitLens extras in scope: file history (`git log --follow` for a file), inline blame on the editor's caret line with a blame gutter toggle, and compare branches (commits only in A / only in B plus the combined diff).
@@ -388,9 +388,9 @@ The following Git capabilities were accepted as part of the product direction:
 - **Accepted:** use familiar editor shortcuts where they fit the smaller scope.
 - **Default:** include shortcuts for file search, tree toggle, Git panel toggle, diff toggle, save, help, and escape.
 - **Default:** `e` opens the current hunk in the editor; `Esc` in the editor goes back to the review.
-- **Default:** use `⌘⇧O` for the repository switcher, `⌘K`/`⌘P` for file search, `⌘⇧F` for content search, `⌘B` for the file index, `⌘J` for the action ledger, `⌘D` for diff, and `⌘S` for save on macOS.
+- **Default:** use `⌘⇧O` for the repository switcher, `⌘K`/`⌘P` for file search, `⌘⇧F` for content search, `⌘B` for the sidebar, `⌘J` for the Git panel (`web/app.js`), `⌘D` for diff, and `⌘S` for save on macOS.
 - **Default:** `?` opens the shortcut card.
-- **Deferred:** full vim modal navigation and command language.
+- **Deferred:** full vim modal navigation and command language. **Partly done (§19 item 7, §21):** a practical Vim subset is built.
 - **Deferred:** user-remappable shortcuts.
 
 ## 16. Visual design
@@ -408,7 +408,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** the browser shortens the heading line to its name: a Go func with its receiver (`(a *App) network`), a JS function or named arrow (`clampWidth`), `class`/`type`/`struct` names, Python `def` and Rust `fn` names, and Markdown or HTML heading text. Anything else (a CSS rule, a C function) is kept up to its opening brace. The label is dimmer than the hunk count, the full `@@` line and heading are the tooltip, and trace tooltips use the same label.
 - **Default:** the current hunk is the last hunk of the current file whose header has reached the top of the diff, which is also where `j`/`k` leave it. The status bar shows "file i/n · hunk j/m".
 - **Corrected decision:** review marks ("Reviewed", "Mark reviewed", the check circle, the reviewed tally, and the `x` key) are removed; staging is the record of what has been looked at.
-- **Accepted:** three panes: sidebar (Changes / Files / Branches), main surface (Review / Files), and a Git panel. The Git panel has tabs (Commit, History) so later views can be added as tabs without changing the layout.
+- **Accepted:** three panes: sidebar (Changes / Files / Branches), main surface (Review / Files), and a Git panel. The Git panel has tabs (Commit, History) so later views can be added as tabs without changing the layout. **Superseded by §21 (layout pass):** the left column is Changes, Files, Branches and Notes; the middle is Review, Editor and Log; the right is Git (History, Sync, Tools).
 - **Corrected decision (2026-09-30):** the Git panel is a drawer over the right side of the review, opened from a 46px rail (Commit, History, Branches) or `⌘J`, and closed with `⌘J`, `Esc`, or its ✕. The diff keeps its full width until you ask for Git. The rail shows badges for staged files and commits to push. Opening on Commit with something staged puts the caret in the message. Clicking outside does not close it, so you can scroll the diff while writing the message.
 - **Accepted (2026-09-30):** the Git panel can be pinned: the pin in its header, or Settings › Layout, docks it as an ordinary column beside the review, open by default. Pinned, `⌘J` still hides and shows it, and `Esc` leaves it alone. The choice is saved in the config as `gitPinned`.
 - **Accepted (2026-09-30):** Settings › Layout › Panel sides swaps the sides: the file sidebar goes to the right, and the Git rail and panel go to the left. It is saved as `swapPanels`. The grips move to the panels' inner edges and drag the right way round. The drawer then opens from the left rail.
@@ -419,7 +419,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** the chrome follows the Carbon mockup. Sidebar rails, review modes, and Git tabs are underline tabs. Group labels are small uppercase mono. A changed-file row is the status letter, the name, and a churn bar (the square root of its share of the biggest change, added and deleted), with the counts in its tooltip. Files in the diff are flat full-width sections with a sticky header, not cards. The branch is a bordered mono pill. The drawer floats as a card inset from the edges.
 - **Default:** the change trace fades fully staged files only while some files are still unstaged; once everything is staged, the strip shows at full strength.
 - **Corrected decision:** draggable panel resizing was deferred, then added. Each side panel is sized by a CSS custom property on the desk (`--tree-w`, `--git-w`) rather than a track size in the stylesheet, so a drag is one property write and the collapse classes stay the only place that decides whether a panel is shown. The grab strip is a 9px band on the panel's inner edge, where the border already invites a drag, so it collapses away with the panel and needs no separate state.
-- **Default:** the sidebar runs 180–560px and the Git panel 220–640px, and a drag stops at whichever comes first: the range, the editor's 360px floor, or 42% of the desk, which is what keeps a narrow window from pushing the editor out. The floor wins over the range, because a panel at its minimum is still usable.
+- **Default:** the sidebar runs 180–560px and the Git panel 220–640px, and a drag stops at whichever comes first: the range, the editor's 360px floor (`CENTER_MIN`, `clampWidth` in `web/app.js`). **Not implemented:** an earlier draft also capped a drag at 42% of the desk. The code has no such cap; the 360px floor is what keeps the editor from being pushed out. The floor wins over the range, because a panel at its minimum is still usable.
 - **Accepted:** a focused grab strip resizes with the arrow keys (12px, 40px with `Shift`), because a layout you can only reach with a mouse is not a layout.
 - **Default:** widths are saved in the global config's `panelSizes`, sent as one patch with both keys since the server replaces the map, and a width in the file that no longer fits the range is ignored rather than clamped, so an old or hand-edited config degrades to the default instead of to a surprise.
 - **Default:** below 1100px the tracks are fixed by the breakpoint and the grab strips are hidden, since a handle that cannot move anything is worse than no handle.
@@ -437,7 +437,7 @@ The following Git capabilities were accepted as part of the product direction:
 
 - **Accepted:** do not store secrets in the application config.
 - **Accepted:** reuse system Git authentication.
-- **Accepted:** destructive actions do not require confirmation dialogs.
+- **Accepted:** destructive actions do not require confirmation dialogs. **Limited by §20:** the listed exceptions ask first (Discard all, committing everything, discarding unsaved edits, stopping echo), and §21 and §22 add more.
 - **Accepted:** the user accepts that delete, discard, and other destructive operations can happen immediately.
 - **Default:** the server rejects absolute paths.
 - **Default:** the server rejects paths that escape the repository root.
@@ -453,7 +453,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** no remote host flag is implemented.
 - **Default:** no embedded credential store exists.
 - **Default:** no telemetry or analytics data is collected.
-- **Default:** browser prompts are used only to collect path input where a custom dialog has not been built.
+- **Default:** browser prompts are used only to collect path input where a custom dialog has not been built. **Superseded by §20:** no browser prompt, confirm or alert remains; `ask()` replaces them all.
 
 ## 18. Deliberate simplifications
 
@@ -467,7 +467,7 @@ These are YAGNI decisions for v1:
 - No React.
 - No frontend bundler.
 - No TypeScript build pipeline.
-- No multi-repository workspace.
+- ~~No multi-repository workspace.~~ Built in v2 (§22).
 - No pull-request hosting or GitHub API integration.
 - No AI agent integration (echo reviews agent output; it does not run agents).
 - No collaboration or presence features.
@@ -588,14 +588,14 @@ Everything below was proposed in a review of the v1 code and accepted item by it
 
 ### Declined (do not re-propose without asking)
 
-Server-side timeouts on commit, revert and reset; a server cap on the file list; renaming `vendor/`; artifact attestation; creating tags; bisect; checkpoints; patch export/import; code symbols and go to symbol; an agent activity feed; the accessibility pass (the Ctrl-M Tab escape is the one concession).
+Server-side timeouts on commit, revert and reset; a server cap on the file list; renaming `vendor/`; artifact attestation; creating tags (later accepted in §22m); bisect; checkpoints; patch export/import; code symbols and go to symbol; an agent activity feed; the accessibility pass (the Ctrl-M Tab escape is the one concession).
 
 ## 22. Workspaces: several repositories in one folder (2026-10-03)
 
 The trigger: a folder such as `EH-Provider-Portal` that is not a repository but holds nine, which one wants to watch together, as Cursor's multi-root workspace does.
 
 - **Accepted:** `echo-desk` in a folder that has no `.git` of its own but has repositories as direct children starts a workspace. Anything else (a repository, or a folder with no repositories) behaves exactly as before. `-depth` is not a flag: the search is one level deep (`wsDepth`), skipping hidden folders, `node_modules`, `dist` and `build`, and not following links.
-- **Accepted:** one process, one `App` per child repository. An `App` already holds everything per repository (root, locks, status cache, notes), so the workspace only owns the list. The folder itself is one more `App` with `noGit` set, served as "Files": its own loose files and folders, without the child repositories' trees. This reverses "one repository per process" (section 18, and the rule in `agents.md`) to "one repository per `App`".
+- **Accepted:** one process, one `App` per child repository. An `App` already holds everything per repository (root, locks, status cache, notes), so the workspace only owns the list. The folder itself is one more `App` with `noGit` set, served as "Files": its own loose files and folders, without the child repositories' trees. This reverses "one repository per process" (sections 2, 9 and 18, and the rule in `agents.md`) to "one repository per `App`".
 - **Accepted:** a repository is served under `/r/<id>/` and the request is passed on with the prefix stripped, so its handlers are unchanged. `<id>` is the path under the workspace with `/` written as `~`, and must be in the discovered list: a request cannot name a folder of its own. The host/origin/token guard runs once, outside. `shutdown`, `instance` and `instances` belong to the process and are refused under a repository prefix.
 - **Accepted:** `/ws/...` holds the workspace's own endpoints: `repos` (one summary per repository: branch, ahead/behind, staged, unstaged, untracked, conflicts, from one `git status --branch` each), `stream` (the same as server-sent events), `changes` (every changed file with line counts), `fetch` and `pull` (all repositories), `rescan`. At most three Git processes run at once. The stream polls every 5 seconds and only while a page is subscribed; an open repository still polls its own status every 2 seconds.
 - **Accepted:** the home page (`/`) shows the repositories as a table and every changed file grouped by repository; a row opens the repository, a file opens its diff (`/r/<id>/#diff=<path>`). Fetch all runs `git fetch --all --prune`. Pull all fast-forwards only a repository that is behind, ahead of nothing, and has no staged, unstaged or conflicted files; everything else is skipped and said so. There is no commit-all or push-all: those stay per repository.

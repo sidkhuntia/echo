@@ -269,7 +269,7 @@ func main() {
 	open(url)
 
 	// A terminal interrupt asks for the same graceful stop the page's Stop button does: finish what
-	// is in flight, let the language servers exit, and only then close the port.
+	// is in flight, and only then close the port.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	srv := &http.Server{
