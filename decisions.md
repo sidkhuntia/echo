@@ -613,7 +613,7 @@ The trigger: a folder such as `EH-Provider-Portal` that is not a repository but 
 
 ### 22b. Log, draggable tabs, hunk actions (2026-10-04)
 
-- **Accepted:** the Log and History behave alike: a click on a commit only selects it; a click on one of its files opens the diff. Opening the Log closes an open History drawer. While a commit's diff from the Log is shown, the Log's commits live in the left nav (a hidden-until-needed `Log` rail tab, same rows as History), and Esc returns to the Log.
+- **Accepted:** the Log and History behave alike: a click on a commit only selects it; a click on one of its files opens the diff. Opening the Log closes an open History or Log drawer. While a commit's diff from the Log is shown, the Log's commits live in the right Git panel (a `Log` tab beside History, same rows as History), so the left Changes rail stays put, and Esc returns to the Log.
 - **Accepted:** tab strips (sidebar, view switch, Git panel) reorder by dragging and the order is saved in the config (`tabOrder`, validated: at most 8 strips, 16 ids each); open-file tabs reorder in the session. The first icon tab takes the free space so icons stay at the end. Moving a tab into a different panel is deferred.
 - **Accepted:** a hunk's actions are quiet icons (note, discard) plus one tinted primary (Stage/Unstage), last. Choosing lines turns the discard icon back into words, because it then says how many lines.
 - **Accepted:** the repository bar can be turned off (`workspaceBar` in the config, default on, Settings → Layout). Off also stops its polling. Its labels drop a name prefix shared by every repository; the tooltip keeps the full name.

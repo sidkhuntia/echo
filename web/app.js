@@ -215,6 +215,7 @@ async function ensureTree() {
 
 // ---------- file index ----------
 function setRail(rail) {
+  if (rail === 'logside') rail = 'changes'
   state.rail = rail
   document.querySelectorAll('.rail-switch button').forEach(b => b.classList.toggle('on', b.dataset.rail === rail))
   $('#tree-panel').classList.toggle('rail-files', rail === 'files')
@@ -223,17 +224,14 @@ function setRail(rail) {
   $('#branches').hidden = rail !== 'branches'
   $('#search-pane').hidden = rail !== 'search'
   $('#notes').hidden = rail !== 'notes'
-  $('#log-side').hidden = rail !== 'logside'
-  $('[data-rail="logside"]').hidden = rail !== 'logside'
   $('#commit-dock').hidden = rail !== 'changes' || state.status?.git === false
   $('[data-rail="search"]').hidden = rail !== 'search'
-  $('.filter-row').hidden = rail === 'search' || rail === 'notes' || rail === 'logside'
+  $('.filter-row').hidden = rail === 'search' || rail === 'notes'
   $('#file-filter').placeholder = rail === 'branches' ? 'Filter branches' : 'Filter paths'
   if (rail === 'files') ensureTree().then(renderTree)
   else if (rail === 'branches') renderBranches()
   else if (rail === 'search') $('#search-input').focus()
   else if (rail === 'notes') R.renderNotesPane()
-  else if (rail === 'logside') renderLogSide()
   else renderQueue()
 }
 
@@ -2022,9 +2020,9 @@ function setMode(m) {
   if (m !== 'diff') state.fromLog = false
   // The Log gets IntelliJ's branch list beside it; leaving puts the sidebar back as it was.
   if (m === 'log' && was !== 'log') {
-    // The Log is the history, so a History drawer beside it is closed: the room goes to the graph.
-    if (gitOpen() && $('#insp').dataset.insp === 'history') toggleGit(false)
-    if (state.rail !== 'branches' && state.status?.git) { state.railBeforeLog = state.rail === 'logside' ? 'changes' : state.rail; setRail('branches') }
+    // The Log is the history, so a History or Log drawer beside it is closed: the room goes to the graph.
+    if (gitOpen() && ( $('#insp').dataset.insp === 'history' || $('#insp').dataset.insp === 'log')) toggleGit(false)
+    if (state.rail !== 'branches' && state.status?.git) { state.railBeforeLog = state.rail; setRail('branches') }
   }
   if (was === 'log' && m !== 'log' && state.railBeforeLog) { if (state.rail === 'branches') setRail(state.railBeforeLog); state.railBeforeLog = '' }
   if (m === 'log') { if (!state.log.loaded) loadLog(); $('#log-rows').focus({ preventScroll: true }) }
@@ -2595,6 +2593,7 @@ function renderLog() {
   if (L.commits.some(c => c.hash === L.sel)) { paintLogDetail(); loadDetail(L.sel) }
   else if (L.commits.length) selectLog(L.commits[0].hash)
   else { L.sel = ''; $('#log-detail').innerHTML = '' }
+  if ($('#insp')?.dataset.insp === 'log') renderInspLog()
 }
 
 function selectLog(hash, scroll = false) {
@@ -2606,6 +2605,7 @@ function selectLog(hash, scroll = false) {
   paintLogDetail()
   $('#log-detail').scrollTop = 0
   loadDetail(hash)
+  if ($('#insp')?.dataset.insp === 'log') renderInspLog()
 }
 
 function stepLog(dir) {
@@ -2620,19 +2620,27 @@ function paintLogDetail() {
     <div class="ld-refs">${refChips(c.refs)}</div><div class="ld-body">${detailHTML(c.hash)}</div>` : ''
 }
 
-// While a commit's diff from the Log is on screen, the Log's commits move to the left nav, so another
-// commit is one click away and the diff gets the room. Same rows as History: click expands, a file opens its diff.
-function renderLogSide() {
-  const L = state.log, w = graphWidth(L.rows), view = $('#log-side')
+// While a commit's diff from the Log is on screen, the Log's commits live in the right
+// Git panel, so another commit is one click away and the left Changes rail stays put.
+// Same rows as History: click selects, a file opens its diff.
+function inspLogDetailHTML(hash) {
+  const c = state.log.commits.find(c => c.hash === hash)
+  return `${c ? `<div class="c-subj">${esc(c.subject)}</div>` : ''}${detailHTML(hash)}`
+}
+function renderInspLog() {
+  const L = state.log, w = graphWidth(L.rows), view = $('#insp-log')
+  if (!view) return
   view.innerHTML = L.commits.map((c, i) => `<div class="commit-row ${c.hash === L.sel ? 'open' : ''}${c.unpushed ? ' unpushed' : ''}" data-hash="${esc(c.hash)}" data-short="${esc(c.short)}" title="${esc(c.subject)}">
       <span class="c-graph">${graphSVG(L.rows[i], HIST_H, w)}</span>
       <div class="c-main"><div class="c-subject">${refChips(c.refs)}${esc(c.subject)}</div>
       <div class="c-meta">${pushMark(c)}<b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time">${ago(c.time)}</span></div></div>
-    </div>${c.hash === L.sel ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(L.rows[i].after, w)}</span><div class="c-dbody">${historyDetailHTML(c.hash)}</div></div>` : ''}`).join('')
+    </div>${c.hash === L.sel ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(L.rows[i].after, w)}</span><div class="c-dbody">${inspLogDetailHTML(c.hash)}</div></div>` : ''}`).join('')
+      || `<div class="list-row muted"><span>No commits match</span></div>`
   view.querySelector('.commit-row.open')?.scrollIntoView({ block: 'nearest' })
+  renderHistoryCurrent()
   if (L.sel && L.commits.some(c => c.hash === L.sel)) loadDetail(L.sel)
 }
-const showLogSide = () => { if (state.log.commits.length) setRail('logside') }
+const showInspLog = () => { if (state.log.commits.length) toggleGit(true, 'log') }
 
 function openLogDiff() {
   const c = state.log.commits.find(c => c.hash === state.log.sel)
@@ -2640,7 +2648,7 @@ function openLogDiff() {
   state.fromLog = true
   const path = $('#log-path').value.trim()
   const shown = path ? goCommitFile(c.hash, path) : showCommitDiff(c.hash, c.short)
-  shown.then(() => { state.fromLog = true; showLogSide(); setStatus('Esc returns to the log') })
+  shown.then(() => { state.fromLog = true; showInspLog(); setStatus('Esc returns to the log') })
 }
 
 function renderLogRefs() {
@@ -2778,8 +2786,8 @@ async function loadDetail(hash) {
 function paintDetail(hash) {
   const el = $(`#history .commit-row[data-hash="${CSS.escape(hash)}"] + .c-detail .c-dbody`)
   if (el) el.innerHTML = historyDetailHTML(hash)
-  const side = $(`#log-side .commit-row[data-hash="${CSS.escape(hash)}"] + .c-detail .c-dbody`)
-  if (side) side.innerHTML = detailHTML(hash)
+  const side = $(`#insp-log .commit-row[data-hash="${CSS.escape(hash)}"] + .c-detail .c-dbody`)
+  if (side) side.innerHTML = inspLogDetailHTML(hash)
   if (state.log.sel === hash) paintLogDetail()
 }
 
@@ -3168,6 +3176,7 @@ function setInspector(tab) {
   $('#insp').dataset.insp = tab
   T.toolsShown()
   document.querySelectorAll('.insp-switch button').forEach(b => b.classList.toggle('on', b.dataset.insp === tab))
+  if (tab === 'log') renderInspLog()
   markRail()
 }
 
@@ -3637,7 +3646,7 @@ function detailClick(e, hash, inLog) {
     document.querySelectorAll('.c-files .tnode.active').forEach(n => n.classList.remove('active'))
     hit('[data-cfile]').classList.add('active')
     state.fromLog = inLog
-    goCommitFile(hash, hit('[data-cfile]').dataset.cfile).then(() => { state.fromLog = inLog; if (inLog) showLogSide() })
+    goCommitFile(hash, hit('[data-cfile]').dataset.cfile).then(() => { state.fromLog = inLog; if (inLog) showInspLog() })
   } else if (hit('[data-diff]')) openLogDiff()
   else return false
   return true
@@ -3653,14 +3662,12 @@ $('#revert-bar').addEventListener('click', e => {
   if (b) gitAction({ action: b.dataset.revert })
 })
 $('#log-detail').addEventListener('click', e => detailClick(e, state.log.sel, true))
-$('#log-side').addEventListener('click', e => {
+$('#insp-log').addEventListener('click', e => {
   const hash = e.target.closest('.c-detail')?.previousElementSibling?.dataset.hash
   if (hash && detailClick(e, hash, true)) return
   const row = e.target.closest('.commit-row')
   if (!row || row.dataset.hash === state.log.sel) return
-  state.log.sel = row.dataset.hash
-  renderLogSide()
-  loadDetail(row.dataset.hash)
+  selectLog(row.dataset.hash)
 })
 // A click only selects the commit and shows its details, as in History; a click on one of its files opens
 // that file's diff, and Esc comes back to the Log.

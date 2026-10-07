@@ -736,9 +736,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .inspector .pane-head .btn { align-self: center; }
 .desk.pinned #git-close { display: none; }
 .insp { flex: 1; overflow: auto; }
-.insp[data-insp="commit"] [data-for="history"], .insp[data-insp="history"] [data-for="commit"] { display: none; }
 .sec { padding: 14px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
-.sec[data-for="history"] { border: 0; }
+.sec[data-for="history"], .sec[data-for="log"] { border: 0; }
 .sec h4 { margin: 0 0 2px; font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
 .sec h4 .tally { letter-spacing: 0; }
 .sec h4 .dim { font-weight: 400; color: var(--faint); }
@@ -1107,7 +1106,8 @@ label.set-row { cursor: pointer; }
 .dimg img { max-width: 100%; max-height: 420px; border: 1px solid var(--line); background: var(--bg); }
 
 .insp:not([data-insp="tools"]) [data-for="tools"] { display: none; }
-.insp[data-insp="tools"] [data-for="commit"], .insp[data-insp="tools"] [data-for="history"] { display: none; }
+.insp[data-insp="tools"] [data-for="commit"], .insp[data-insp="tools"] [data-for="history"], .insp[data-insp="tools"] [data-for="log"] { display: none; }
+.insp:not([data-insp="commit"]) [data-for="commit"], .insp:not([data-insp="history"]) [data-for="history"], .insp:not([data-insp="log"]) [data-for="log"] { display: none; }
 .insp[data-insp="tools"] [data-for="tools"] { border: 0; }
 .commit-extras { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
 .meter { font: 11px var(--mono); color: var(--muted); min-width: 70px; }
