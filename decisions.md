@@ -258,13 +258,12 @@ The following Git capabilities were accepted as part of the product direction:
 
 - **Accepted:** merge and rebase conflicts should be visible while reviewing.
 - **Accepted:** the first direction considered a visual conflict-resolution interface.
-- **Corrected decision:** a dedicated conflict-resolution UI is not required in v1.
+- **Corrected decision:** a dedicated conflict-resolution UI is not required in v1. The editor assists manual resolution instead of replacing it: a conflict bar over the open file (count, position, side labels with excerpts, prev/next, Accept current/incoming/both, More for all-at-once, reverse order and base), gutter ticks on marker lines, and kind-aware actions for conflicts without markers (deleted-by-us/them, both-added via `GET /api/conflict`, with `base`/`ours`/`theirs` file revisions for comparison). Review shows a conflict notice pointing to the editor. Whole-file Ours/Theirs and staging with markers left ask first; whole-file resolution snapshots before `checkout`/`add`/`rm` so Restore brings it back. `resolve:ours/theirs` handles delete conflicts (keep stages, drop removes) instead of only content conflicts.
 - **Accepted:** conflict markers should be shown for manual editing.
 - **Accepted:** the user is responsible for resolving the file contents manually.
 - **Default:** Git conflict markers remain in the file until the user edits and saves them.
-- **Default:** no ours/theirs chooser is built in v1.
-- **Deferred:** dedicated conflict resolution controls.
-- **Deferred:** guided “mark resolved” and continue/abort UI.
+- **Default:** markers of seven or more characters parse (git's `conflict-marker-size`), with labels, trailing space and CRLF tolerated; an unterminated start marker is reported rather than silently ignored.
+- **Deferred:** a full three-way side-by-side editor; guided “mark resolved” beyond the existing Continue/Abort bar.
 
 ## 11. Stash behavior
 

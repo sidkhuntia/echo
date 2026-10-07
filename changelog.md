@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Fixed the Log details pane sticking on "Loading…" when the Log is opened with a commit already selected (restored session, ref change, or filter that keeps the selection). Re-rendering the Log now ensures the commit's details are fetched, instead of only painting. In-flight detail and contains requests are de-duplicated so the extra ensure never fires a second fetch. History and the Log side rail get the same ensure, so "Finding branches…" also refreshes after the contains cache is cleared.
+- Editor handles merge conflicts instead of leaving raw markers: a conflict bar with count and position (`3 conflicts · 2 of 3`), side labels with excerpts, prev/next (`F7`/`Shift-F7`), Accept current/incoming/both (`⌘⌥1/2/3`, undo-friendly), and More for all-at-once, reverse order and base. Gutter ticks mark marker lines; unterminated markers are called out. Conflicts without markers get kind-aware actions via `GET /api/conflict` (deleted-by-us/them Keep/Delete, both-added Keep mine/Take theirs) with `base`/`ours`/`theirs` file revisions for comparison. Review points conflicted files at the editor. Whole-file Ours/Theirs and staging with markers left ask first, and whole-file resolution snapshots first (Restore brings it back) and handles delete conflicts (keep stages, drop removes).
+
 ## 0.7.0 (2026-10-07)
 
 - The repository switcher (`⌘⇧O`) lists every repository, grouped under its workspace, instead of collapsing a workspace to one "workspace" row. Each repository shows its own branch and change count and opens directly; the workspace heading carries the Stop button (stopping is still per process). The workspace overview's "Open elsewhere" section groups the same way.

@@ -57,7 +57,7 @@ test('layoutGraph gives a merge two parents on different lanes', () => {
   assert.equal(rows.length, 4)
 })
 
-import { findConflicts, resolution, resolveAll } from './conflicts.js'
+import { findConflicts, findIncomplete, hasMarkers, conflictLines, excerpt, resolution, resolveAll } from './conflicts.js'
 
 const CONFLICT = 'top\n<<<<<<< HEAD\nmine 1\nmine 2\n=======\ntheirs\n>>>>>>> feature\nmiddle\n<<<<<<< HEAD\nx\n||||||| base\nb\n=======\ny\n>>>>>>> feature\nend\n'
 
@@ -81,4 +81,22 @@ test('each side can be taken, and all at once', () => {
   assert.equal(resolveAll(CONFLICT, 'theirs'), 'top\ntheirs\nmiddle\ny\nend\n')
   assert.equal(findConflicts('plain text\n').length, 0)
   assert.equal(findConflicts('<<<<<<< a\nno end\n').length, 0)
+})
+
+test('longer markers and stray whitespace still parse', () => {
+  const t = 'a\n<<<<<<<< HEAD\nx\n========= \n y\n>>>>>>>> feature  \n'
+  const cs = findConflicts(t)
+  assert.equal(cs.length, 1)
+  assert.equal(cs[0].oursLabel, 'HEAD')
+  assert.equal(hasMarkers(t), true)
+  assert.equal(findIncomplete(t), -1)
+})
+
+test('an unterminated marker is reported, not silently dropped', () => {
+  const t = 'ok\n<<<<<<< HEAD\nmine\n'
+  assert.equal(findConflicts(t).length, 0)
+  assert.equal(findIncomplete(t), 1)
+  assert.equal(hasMarkers(t), false)
+  assert.equal(conflictLines(CONFLICT).has(1), true)
+  assert.equal(excerpt(['', '  hello  ']), 'hello')
 })

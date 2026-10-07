@@ -1118,6 +1118,12 @@ label.set-row { cursor: pointer; }
 .op-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; margin: 0 8px 6px; border: 1px solid var(--warn); background: var(--warn-soft); border-radius: 8px; font-size: 12px; flex-wrap: wrap; }
 .op-bar b { color: var(--fg); } .op-bar .grow { flex: 1; min-width: 40px; }
 .conflict-bar { gap: 8px; flex-wrap: wrap; }
+.conflict-bar .cf-warn { color: var(--warn); font-size: 12px; }
+.conflict-bar .mono { font-family: var(--mono); }
+.gl.cf { color: var(--warn); }
+.gb.cf { background: var(--warn); width: 3px; }
+.cf-note { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cf-note .btn { flex: none; }
 .xmodal-card { width: min(720px, calc(100vw - 32px)); max-height: 80vh; display: flex; flex-direction: column; padding-bottom: 0; }
 .xmodal-card.wide { width: min(1000px, calc(100vw - 32px)); }
 .xmodal-body { overflow: auto; padding: 12px 16px; flex: 1; min-height: 0; }

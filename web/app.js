@@ -605,6 +605,16 @@ function guessStaged(paths, to) {
 }
 const stage = paths => { if (!paths.length) return; guessStaged(paths, 'staged'); return gitAction({ action: 'add', paths }) }
 const unstage = paths => { if (!paths.length) return; guessStaged(paths, 'work'); return gitAction({ action: 'unstage', paths }) }
+// Taking a whole file's side throws away the other side, so it asks first.
+// The server snapshots before resolving, and delete conflicts resolve to
+// keep (add) or drop (rm) instead of a checkout.
+async function resolveWhole(paths, side) {
+  if (!paths.length) return
+  const ok = await ask({ title: paths.length === 1 ? `Take ${side} for ${basename(paths[0])}` : `Take ${side} for ${plural(paths.length, 'file')}`,
+    kicker: 'throws away', tone: 'warn', ok: `Take ${side}`,
+    html: `<p>The other side of ${paths.length === 1 ? `<b>${esc(paths[0])}</b>` : plural(paths.length, 'file')} is thrown away. A snapshot is kept first, so Restore brings it back.</p>${fileListHTML(paths.map(p => state.changes.get(p)).filter(Boolean), 'work', 6)}` })
+  if (ok) gitAction({ action: 'resolve:' + side, paths })
+}
 // In the review, staging a file is a decision made, so the view moves on to the next file with work left.
 function advanceFrom(i) {
   if (scope() !== 'head') return
@@ -970,6 +980,7 @@ function fileHTML(f, i) {
     canStage ? `<button class="btn sm do-stage" data-act="stage" title="Stage and go to the next file (s)">${ICON.plus}Stage</button>` : '',
   ].join('')
   const fnotes = !folded && f.path ? R.fileNotesHTML(f) : ''
+  const conflictNote = c && conflicted(c) ? `<div class="dnote cf-note">Conflicted — resolve in the <button class="btn sm quiet" data-act="open">Editor</button> with Accept current / incoming / both, or take a whole side from Changes. Staging marks it resolved.</div>` : ''
   let body = ''
   const lazy = !folded && state.lazy && !f.rendered && f.hunks.length && !f.note && !f.binary
   if (lazy) body = ''
@@ -985,7 +996,7 @@ function fileHTML(f, i) {
   const stat = chips + (f.binary ? '' : `${f.added ? `<span class="add">+${f.added}</span>` : ''}${f.deleted ? `<span class="del">−${f.deleted}</span>` : ''}${blocksHTML(f)}`)
   return `<section class="dfile ${folded ? 'folded' : ''}" data-i="${i}">
     <header class="dfile-head"><span class="fold">▶</span>${badge(letter, kind)}<span class="dpath" title="${esc(f.path)}">${fullPath(f.path)}</span><span class="dstat">${stat}${why ? `<span class="note">· ${why}</span>` : ''}${unsaved ? '<span class="note unsaved" title="The diff shows the file on disk; save with ⌘S in the editor">· unsaved edits</span>' : ''}</span><span class="spacer"></span><span class="dacts">${acts}</span></header>
-    <div class="dbody"${lazy ? ` data-lazy style="min-height:${f.lines * 20 + f.hunks.length * 44}px"` : ''}>${fnotes}${body}</div>
+    <div class="dbody"${lazy ? ` data-lazy style="min-height:${f.lines * 20 + f.hunks.length * 44}px"` : ''}>${conflictNote}${fnotes}${body}</div>
   </section>`
 }
 
@@ -1892,12 +1903,16 @@ function paintGutter() {
   if (state.mode !== 'file' || !tab || tab.binary) { g.innerHTML = ''; return }
   const n = lineCount(tab), mk = tab.marks
   const [first, last] = visibleRange(tab)
+  // Conflict markers get their own tick, so a conflict is visible while scrolled.
+  const lines = tabLines(tab)
+  const isMark = l => l.startsWith('<<<<<<<') || l.startsWith('=======') || l.startsWith('>>>>>>>') || l.startsWith('|||||||')
   // The blame column labels the first line of each run of lines from the same commit.
   const bl = state.blameGutter && freshBlame(tab)
   const noteLines = R.noteLinesFor(tab.path)
   let h = ''
   for (let i = first; i < last; i++) {
     const kind = mk?.kinds[i], del = mk?.dels.get(i), end = i === n - 1 ? mk?.dels.get(n) : undefined
+    const cf = i < lines.length && isMark(lines[i])
     let who = ''
     if (bl) {
       const k = bl.lines[i], c = bl.commits[k]
@@ -1905,7 +1920,8 @@ function paintGutter() {
         : `<span class="gbl" data-hash="${esc(c.hash)}" title="${esc(c.summary)}\n${esc(c.author)}, ${esc(new Date(c.time * 1000).toLocaleString())}\n${esc(c.hash.slice(0, 7))} · click to see the commit">${esc(c.author)} · ${ago(c.time).replace(' ago', '')}</span>`
     }
     const nid = noteLines.get(i + 1)
-    h += `<div class="gl" style="top:${lineTop(i) - ed.scrollTop}px${state.wrap ? `;height:${wrap.h[i]}px` : ''}">${who}${nid ? `<i class="gn" data-nid="${esc(nid)}" title="A note is here. Click to edit."></i>` : ''}${i + 1}`
+    h += `<div class="gl${cf ? ' cf' : ''}" style="top:${lineTop(i) - ed.scrollTop}px${state.wrap ? `;height:${wrap.h[i]}px` : ''}">${who}${nid ? `<i class="gn" data-nid="${esc(nid)}" title="A note is here. Click to edit."></i>` : ''}${i + 1}`
+      + (cf ? `<i class="gb cf" title="Conflict marker"></i>` : '')
       + (kind ? `<i class="gb ${kind}${mk.staged[i] ? ' staged' : ''}" title="${kind === 'add' ? 'Added' : 'Modified'}${mk.staged[i] ? ', staged' : ''}"></i>` : '')
       + (del !== undefined ? `<i class="gd${del ? ' staged' : ''}"></i>` : '')
       + (end !== undefined ? `<i class="gd end${end ? ' staged' : ''}"></i>` : '')
@@ -2576,7 +2592,7 @@ function renderLog() {
   view.innerHTML = L.groups ? head(L.groups[0]) + rowsHTML(0, L.groups[0].n) + head(L.groups[1]) + rowsHTML(L.groups[0].n)
     : rowsHTML(0) + (L.more ? '<div class="lmore faint">Loading more…</div>' : '')
   view.scrollTop = top
-  if (L.commits.some(c => c.hash === L.sel)) paintLogDetail()
+  if (L.commits.some(c => c.hash === L.sel)) { paintLogDetail(); loadDetail(L.sel) }
   else if (L.commits.length) selectLog(L.commits[0].hash)
   else { L.sel = ''; $('#log-detail').innerHTML = '' }
 }
@@ -2614,6 +2630,7 @@ function renderLogSide() {
       <div class="c-meta">${pushMark(c)}<b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time">${ago(c.time)}</span></div></div>
     </div>${c.hash === L.sel ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(L.rows[i].after, w)}</span><div class="c-dbody">${historyDetailHTML(c.hash)}</div></div>` : ''}`).join('')
   view.querySelector('.commit-row.open')?.scrollIntoView({ block: 'nearest' })
+  if (L.sel && L.commits.some(c => c.hash === L.sel)) loadDetail(L.sel)
 }
 const showLogSide = () => { if (state.log.commits.length) setRail('logside') }
 
@@ -2678,6 +2695,7 @@ function renderHistory() {
     </div>${c.hash === state.expanded ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(rows[i].after, w)}</span><div class="c-dbody">${historyDetailHTML(c.hash)}</div></div>` : ''}`).join('')
     || `<div class="list-row muted"><span>${state.hist.error ? `Couldn’t load history (${esc(state.hist.error)}). Retrying…` : 'No commits yet'}</span></div>`
   renderHistoryCurrent()
+  if (state.expanded && commits.some(c => c.hash === state.expanded)) loadDetail(state.expanded)
 }
 
 // The History row clips a long subject to one line, so the open detail repeats it in full, before anything loads.
@@ -2741,10 +2759,17 @@ function commitTreeHTML(d) {
   return render(buildTree(d.files.map(f => f.path)), 0) || '<div class="faint">No file changes</div>'
 }
 
+const inflightDetail = new Set(), inflightContains = new Set()
 async function loadDetail(hash) {
   const jobs = []
-  if (!state.details.has(hash)) jobs.push(api('/api/commit?hash=' + encodeURIComponent(hash)).then(d => state.details.set(hash, d), e => state.details.set(hash, { error: e.message })))
-  if (!state.contains.has(hash)) jobs.push(api('/api/commit/contains?hash=' + encodeURIComponent(hash)).then(c => state.contains.set(hash, c), e => state.contains.set(hash, { error: e.message })))
+  if (!state.details.has(hash) && !inflightDetail.has(hash)) {
+    inflightDetail.add(hash)
+    jobs.push(api('/api/commit?hash=' + encodeURIComponent(hash)).then(d => state.details.set(hash, d), e => state.details.set(hash, { error: e.message })).finally(() => inflightDetail.delete(hash)))
+  }
+  if (!state.contains.has(hash) && !inflightContains.has(hash)) {
+    inflightContains.add(hash)
+    jobs.push(api('/api/commit/contains?hash=' + encodeURIComponent(hash)).then(c => state.contains.set(hash, c), e => state.contains.set(hash, { error: e.message })).finally(() => inflightContains.delete(hash)))
+  }
   // Details and branches arrive separately; repaint as each lands so a slow --contains never blocks the files.
   for (const j of jobs) j.then(() => paintDetail(hash))
   await Promise.all(jobs)
@@ -3240,7 +3265,7 @@ $('#queue').addEventListener('click', e => {
   const batch = () => state.qsel.size > 1 && state.qsel.has(qkey(sec, path)) ? pickedIn(sec) : [path]
   if (act === 'stage') stage(batch())
   else if (act === 'unstage') unstage(batch())
-  else if (act === 'ours' || act === 'theirs') gitAction({ action: 'resolve:' + act, paths: batch() })
+  else if (act === 'ours' || act === 'theirs') resolveWhole(batch(), act)
   else if (act === 'discard') discard([path], true)
   else if (act === 'open') openFile(path)
   else if (!pick(e, sec, path)) goTo(path, sec)
@@ -4306,7 +4331,7 @@ async function boot() {
   persistSession()
 }
 syncScopeInputs()
-Object.assign(ctx, { currentPath, rerenderAll: () => { if (state.diffFiles.length) renderDiff() }, undoLastCommit, openPalette, reopenClosedTab, openFileHistory, closeTab, showFind, stepFind, renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => { Ed.applySettings(); TD.applyTabOrder(); applyWsBar() }, rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
+Object.assign(ctx, { currentPath, rerenderAll: () => { if (state.diffFiles.length) renderDiff() }, undoLastCommit, openPalette, reopenClosedTab, openFileHistory, closeTab, showFind, stepFind, renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, lineTopAt, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => { Ed.applySettings(); TD.applyTabOrder(); applyWsBar() }, rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
 R.initReview()
 Ops.initOps()
 Pv.initPreview()

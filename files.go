@@ -285,6 +285,8 @@ func (a *App) handleRaw(w http.ResponseWriter, r *http.Request) {
 
 // handleFileRev returns a file as it is at HEAD or in the index, for the editor's change bars.
 // A path missing from that version is not an error: it reports exists=false, as for a new file.
+// The base, ours and theirs revisions read the unmerged index stages (:1:, :2:, :3:),
+// so the editor can show each side of a conflict without another endpoint.
 func (a *App) handleFileRev(w http.ResponseWriter, rel, rev string) {
 	var object string
 	switch rev {
@@ -292,6 +294,12 @@ func (a *App) handleFileRev(w http.ResponseWriter, rel, rev string) {
 		object = "HEAD:./" + filepath.ToSlash(rel)
 	case "index":
 		object = ":./" + filepath.ToSlash(rel)
+	case "base":
+		object = ":1:./" + filepath.ToSlash(rel)
+	case "ours":
+		object = ":2:./" + filepath.ToSlash(rel)
+	case "theirs":
+		object = ":3:./" + filepath.ToSlash(rel)
 	default:
 		hash, err := a.resolveCommit(rev)
 		if err != nil {
@@ -762,7 +770,7 @@ func inGitDir(rel string) bool {
 }
 
 // rawAtRev serves a file's bytes as they are at HEAD, in the index or in a commit, for the
-// before side of an image diff.
+// before side of an image diff. The base, ours and theirs revisions read the unmerged stages.
 func (a *App) rawAtRev(w http.ResponseWriter, rel, rev string) {
 	var object string
 	switch rev {
@@ -770,6 +778,12 @@ func (a *App) rawAtRev(w http.ResponseWriter, rel, rev string) {
 		object = "HEAD:./" + filepath.ToSlash(rel)
 	case "index":
 		object = ":./" + filepath.ToSlash(rel)
+	case "base":
+		object = ":1:./" + filepath.ToSlash(rel)
+	case "ours":
+		object = ":2:./" + filepath.ToSlash(rel)
+	case "theirs":
+		object = ":3:./" + filepath.ToSlash(rel)
 	default:
 		hash, err := a.resolveCommit(rev)
 		if err != nil {
