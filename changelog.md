@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed a save that marked newer typing as saved. The tab's saved text is now the text the save request sent, not whatever the editor holds when the response arrives, so an edit typed while a save is in flight stays unsaved (the tab keeps its dirty marker, and closing it asks first).
+
 ## 0.8.0 (2026-10-07)
 
 - Opening a commit's diff from the Log no longer hijacks the left sidebar. The Log list now lives in the right Git panel (a `Log` tab beside History, plus a rail button), so Changes stays visible while reviewing a commit. Esc still returns to the full Log, and entering the Log closes an open Log drawer the same way it already closed History.

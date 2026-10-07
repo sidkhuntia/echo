@@ -11,6 +11,7 @@ import { rebaseUI } from './rebase.js'
 import { compareUI } from './compare.js'
 import * as T from './tools.js'
 import * as Ed from './editor.js'
+import { recordSave } from './editing.js'
 import * as Rp from './replace.js'
 import * as Pv from './preview.js'
 import * as FO from './fileops.js'
@@ -1970,10 +1971,11 @@ async function saveFile(force = false) {
   if (!tab || tab.binary || tab.tooLarge || state.mode !== 'file') return
   Ed.beforeSave()
   tab.content = $('#editor').value
+  const sent = tab.content
   try {
-    const content = tab.eol === '\r\n' ? tab.content.replace(/\n/g, '\r\n') : tab.content
+    const content = tab.eol === '\r\n' ? sent.replace(/\n/g, '\r\n') : sent
     const res = await post('/api/file', { action: 'save', path: tab.path, content, baseHash: tab.hash, force })
-    Object.assign(tab, { saved: tab.content, hash: res.hash, conflict: '' })
+    recordSave(tab, sent, res.hash)
     state.diffStale = true
     renderTabs(); renderEditor()
     setStatus('Saved ' + tab.path, 'ok')
