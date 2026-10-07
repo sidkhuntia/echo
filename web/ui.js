@@ -52,8 +52,6 @@ export function closeModal() {
   if (back?.isConnected) back.focus({ preventScroll: true })
 }
 
-export const modalOpen = () => !!current
-
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && current) { e.preventDefault(); e.stopPropagation(); closeModal() }
   else if (e.key === 'Tab' && current) {

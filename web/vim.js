@@ -116,14 +116,14 @@ export function feed(vs, key, text, s, e) {
   const finish = (sel, edit) => { out.sel = sel; out.edit = edit; out.mode = vs.mode; return out }
   let t = text
   const pos0 = vs.mode === 'visual' || vs.mode === 'vline' ? vs.cur : s
-  const ensureClamp = p => vs.mode === 'normal' ? clampNormal(t, p) : p
 
   // ---- insert mode: the browser types; only Escape comes here
   if (vs.mode === 'insert') {
     if (key === 'Escape' || key === 'C-[') {
       vs.mode = 'normal'
       if (vs.rec) { vs.rec.text = t.slice(vs.insFrom, s); vs.dot = vs.rec; vs.rec = null }
-      return finish([clampNormal(t, Math.max(ls(t, s), s - 1))] .concat([clampNormal(t, Math.max(ls(t, s), s - 1))]))
+      const p = clampNormal(t, Math.max(ls(t, s), s - 1))
+      return finish([p, p])
     }
     return null
   }
