@@ -2,7 +2,7 @@
 
 A small local-first proof desk for reviewing code written by coding agents, on macOS and Linux.
 
-![Review: hunks with word-level marks, a note for the agent, and per-hunk Stage, Discard, Accept and Reject](docs/img/review.png)
+![Review: hunks with word-level marks, a note for the agent, and per-hunk Stage and Discard](docs/img/review.png)
 
 ## Install
 
@@ -62,7 +62,7 @@ echo-desk update             # install the latest release
 1. An agent changes files. echo shows them as they change: the **Review** is one scrolling diff with a trace of every file and hunk in the title bar.
 2. Go hunk by hunk (`j`/`k`). leave a **note** (`c`, or click the sign column of a line), **stage a hunk or just some of its lines** (click line numbers to pick lines, `c` then notes exactly those), or **discard** a hunk. Changed words are marked inside changed lines. Notes can also go on a whole file (a to-do, from its header), or on lines you select in the editor (**Note**, `⌘⌥M`); a dot in the editor gutter shows where they are. Notes describe your working tree, so they are written on All changes or Unstaged, not on a commit.
 3. **Notes → Copy for agent** puts every open note on the clipboard with its file, line and the code you were looking at, wrapped in instructions that tell the agent to change only what each note asks, answer questions instead of guessing, and leave staging and commits to you. **Copy notes** gives just the list.
-4. Commit what you accept. Anything you discard is snapshotted first, and **Restore** in the Changes list brings it back.
+4. Commit what you accept. Anything you discard is snapshotted first; **⌘⇧P** → *Restore the last discard* brings the last one back.
 
 ![Log: the commit graph with branch and tag labels](docs/img/log.png)
 
