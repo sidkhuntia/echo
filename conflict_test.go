@@ -106,3 +106,48 @@ func TestFileRevServesConflictStages(t *testing.T) {
 		}
 	}
 }
+
+// Dropping a delete conflict runs `git rm`: the path leaves the index and the
+// disk, and the snapshot taken first is what brings it back.
+func TestResolveDropRemovesDeletedPath(t *testing.T) {
+	cases := map[string]struct {
+		deleteOnMain bool   // main deletes and side changes, or the reverse
+		side         string // resolve:ours or resolve:theirs
+	}{
+		"deleted-by-us, ours drops":     {deleteOnMain: true, side: "ours"},
+		"deleted-by-them, theirs drops": {deleteOnMain: false, side: "theirs"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			a := cleanRepo(t)
+			commitFile(t, a, "k.txt", "base\n", "k")
+			gitIn(t, a, "switch", "-q", "-c", "side")
+			if tc.deleteOnMain {
+				commitFile(t, a, "k.txt", "side\n", "side")
+			} else {
+				gitIn(t, a, "rm", "-q", "k.txt")
+				gitIn(t, a, "commit", "-q", "-m", "del")
+			}
+			gitIn(t, a, "switch", "-q", "main")
+			if tc.deleteOnMain {
+				gitIn(t, a, "rm", "-q", "k.txt")
+				gitIn(t, a, "commit", "-q", "-m", "del")
+			} else {
+				commitFile(t, a, "k.txt", "main\n", "main")
+			}
+			if code, _ := post(t, a, "/api/git", map[string]any{"action": "merge", "from": "side"}); code == 200 {
+				t.Fatal("merge should conflict")
+			}
+			act(t, a, map[string]any{"action": "resolve:" + tc.side, "paths": []string{"k.txt"}})
+			if got := readFile(t, a, "k.txt"); got != "<missing>" {
+				t.Errorf("k.txt still on disk: %q", got)
+			}
+			if left := strings.TrimSpace(gitIn(t, a, "ls-files", "-u")); left != "" {
+				t.Errorf("unmerged entries remain: %q", left)
+			}
+			if a.lastDiscard() == nil {
+				t.Error("drop left no snapshot to restore")
+			}
+		})
+	}
+}
