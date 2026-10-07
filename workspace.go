@@ -157,17 +157,20 @@ func (w *Workspace) list() []*wsRepo {
 	return append([]*wsRepo(nil), w.repos...)
 }
 
-// instanceInfo is what the workspace's entry in the repository switcher reports.
-func (w *Workspace) instanceInfo() (map[string]string, int) {
+// instanceInfo is what the workspace's entry in the repository switcher reports:
+// its repositories' ids and roots (so echo started inside one opens it there), the
+// total change count, and one summary per repository (so the switcher can list every
+// repository grouped under its workspace). The summaries are computed once and reused
+// for both, so reporting details costs no extra Git work.
+func (w *Workspace) instanceInfo() (map[string]string, int, []RepoSummary) {
+	sums := w.summaries()
 	repos := map[string]string{}
-	for _, r := range w.list() {
-		repos[r.ID] = r.Root
-	}
 	changes := 0
-	for _, s := range w.summaries() {
+	for _, s := range sums {
+		repos[s.ID] = s.Root
 		changes += s.Staged + s.Unstaged + s.Untracked + s.Conflicts
 	}
-	return repos, changes
+	return repos, changes, sums
 }
 
 // RepoSummary is one row of the overview: where a repository is and how much is changed in it.

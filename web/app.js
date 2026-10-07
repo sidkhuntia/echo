@@ -2336,8 +2336,11 @@ function renderBranchPop() {
 
 // ---------- repositories ----------
 // Each repository runs in its own echo process on its own port; the server finds its siblings.
+// A workspace process serves many repositories, so the switcher lists every one of them
+// grouped under its workspace instead of collapsing the workspace to a single row.
 let repos = [], repoSel = 0
-// Keys: ws:<id> is a repository of this workspace, p:<port> is another echo process.
+// Keys: ws:<id> is a repository of this workspace, p:<port> is another echo process's
+// single repository, pr:<port>:<id> is a repository inside another workspace process.
 const hereKey = () => BASE ? 'ws:' + WS_ID : 'p:' + location.port
 async function toggleRepoPop(open = $('#repo-pop').hidden) {
   $('#repo-pop').hidden = !open
@@ -2350,21 +2353,43 @@ async function toggleRepoPop(open = $('#repo-pop').hidden) {
   $('#repo-filter').focus()
   renderRepoPop()
   try {
-    // Every repository open in echo: this workspace's own, then the other echo processes (a workspace is one row).
+    // Every repository open in echo: this workspace's own, then every repository in every
+    // other echo process (a workspace contributes one row per repository it serves).
     const procs = (await api(BASE ? '/ws/instances' : '/api/instances')).filter(r => !BASE || r.port !== +location.port)
-    const own = BASE ? (await api('/ws/repos')).repos.map(r => ({ key: 'ws:' + r.id, group: 'ws', root: r.root, branch: r.branch, changes: wsChanged(r) })) : []
-    repos = own.concat(procs.map(r => ({ ...r, key: 'p:' + r.port, group: 'proc', workspace: !!r.repos })))
+    const own = BASE ? (await api('/ws/repos')).repos.map(r => ({ key: 'ws:' + r.id, group: 'own', root: r.root, branch: r.branch, changes: wsChanged(r), port: +location.port })) : []
+    repos = own.concat(expandProcs(procs))
   } catch (e) { setStatus(e.message, 'err') }
   // Start on the first other repository, so ⌘⇧O then Enter hops away like an app switcher.
   repoSel = Math.max(0, repos.findIndex(r => r.key !== hereKey()))
   if (!$('#repo-pop').hidden) renderRepoPop()
 }
 
-// Every word typed must appear in the repository's name or branch. The folder path is not searched: in a
-// workspace it is the same for all of them, so a word from it would match everything.
+// expandProcs turns sibling processes into switcher rows: one row for a single repository,
+// one row per repository for a workspace (grouped under it). Details carry branch and
+// change counts; the Repos map is the fallback when details are missing.
+function expandProcs(procs) {
+  const out = []
+  for (const p of procs) {
+    if (p.repos || p.details) {
+      const details = (p.details && p.details.length ? p.details : Object.entries(p.repos || {}).map(([id, root]) => ({ id, root, branch: '', staged: 0, unstaged: 0, untracked: 0, conflicts: 0 })))
+        .slice().sort((a, b) => String(a.id).localeCompare(String(b.id)))
+      for (const d of details) {
+        out.push({ key: `pr:${p.port}:${d.id}`, group: 'ext:' + p.port, root: d.root, branch: d.branch || '', changes: wsChanged(d), port: p.port, wsRoot: p.root, repoID: d.id })
+      }
+      if (!details.length) out.push({ key: 'p:' + p.port, group: 'solo', root: p.root, branch: p.branch || '', changes: p.changes || 0, port: p.port, wsRoot: p.root })
+    } else {
+      out.push({ key: 'p:' + p.port, group: 'solo', root: p.root, branch: p.branch || '', changes: p.changes || 0, port: p.port })
+    }
+  }
+  return out
+}
+
+// Every word typed must appear in the repository's name or branch (or its workspace's name).
+// The folder path is not searched: in a workspace it is the same for all of them, so a word
+// from it would match everything.
 const repoMatches = () => {
   const words = $('#repo-filter').value.toLowerCase().split(/\s+/).filter(Boolean)
-  return repos.filter(r => { const hay = `${basename(r.root)} ${r.branch || ''}`.toLowerCase(); return words.every(w => hay.includes(w)) })
+  return repos.filter(r => { const hay = `${basename(r.root)} ${r.branch || ''} ${r.wsRoot ? basename(r.wsRoot) : ''}`.toLowerCase(); return words.every(w => hay.includes(w)) })
 }
 
 function renderRepoPop() {
@@ -2372,14 +2397,22 @@ function renderRepoPop() {
   repoSel = Math.min(repoSel, Math.max(0, list.length - 1))
   const row = (r, i) => `<div class="th rp-row ${r.key === here ? 'on' : ''} ${i === repoSel ? 'sel' : ''}" data-key="${esc(r.key)}" data-i="${i}" title="${esc(r.root)}">
     <span class="ok">${r.key === here ? '✓' : ''}</span>
-    <span class="rp-main"><span class="nm"><b>${esc(basename(r.root))}</b>${r.workspace ? '<span class="meta">workspace</span>' : r.branch ? `<span class="meta">${esc(r.branch)}</span>` : ''}</span></span>
-    <span class="rp-end">${r.changes ? `<span class="rp-n" title="${r.changes} changed files">${r.changes}</span>` : ''}${r.group === 'proc' ? `<span class="port">:${r.port}</span><button class="rp-stop" data-repo-stop="${r.port}" title="Stop this echo process">Stop</button>` : ''}</span></div>`
-  // In a workspace the list has two groups; each gets a heading so "outside this workspace" is plain.
-  const heads = { ws: 'In this workspace', proc: BASE ? 'Elsewhere' : '' }
-  let last = '', html = ''
+    <span class="rp-main"><span class="nm"><b>${esc(basename(r.root))}</b>${r.branch ? `<span class="meta">${esc(r.branch)}</span>` : ''}</span></span>
+    <span class="rp-end">${r.changes ? `<span class="rp-n" title="${r.changes} changed files">${r.changes}</span>` : ''}${r.group === 'solo' ? `<span class="port">:${r.port}</span><button class="rp-stop" data-repo-stop="${r.port}" title="Stop this echo process">Stop</button>` : ''}</span></div>`
+  // Groups in first-seen order: this workspace's own repositories, single repositories
+  // ("Elsewhere" outside this workspace), and one heading per outside workspace.
+  const seen = new Set()
+  let html = ''
   list.forEach((r, i) => {
-    if (BASE && r.group !== last) html += `<h5 class="rp-h">${heads[r.group]}</h5>`
-    last = r.group
+    if (!seen.has(r.group)) {
+      seen.add(r.group)
+      if (r.group === 'own') html += `<h5 class="rp-h">In this workspace</h5>`
+      else if (r.group === 'solo' && BASE) html += `<h5 class="rp-h">Elsewhere</h5>`
+      else if (r.group.startsWith('ext:')) {
+        const port = r.port, ws = basename(r.wsRoot || '')
+        html += `<h5 class="rp-h rp-gh"><span>${esc(ws)} <span class="port">:${port}</span></span><button class="rp-stop" data-repo-stop="${port}" title="Stop this workspace's echo process">Stop</button></h5>`
+      }
+    }
     html += row(r, i)
   })
   $('#repo-list').innerHTML = html
@@ -2388,7 +2421,12 @@ function renderRepoPop() {
 }
 
 function switchRepo(key, newTab) {
-  const url = key.startsWith('ws:') ? `/r/${encodeURIComponent(key.slice(3))}/` : `http://127.0.0.1:${key.slice(2)}/`
+  let url
+  if (key.startsWith('ws:')) url = `/r/${encodeURIComponent(key.slice(3))}/`
+  else if (key.startsWith('pr:')) {
+    const cut = key.slice(3).indexOf(':')
+    url = `http://127.0.0.1:${key.slice(3, 3 + cut)}/r/${encodeURIComponent(key.slice(4 + cut))}/`
+  } else url = `http://127.0.0.1:${key.slice(2)}/`
   toggleRepoPop(false)
   persistSession(true)
   if (newTab) window.open(url, '_blank')
@@ -2399,8 +2437,11 @@ function switchRepo(key, newTab) {
 // server stops, so the tab that asked can say so; a tab on the stopped repository keeps its page and
 // says the server is gone, like any other lost connection.
 async function stopRepo(port, all) {
-  const what = all ? 'every echo process' : basename(repos.find(r => r.port === port)?.root || '')
-  const ok = await ask({ title: all ? 'Stop every echo process' : `Stop ${what}`, kicker: 'stops echo', tone: 'danger', ok: 'Stop', html: `<p>${all ? 'Every repository open in echo will stop.' : `<b>${esc(what)}</b>’s echo process will stop.`}</p><p class="note">Running work is finished first. Reopen a repository with the <code>echo</code> command in its folder.</p>` })
+  const found = repos.find(r => r.port === port)
+  const isWS = !!found?.wsRoot
+  const what = all ? 'every echo process' : basename(found?.wsRoot || found?.root || '')
+  const n = isWS ? repos.filter(r => r.port === port).length : 0
+  const ok = await ask({ title: all ? 'Stop every echo process' : `Stop ${what}`, kicker: 'stops echo', tone: 'danger', ok: 'Stop', html: `<p>${all ? 'Every repository open in echo will stop.' : isWS ? `<b>${esc(what)}</b>’s echo process will stop (${n} ${n === 1 ? 'repository' : 'repositories'}).` : `<b>${esc(what)}</b>’s echo process will stop.`}</p><p class="note">Running work is finished first. Reopen a repository with the <code>echo</code> command in its folder.</p>` })
   if (!ok) return
   try { await post('/api/shutdown', { port: all ? 0 : port, all }) } catch (e) { return setStatus(e.message, 'err') }
   if (all) return setStatus('echo is stopping.', 'ok')

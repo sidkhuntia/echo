@@ -138,12 +138,21 @@ events.onmessage = e => applySnapshot(JSON.parse(e.data))
 events.onerror = () => { $('.live').classList.add('off'); setStatus('Lost the echo server — retrying…', 'err', true) }
 
 // Other echo processes on this machine (repositories or workspaces outside this one), found again every few seconds.
+// A workspace contributes one row per repository it serves, grouped under its name, so every
+// open repository is reachable from here — not just the workspace as a single row.
 async function loadElsewhere() {
   try {
     const here = +location.port
     const list = (await api('/ws/instances')).filter(i => i.port !== here)
     $('#ws-else').hidden = !list.length
-    $('#ws-else-list').innerHTML = list.map(i => `<a class="ws-row else" href="http://127.0.0.1:${i.port}/" title="${esc(i.root)}"><span class="nm"><b>${esc(basename(i.root))}</b></span><span class="mono">${i.repos ? `workspace · ${Object.keys(i.repos).length} repositories` : esc(i.branch || '')}</span><span class="faint mono">:${i.port}</span>${num(i.changes)}</a>`).join('')
+    const cnt = r => (r.staged || 0) + (r.unstaged || 0) + (r.untracked || 0) + (r.conflicts || 0)
+    $('#ws-else-list').innerHTML = list.map(i => {
+      if (!(i.repos || i.details)) return `<a class="ws-row else" href="http://127.0.0.1:${i.port}/" title="${esc(i.root)}"><span class="nm"><b>${esc(basename(i.root))}</b></span><span class="mono">${esc(i.branch || '')}</span><span class="faint mono">:${i.port}</span>${num(i.changes)}</a>`
+      const details = (i.details && i.details.length ? i.details : Object.entries(i.repos || {}).map(([id, root]) => ({ id, root, branch: '' })))
+        .slice().sort((a, b) => String(a.id).localeCompare(String(b.id)))
+      const rows = details.map(d => `<a class="ws-row else" href="http://127.0.0.1:${i.port}/r/${encodeURIComponent(d.id)}/" title="${esc(d.root)}"><span class="nm"><b>${esc(basename(d.root))}</b></span><span class="mono">${esc(d.branch || '')}</span><span class="faint mono">:${i.port}</span>${num(cnt(d) || 0)}</a>`).join('')
+      return `<div class="ws-gh faint">${esc(basename(i.root))} · workspace · ${details.length} ${details.length === 1 ? 'repository' : 'repositories'}</div>${rows}`
+    }).join('')
   } catch {}
 }
 loadElsewhere()

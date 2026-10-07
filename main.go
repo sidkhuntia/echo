@@ -173,6 +173,10 @@ type Instance struct {
 	// Repos is set for a workspace: its repositories' ids and roots, so echo started inside one of
 	// them can open it there instead of starting a second process.
 	Repos map[string]string `json:"repos,omitempty"`
+	// Details is set for a workspace alongside Repos: one entry per repository with its
+	// branch and change counts, so the switcher can list every repository grouped
+	// under its workspace instead of collapsing the workspace to one row.
+	Details []RepoSummary `json:"details,omitempty"`
 }
 
 func main() {
@@ -612,7 +616,7 @@ func validateConfig(c Config) error {
 func (a *App) handleInstance(w http.ResponseWriter, r *http.Request) {
 	in := Instance{Root: a.root, Port: a.port}
 	if a.ws != nil {
-		in.Repos, in.Changes = a.ws.instanceInfo()
+		in.Repos, in.Changes, in.Details = a.ws.instanceInfo()
 		writeJSON(w, in)
 		return
 	}
