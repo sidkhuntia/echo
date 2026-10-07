@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Git status makes fewer Git processes per poll. The numstat diffs run only when a change needs their side (tracked changes, staged, unstaged), and HEAD is looked up only when the diff against it fails. An idle repository now costs 2 processes per status request instead of 6; a repository with staged and unstaged changes costs 5 instead of 6. Results are unchanged.
+
 ## 0.8.0 (2026-10-07)
 
 - Opening a commit's diff from the Log no longer hijacks the left sidebar. The Log list now lives in the right Git panel (a `Log` tab beside History, plus a rail button), so Changes stays visible while reviewing a commit. Esc still returns to the full Log, and entering the Log closes an open Log drawer the same way it already closed History.

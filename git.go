@@ -180,10 +180,10 @@ func (a *App) gitStatus() GitStatus {
 		status.Error = "git not found"
 		return status
 	}
-	// The Git calls below do not depend on each other, so they run together; the diffs are the slow part.
+	// Two rounds of Git calls. Round one (branch, status) does not depend on anything else. Round two
+	// runs only the numstat diffs whose side has changes, so an idle poll starts two processes, not six.
 	var branchOut, statusOut string
 	var branchErr, statusErr error
-	stats, index, work := map[string]Change{}, map[string]Change{}, map[string]Change{}
 	var wg sync.WaitGroup
 	run := func(f func()) {
 		wg.Add(1)
@@ -192,21 +192,6 @@ func (a *App) gitStatus() GitStatus {
 	run(func() { branchOut, branchErr = a.git("branch", "--show-current") })
 	run(func() {
 		statusOut, statusErr = a.git("status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all")
-	})
-	run(func() {
-		if out, err := a.git("diff", "--numstat", "-z", "--no-renames", a.base(), "--"); err == nil {
-			stats = parseNumstat(out)
-		}
-	})
-	run(func() {
-		if out, err := a.git("diff", "--cached", "--numstat", "-z", "--no-renames", "--"); err == nil {
-			index = parseNumstat(out)
-		}
-	})
-	run(func() {
-		if out, err := a.git("diff", "--numstat", "-z", "--no-renames", "--"); err == nil {
-			work = parseNumstat(out)
-		}
 	})
 	wg.Wait()
 	if branchErr != nil {
@@ -226,6 +211,34 @@ func (a *App) gitStatus() GitStatus {
 	}
 	status.Changes = parsePorcelain(statusOut)
 	defer a.forgetSigs(status.Changes)
+
+	// Round two. Each numstat is read only when some change needs its side: stats for every tracked
+	// change, index for staged ones, work for unstaged tracked ones. Untracked files are sized from sig.
+	stats, index, work := map[string]Change{}, map[string]Change{}, map[string]Change{}
+	needStats, needIndex, needWork := false, false, false
+	for _, c := range status.Changes {
+		needStats = needStats || c.Code != "??"
+		needIndex = needIndex || c.Staged
+		needWork = needWork || (c.Code != "??" && c.Code[1] != ' ')
+	}
+	if needStats {
+		run(func() { stats = a.numstatAgainstBase() })
+	}
+	if needIndex {
+		run(func() {
+			if out, err := a.git("diff", "--cached", "--numstat", "-z", "--no-renames", "--"); err == nil {
+				index = parseNumstat(out)
+			}
+		})
+	}
+	if needWork {
+		run(func() {
+			if out, err := a.git("diff", "--numstat", "-z", "--no-renames", "--"); err == nil {
+				work = parseNumstat(out)
+			}
+		})
+	}
+	wg.Wait()
 	for i := range status.Changes {
 		c := &status.Changes[i]
 		sig, ok := a.sig(c.Path)
@@ -261,6 +274,20 @@ func (a *App) base() string {
 		return emptyTree
 	}
 	return "HEAD"
+}
+
+// numstatAgainstBase is `git diff --numstat` of the working tree against HEAD. The base is only looked
+// up when HEAD is missing, so the usual case is one process; before the first commit it compares
+// against the empty tree, as base() does.
+func (a *App) numstatAgainstBase() map[string]Change {
+	out, err := a.git("diff", "--numstat", "-z", "--no-renames", "HEAD", "--")
+	if err != nil && a.base() == emptyTree {
+		out, err = a.git("diff", "--numstat", "-z", "--no-renames", emptyTree, "--")
+	}
+	if err != nil {
+		return map[string]Change{}
+	}
+	return parseNumstat(out)
 }
 
 func (a *App) handleGit(w http.ResponseWriter, r *http.Request) {
