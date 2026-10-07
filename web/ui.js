@@ -43,8 +43,6 @@ export function closeModal() {
   root.innerHTML = ''
 }
 
-export const modalOpen = () => !!current
-
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && current) { e.preventDefault(); e.stopPropagation(); closeModal() }
 }, true)

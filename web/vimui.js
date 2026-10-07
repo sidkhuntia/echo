@@ -131,4 +131,3 @@ export function initVim() {
 
 // Called after the editor paints, so the badge and cursor follow tab and mode changes.
 export const refreshVim = () => indicator()
-export function resetVim() { vs = newVim(); indicator() }

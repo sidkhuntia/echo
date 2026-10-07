@@ -75,8 +75,6 @@ export async function openSide(path) {
   } catch (e) { c().setStatus(e.message, 'err') }
 }
 
-export const sideOpen = () => !!side
-
 export function paintSide() {
   const el = c().$('#side'), stage = c().$('.stage')
   const show = !!side && c().state.mode === 'file'
