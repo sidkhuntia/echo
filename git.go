@@ -257,10 +257,17 @@ func (a *App) gitStatus() GitStatus {
 
 // base is the tree that "all changes" compares against: HEAD, or the empty tree before the first commit.
 func (a *App) base() string {
-	if _, err := a.git("rev-parse", "--verify", "-q", "HEAD"); err != nil {
+	if !a.hasHead() {
 		return emptyTree
 	}
 	return "HEAD"
+}
+
+// hasHead reports whether the repository has a first commit. A fresh `git init` has none, and
+// commands that read HEAD (restore --staged, restore --source) fail there until one exists.
+func (a *App) hasHead() bool {
+	_, err := a.git("rev-parse", "--verify", "-q", "HEAD")
+	return err == nil
 }
 
 func (a *App) handleGit(w http.ResponseWriter, r *http.Request) {
@@ -370,6 +377,10 @@ func (a *App) gitArgs(req gitRequest) ([]string, error) {
 	case "add":
 		return append([]string{"add", "--"}, paths...), nil
 	case "unstage":
+		// Before the first commit there is no HEAD to restore from, but reset still unstages.
+		if !a.hasHead() {
+			return append([]string{"reset", "-q", "--"}, paths...), nil
+		}
 		return append([]string{"restore", "--staged", "--"}, paths...), nil
 	case "commit":
 		if strings.TrimSpace(req.Message) == "" {
@@ -678,6 +689,11 @@ func (a *App) discard(paths []string, worktree bool) (string, error) {
 	if len(tracked) > 0 {
 		if worktree {
 			return a.gitCombined(append([]string{"restore", "--worktree", "--"}, tracked...)...)
+		}
+		if !a.hasHead() {
+			// With no HEAD, restore cannot drop a staged new file; rm removes it from the index and disk.
+			// The snapshot above already kept its content.
+			return a.gitCombined(append([]string{"rm", "-r", "-q", "-f", "--"}, tracked...)...)
 		}
 		return a.gitCombined(append([]string{"restore", "--staged", "--worktree", "--"}, tracked...)...)
 	}

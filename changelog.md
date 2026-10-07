@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed unstaging and discarding staged files in a repository with no commits yet (a fresh `git init`). Unstage failed with "could not resolve HEAD", and discard of a staged new file failed the same way, leaving the file staged. Unstage now uses `git reset`, and discard removes the staged file (its content is still snapshotted first) when there is no HEAD.
+
 ## 0.8.0 (2026-10-07)
 
 - Opening a commit's diff from the Log no longer hijacks the left sidebar. The Log list now lives in the right Git panel (a `Log` tab beside History, plus a rail button), so Changes stays visible while reviewing a commit. Esc still returns to the full Log, and entering the Log closes an open Log drawer the same way it already closed History.

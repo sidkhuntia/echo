@@ -371,6 +371,42 @@ func TestDiscardRemovesUntracked(t *testing.T) {
 	}
 }
 
+// A fresh repository has no commits yet, and unstaging or discarding a staged file must still work there.
+func TestStageUnstageDiscardBeforeFirstCommit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q", "-b", "main").CombinedOutput(); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	a := newApp(dir, 6030)
+	if err := os.WriteFile(filepath.Join(dir, "first.txt"), []byte("draft\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(a, "POST", "/api/git", `{"action":"add","paths":["first.txt"]}`); w.Code != 200 {
+		t.Fatalf("add: %d %s", w.Code, w.Body)
+	}
+	if w := request(a, "POST", "/api/git", `{"action":"unstage","paths":["first.txt"]}`); w.Code != 200 {
+		t.Fatalf("unstage before the first commit: %d %s", w.Code, w.Body)
+	}
+	if c := a.gitStatus().Changes; len(c) != 1 || c[0].Code != "??" {
+		t.Fatalf("after unstage changes = %+v, want first.txt untracked", c)
+	}
+	if w := request(a, "POST", "/api/git", `{"action":"add","paths":["first.txt"]}`); w.Code != 200 {
+		t.Fatalf("re-add: %d %s", w.Code, w.Body)
+	}
+	if w := request(a, "POST", "/api/git", `{"action":"discard","paths":["first.txt"]}`); w.Code != 200 {
+		t.Fatalf("discard a staged file before the first commit: %d %s", w.Code, w.Body)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "first.txt")); !os.IsNotExist(err) {
+		t.Error("discarded file survived")
+	}
+	if c := a.gitStatus().Changes; len(c) != 0 {
+		t.Errorf("changes after discard = %+v", c)
+	}
+}
+
 func TestParseBranches(t *testing.T) {
 	got := parseBranches("main\torigin/main\tahead 2, behind 3\nfeat\torigin/feat\tgone\nlocal\t\t\n")
 	want := []Branch{
