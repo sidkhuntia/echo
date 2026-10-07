@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keyboard focus stays put around overlays. The command palette and the in-app dialogs (Compare, merge and rebase, stash and commit viewers, and the rest) now give focus back to the control that opened them when they close, whatever closes them (Esc, a click outside, or choosing a command). Tab stays inside an open dialog instead of moving to the page behind it, and inside the palette it does nothing.
+
 ## 0.8.0 (2026-10-07)
 
 - Opening a commit's diff from the Log no longer hijacks the left sidebar. The Log list now lives in the right Git panel (a `Log` tab beside History, plus a rail button), so Changes stays visible while reviewing a commit. Esc still returns to the full Log, and entering the Log closes an open Log drawer the same way it already closed History.

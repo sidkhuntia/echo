@@ -391,6 +391,7 @@ The following Git capabilities were accepted as part of the product direction:
 - **Default:** use `⌘⇧O` for the repository switcher, `⌘K`/`⌘P` for file search, `⌘⇧F` for content search, `⌘B` for the file index, `⌘J` for the action ledger, `⌘D` for diff, and `⌘S` for save on macOS.
 - **Default:** `?` opens the shortcut card.
 - **Deferred:** full vim modal navigation and command language.
+- **Accepted (2026-10-08):** overlays keep keyboard focus. The command palette and `openModal` dialogs return focus to the opening control on close, and Tab cycles inside an open dialog (`nextInDialog` in `web/focus.js`). This is focus management only; the wider accessibility pass (ARIA roles on the palette, listbox and tabs) stays in section 21's declined list.
 - **Deferred:** user-remappable shortcuts.
 
 ## 16. Visual design

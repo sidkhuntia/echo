@@ -3039,8 +3039,12 @@ function highlightHits(s, hits) {
   return [...s].map((ch, i) => set.has(i) ? `<mark>${esc(ch)}</mark>` : esc(ch)).join('')
 }
 
+// The control that had focus when the palette opened; closing the palette gives focus back to it.
+let paletteReturn = null
 async function openPalette(initial = '') {
+  const opening = $('#palette').hidden, back = document.activeElement
   await ensureTree()
+  if (opening) paletteReturn = back
   $('#palette').hidden = false
   $('#palette-input').value = initial
   renderPalette()
@@ -3081,10 +3085,18 @@ function paintPalette() {
   $('#palette-list .sel')?.scrollIntoView({ block: 'nearest' })
 }
 
+function closePalette() {
+  if ($('#palette').hidden) return
+  $('#palette').hidden = true
+  const back = paletteReturn
+  paletteReturn = null
+  if (back?.isConnected) back.focus({ preventScroll: true })
+}
+
 function choosePalette(i) {
   const it = state.palette.items[i]
   if (!it) return
-  $('#palette').hidden = true
+  closePalette()
   if (it.cmd) return void setTimeout(() => it.cmd.run(), 0)
   if (state.tree.some(f => f.path === it.p)) openFile(it.p)
   else goTo(it.p)
@@ -4058,7 +4070,7 @@ $('#vim-mode').onchange = async () => {
   try { await post('/api/config', { vim: state.config.vim }); setStatus('Settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
 }
 $('#palette').onclick = e => {
-  if (e.target === $('#palette')) $('#palette').hidden = true
+  if (e.target === $('#palette')) closePalette()
   const item = e.target.closest('.pitem')
   if (item) choosePalette(+item.dataset.i)
 }
@@ -4068,7 +4080,9 @@ $('#palette-input').addEventListener('keydown', e => {
   if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) { e.preventDefault(); p.sel = Math.min(p.items.length - 1, p.sel + 1); paintPalette() }
   else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')) { e.preventDefault(); p.sel = Math.max(0, p.sel - 1); paintPalette() }
   else if (e.key === 'Enter') { e.preventDefault(); choosePalette(p.sel) }
-  else if (e.key === 'Escape') { e.preventDefault(); $('#palette').hidden = true }
+  else if (e.key === 'Escape') { e.preventDefault(); closePalette() }
+  // The input is the palette's only control, so Tab has nowhere to go inside it and must not reach the page behind.
+  else if (e.key === 'Tab') e.preventDefault()
 })
 
 document.addEventListener('keydown', e => {

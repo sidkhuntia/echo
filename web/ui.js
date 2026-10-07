@@ -1,13 +1,19 @@
 // Small shared pieces for the feature modules: a modal that holds interactive content, and a
 // context menu. (dialog.js-style confirmations stay in app.js's ask().)
 import { ctx } from './ctx.js'
+import { nextInDialog } from './focus.js'
 
 let current = null
+// The control that had focus before the modal opened; closing gives focus back to it.
+let returnFocus = null
+const FOCUSABLE = 'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'
 
 // openModal shows a card with a body and action buttons. `body` is an element or trusted HTML.
-// It returns { el, close }; clicking outside or pressing Esc closes it.
+// It returns { el, close }; clicking outside or pressing Esc closes it. Tab stays inside the card,
+// and closing returns focus to the control that opened it.
 export function openModal({ title, kicker = '', body = '', wide = false, actions = [] }) {
   closeModal()
+  returnFocus = document.activeElement
   const root = ctx.$('#xmodal')
   root.innerHTML = `<div class="modal-card xmodal-card${wide ? ' wide' : ''}" role="dialog" aria-modal="true" aria-label="${ctx.esc(title)}">
     <div class="modal-head"><span>${ctx.esc(title)}${kicker ? ` <span class="dialog-tag">${ctx.esc(kicker)}</span>` : ''}</span><button class="btn quiet icon" data-xclose title="Close (Esc)">×</button></div>
@@ -41,12 +47,20 @@ export function closeModal() {
   current = null
   root.hidden = true
   root.innerHTML = ''
+  const back = returnFocus
+  returnFocus = null
+  if (back?.isConnected) back.focus({ preventScroll: true })
 }
 
 export const modalOpen = () => !!current
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && current) { e.preventDefault(); e.stopPropagation(); closeModal() }
+  else if (e.key === 'Tab' && current) {
+    e.preventDefault()
+    const items = [...current.root.querySelectorAll(FOCUSABLE)].filter(el => !el.disabled && !el.closest('[hidden]'))
+    nextInDialog(items, document.activeElement, e.shiftKey)?.focus()
+  }
 }, true)
 
 // popMenu shows a context menu at a point. items: { label, run, danger?, kbd?, sep? }.
