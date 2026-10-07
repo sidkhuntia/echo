@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -275,7 +276,12 @@ func (a *App) addToGitignore(paths []string) (string, error) {
 		return "", errors.New("paths required")
 	}
 	file := filepath.Join(a.root, ".gitignore")
-	existing, _ := os.ReadFile(file)
+	// A missing .gitignore is started fresh; any other read error must stop the write, or the
+	// patterns already there would be lost.
+	existing, err := os.ReadFile(file)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
 	have := map[string]bool{}
 	for _, l := range strings.Split(string(existing), "\n") {
 		have[strings.TrimSpace(l)] = true

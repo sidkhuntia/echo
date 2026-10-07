@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Ignoring a path no longer rewrites `.gitignore` when the file exists but cannot be read. The ignore action now fails with the read error, instead of replacing the file with only the new patterns.
+
 ## 0.8.0 (2026-10-07)
 
 - Opening a commit's diff from the Log no longer hijacks the left sidebar. The Log list now lives in the right Git panel (a `Log` tab beside History, plus a rail button), so Changes stays visible while reviewing a commit. Esc still returns to the full Log, and entering the Log closes an open Log drawer the same way it already closed History.

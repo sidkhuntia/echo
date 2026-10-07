@@ -152,6 +152,25 @@ func TestIntentToAddAndIgnore(t *testing.T) {
 	}
 }
 
+// An unreadable .gitignore must fail the ignore action, not be rewritten from an empty read.
+func TestIgnoreKeepsUnreadableGitignore(t *testing.T) {
+	a := cleanRepo(t)
+	writeFile(t, a, ".gitignore", "keep.log\n")
+	file := filepath.Join(a.root, ".gitignore")
+	if err := os.Chmod(file, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(file, 0o644) })
+	writeFile(t, a, "dist/app.js", "x")
+	actFails(t, a, map[string]any{"action": "ignore", "paths": []string{"dist"}})
+	if err := os.Chmod(file, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, a, ".gitignore"); got != "keep.log\n" {
+		t.Errorf(".gitignore = %q, want the original content kept", got)
+	}
+}
+
 func TestCommitTrailers(t *testing.T) {
 	a := cleanRepo(t)
 	gitIn(t, a, "config", "user.name", "Me")
