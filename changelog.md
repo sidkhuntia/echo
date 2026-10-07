@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Git status no longer reads through a symlink that points outside the repository. The per-change hash and line count are computed only for files inside the repository, so a tracked or untracked link to a file elsewhere on disk reports no hash and no line count.
+
 ## 0.8.0 (2026-10-07)
 
 - Opening a commit's diff from the Log no longer hijacks the left sidebar. The Log list now lives in the right Git panel (a `Log` tab beside History, plus a rail button), so Changes stays visible while reviewing a commit. Esc still returns to the full Log, and entering the Log closes an open Log drawer the same way it already closed History.
