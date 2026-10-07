@@ -8,6 +8,7 @@ import { parseDiff } from './diffparse.js'
 import { hunkPatch, filePatch, quotePath } from './patch.js'
 import { wordRanges, pairRuns, injectMarks } from './wordiff.js'
 import { reviewPrompt, noteRef, notesText } from './notes.js'
+import { hunkAfterAction } from './hunkfocus.js'
 
 const git = (cwd, input, ...args) => execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, input, encoding: 'utf8' })
 
@@ -140,4 +141,16 @@ test('the review prompt carries paths, lines, notes and ground rules', () => {
   assert.match(p, /Do not commit, stage, unstage or discard/)
   assert.equal(noteRef({ path: 'a', line: 4, end: 6 }), 'a:4-6')
   assert.match(notesText([notes[0]]), /^1\. src\/b\.go:7\n   > var cache/)
+})
+
+test('after a hunk leaves the list, the next hunk takes its place; otherwise the one after is focused', () => {
+  // Unstaged view: 4 hunks, the 2nd (index 1) is staged, so the old 3rd is now index 1.
+  assert.equal(hunkAfterAction(4, 3, 1), 1)
+  // Last hunk staged: focus moves back to the new last hunk, not past the end.
+  assert.equal(hunkAfterAction(4, 3, 3), 2)
+  // All changes: a staged hunk stays listed, so focus moves on to the next one.
+  assert.equal(hunkAfterAction(4, 4, 1), 2)
+  assert.equal(hunkAfterAction(4, 4, 3), 3)
+  // Nothing left in the file.
+  assert.equal(hunkAfterAction(1, 0, 0), -1)
 })

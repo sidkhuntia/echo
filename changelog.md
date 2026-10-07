@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Review: after a hunk is staged, unstaged or discarded, the current hunk is the one that took its place (in Unstaged and Staged, where the acted hunk leaves the list), or the next hunk (in All changes, where it stays). Before, the highlight and `hunk i/n` stayed on the hunk above, so the next `j` landed on the one after it.
+
 ## 0.8.0 (2026-10-07)
 
 - Opening a commit's diff from the Log no longer hijacks the left sidebar. The Log list now lives in the right Git panel (a `Log` tab beside History, plus a rail button), so Changes stays visible while reviewing a commit. Esc still returns to the full Log, and entering the Log closes an open Log drawer the same way it already closed History.
