@@ -323,3 +323,23 @@ func TestConfigDefaultsAndEditorSettings(t *testing.T) {
 		t.Errorf("saved = %+v", got)
 	}
 }
+
+// A status row for a symlink must not read the file the link points at outside the repository.
+func TestStatusDoesNotReadThroughSymlinks(t *testing.T) {
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret")
+	if err := os.WriteFile(secret, []byte("s3cret\nsecond line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := newApp(t.TempDir(), 6031)
+	if err := os.Symlink(secret, filepath.Join(a.root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, a, "ok.txt", "inside\n")
+	if sig, ok := a.sig("link"); ok {
+		t.Errorf("sig(link) read a file outside the repository: %+v", sig)
+	}
+	if _, ok := a.sig("ok.txt"); !ok {
+		t.Error("sig(ok.txt) failed for a file inside the repository")
+	}
+}

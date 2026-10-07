@@ -517,7 +517,8 @@ func copyFile(src, dst string) error {
 
 // sig returns a workspace file's content hash, re-reading it only when size or mtime change.
 func (a *App) sig(rel string) (fileSig, bool) {
-	path, err := a.safePath(rel)
+	// The file is read, so a symlink at the end must also stay inside the repository.
+	path, err := a.safeContent(rel)
 	if err != nil {
 		return fileSig{}, false
 	}
