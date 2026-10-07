@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 (2026-10-07)
 
 - The repository switcher (`⌘⇧O`) lists every repository, grouped under its workspace, instead of collapsing a workspace to one "workspace" row. Each repository shows its own branch and change count and opens directly; the workspace heading carries the Stop button (stopping is still per process). The workspace overview's "Open elsewhere" section groups the same way.
 
