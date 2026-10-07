@@ -189,6 +189,8 @@ async function hunkAction(act, f, hi) {
     if (!ok) return
   }
   review.sel = null
+  // The diff is drawn again after Git answers; app.js focuses the hunk that takes this one's place.
+  ctx.state.focusAfter = { path: f.path, hi, before: f.hunks.length }
   await ctx.gitAction({ action: 'apply', patch, target: act === 'discard' ? 'worktree' : 'index', reverse })
 }
 

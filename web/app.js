@@ -7,6 +7,7 @@ import * as R from './review.js'
 import * as Ops from './ops.js'
 import * as G from './gitui.js'
 import { popMenu } from './ui.js'
+import { hunkAfterAction } from './hunkfocus.js'
 import { rebaseUI } from './rebase.js'
 import { compareUI } from './compare.js'
 import * as T from './tools.js'
@@ -803,6 +804,15 @@ function renderDiff() {
   state.current = -1
   renderTrace()
   updateCurrent()
+  // After a hunk action the scroll position kept the old place, so the current hunk was the one above
+  // the acted hunk. Focus the hunk that took its place (or the next one when it is still listed).
+  const fa = state.focusAfter
+  state.focusAfter = null
+  const fi = fa ? files.findIndex(f => f.path === fa.path) : -1
+  if (fi >= 0) {
+    const t = hunkAfterAction(fa.before, files[fi].hunks.length, fa.hi)
+    if (t >= 0) goHunk(fi, t)
+  }
 }
 
 // ---------- Files view: one changed file at a time, the whole file, no hunk chrome ----------
