@@ -724,7 +724,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .stage.wrap .hunk:not(.split) .tx { white-space: pre-wrap; overflow-wrap: break-word; }
 .stage.wrap .hunk-head { white-space: pre-wrap; }
 
-.diff-empty { display: grid; place-items: center; height: 70%; }
+/* empty review state is centered in the viewport (see below) */
 
 /* ---------- Git panel ---------- */
 .inspector .pane-head { gap: 6px; }
@@ -1050,7 +1050,9 @@ label.set-row { cursor: pointer; }
 .quiet-row > b { font-weight: 400; color: var(--fg-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quiet-card .btn { align-self: flex-start; }
 @media (prefers-reduced-motion: reduce) { .fold-sec > summary::before { transition: none; } }
-.diff-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.diff-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; padding: 32px 20px; box-sizing: border-box; text-align: center; }
+.diff-empty .empty { padding: 0; }
+.diff-view:has(.diff-empty) { padding-bottom: 0; }
 .quiet-row .in, .sum .in { color: var(--warn); }
 .quiet-row .out, .sum .out { color: var(--accent); }
 
