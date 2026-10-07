@@ -698,6 +698,12 @@ Local branches reachable from `HEAD` (`for-each-ref --merged HEAD`) get `merged:
 - **Fixed:** `echo-desk update` looked hung: the release check (up to 10 s) and the silent `curl` downloads printed nothing until done. It now shows a braille spinner on stderr while checking the release and while the install script downloads. The Homebrew path keeps brew's own output instead of a spinner, since the two would garble each other; off a terminal the steps print as plain lines. Still standard library only.
 - **Default:** ports must be 1–65535 with a clear error; extra arguments to `ls`, `update` (none take any) and `open`, `stop` (at most one) fail with usage (exit 2) instead of being silently ignored. Usage documents the `--` forms.
 
+### 22r. Status runs numstat only where a side has changes (2026-10-08)
+
+- **Accepted (refines §22h):** the status poll runs in two rounds. Round one is `branch --show-current` and `status --porcelain=v1` together. Round two runs `diff --numstat` against HEAD only if a tracked change exists, `diff --cached --numstat` only if something is staged, and `diff --numstat` only if an unstaged tracked change exists. Untracked files are sized from the file-hash cache, as before, so they need no diff.
+- **Accepted:** the base is `HEAD`. `rev-parse` runs only when that diff fails, to tell an unborn branch (compare with the empty tree) from a real error (empty stats, as before). Measured on this repository in a clean state, a status request went from 6 Git processes to 2 (about 65 ms to 28 ms warm); with staged, unstaged and untracked changes, from 6 to 5.
+- **Not taken:** caching the status between polls. Working-tree edits change no file Git watches cheaply (only the index moves when something is staged), so a cache keyed on `.git` files would show stale unstaged numbers. Folding `branch` into `status --branch` would save one more process on an idle poll, at the cost of parsing the header's edge cases (detached, unborn).
+
 ### 22q. The switcher lists every repository, grouped under its workspace (2026-10-07)
 
 - **Accepted (supersedes the "a workspace is one row" lines in §22 and §22b):** `⌘⇧O` no longer collapses a workspace process to one row. It lists one row per repository the workspace serves, grouped under a heading with the workspace's name, port and Stop button. A single-repository process is still one row with its own Stop button. Stopping is still per process (the heading's Stop stops the whole workspace), and `Quit all echo processes` is unchanged.

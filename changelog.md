@@ -7,6 +7,7 @@
 - Review: after a hunk is staged, unstaged or discarded, the current hunk is the one that took its place (in Unstaged and Staged, where the acted hunk leaves the list), or the next hunk (in All changes, where it stays). Before, the highlight and `hunk i/n` stayed on the hunk above, so the next `j` landed on the one after it.
 - Keyboard focus stays put around overlays. The command palette and the in-app dialogs (Compare, merge and rebase, stash and commit viewers, and the rest) now give focus back to the control that opened them when they close, whatever closes them (Esc, a click outside, or choosing a command). Tab stays inside an open dialog instead of moving to the page behind it, and inside the palette it does nothing.
 - Git status no longer reads through a symlink that points outside the repository. The per-change hash and line count are computed only for files inside the repository, so a tracked or untracked link to a file elsewhere on disk reports no hash and no line count.
+- Git status makes fewer Git processes per poll. The numstat diffs run only when a change needs their side (tracked changes, staged, unstaged), and HEAD is looked up only when the diff against it fails. An idle repository now costs 2 processes per status request instead of 6; a repository with staged and unstaged changes costs 5 instead of 6. Results are unchanged.
 
 ## 0.8.0 (2026-10-07)
 
