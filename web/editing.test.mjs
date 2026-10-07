@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { detectIndent, indentUnit, indentLines, enterEdit, toggleComment, moveLines, duplicateLines, deleteLines, matchBracket, enclosingScopes, parseCSV, lineSpan } from './editing.js'
+import { detectIndent, indentUnit, indentLines, enterEdit, toggleComment, moveLines, duplicateLines, deleteLines, matchBracket, enclosingScopes, parseCSV, lineSpan, recordSave } from './editing.js'
 
 const apply = (t, ed) => t.slice(0, ed.start) + ed.text + t.slice(ed.end)
 
@@ -76,4 +76,18 @@ test('the enclosing scope of a line is found by indentation', () => {
 test('csv reads quotes, escaped quotes and tabs', () => {
   assert.deepEqual(parseCSV('a,"b,c",d\n1,"say ""hi""",3\n'), [['a', 'b,c', 'd'], ['1', 'say "hi"', '3']])
   assert.deepEqual(parseCSV('a\tb\r\nc\td', '\t'), [['a', 'b'], ['c', 'd']])
+})
+
+test('a save records what it sent, so typing during the request stays unsaved', () => {
+  // saveFile sends tab.content, then the editor keeps changing tab.content while the request is in flight.
+  const tab = { content: 'one', saved: 'old', hash: 'h0', conflict: 'changed' }
+  const sent = tab.content
+  tab.content = 'one two' // typed while the POST is in flight
+  assert.equal(recordSave(tab, sent, 'h1'), true)
+  assert.equal(tab.saved, 'one')
+  assert.equal(tab.hash, 'h1')
+  assert.equal(tab.conflict, '')
+  const clean = { content: 'x', saved: 'y', hash: 'h0', conflict: '' }
+  assert.equal(recordSave(clean, clean.content, 'h2'), false)
+  assert.equal(clean.saved, 'x')
 })

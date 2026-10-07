@@ -242,3 +242,13 @@ export function parseCSV(text, sep = ',', limit = 5000) {
   if (field || row.length) { row.push(field); rows.push(row) }
   return rows
 }
+
+// Records a finished save. sent is the text the request carried: the editor keeps changing tab.content while
+// the request is in flight, and keeping that newer text as saved would hide the unsaved edit. Returns whether
+// the tab is still dirty.
+export function recordSave(tab, sent, hash) {
+  tab.saved = sent
+  tab.hash = hash
+  tab.conflict = ''
+  return tab.content !== tab.saved
+}

@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Ignoring a path no longer rewrites `.gitignore` when the file exists but cannot be read. The ignore action now fails with the read error, instead of replacing the file with only the new patterns.
+- Fixed a save that marked newer typing as saved. The tab's saved text is now the text the save request sent, not whatever the editor holds when the response arrives, so an edit typed while a save is in flight stays unsaved (the tab keeps its dirty marker, and closing it asks first).
 
 ## 0.8.0 (2026-10-07)
 
