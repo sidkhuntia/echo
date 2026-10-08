@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- UI revamp polish ("Signal", visual only, no behavior change): radius scale (`--r-sm/--r/--r-md/--r-lg`, concentric outer = inner + padding), quieter layered `--shadow` with borders-only depth, one `--ease-out` for all motion (no `ease-in`, no width animation), tighter title bar and review headers (36px file head, 34px hunk head, 12px grid padding), trace playhead as solid accent ring instead of glow with inset ring on the current file, inset 2px accent bar on the current sidebar row, and tabular numbers on diff stats.
+
 ## 0.10.0 (2026-10-08)
 
 - CSS polish from good-css.com: a shared reset (`min-width: 0`, `interpolate-size`, `scrollbar-gutter: stable`, `text-wrap: pretty/balance`, `overflow-wrap: break-word`), `overflow: clip` instead of `hidden` on non-scrolling containers so sticky diff headers keep working, and `color-mix(in oklch, …)` instead of `srgb` so hover and soft tones keep their hue.
