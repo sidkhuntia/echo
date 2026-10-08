@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.10.0 (2026-10-08)
+
+- CSS polish from good-css.com: a shared reset (`min-width: 0`, `interpolate-size`, `scrollbar-gutter: stable`, `text-wrap: pretty/balance`, `overflow-wrap: break-word`), `overflow: clip` instead of `hidden` on non-scrolling containers so sticky diff headers keep working, and `color-mix(in oklch, …)` instead of `srgb` so hover and soft tones keep their hue.
+- Focus is visible everywhere now: `:focus-visible` uses the accent at full strength with an `em`-based width, and the menu and resize grip no longer set `outline: none`.
+- Small targets get a 44px hit area without changing their look (title-bar and icon buttons, tab close, Git rail), and pressing a button scales to 0.97 instead of shifting down a pixel.
+- Motion has shared tokens (`--ease-out`, `--ease-in-out`), the commit box grows with its content (`field-sizing: content`, 3–12 lines), invalid inputs mark themselves (`:user-invalid`), counts stay aligned (`tabular-nums`), and scroll lists contain overscroll with a stable gutter. Page overscroll bounce is off on precise pointers and kept for touch.
+
 ## 0.9.0 (2026-10-08)
 - Ignoring a path no longer rewrites `.gitignore` when the file exists but cannot be read. The ignore action now fails with the read error, instead of replacing the file with only the new patterns.
 - Fixed a save that marked newer typing as saved. The tab's saved text is now the text the save request sent, not whatever the editor holds when the response arrives, so an edit typed while a save is in flight stays unsaved (the tab keeps its dirty marker, and closing it asks first).
