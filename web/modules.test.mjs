@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { parseDiff } from './diffparse.js'
 import { lineDiff, splitLines } from './linediff.js'
 import { layoutGraph } from './graph.js'
+import { renderMarkdown } from './markdown.js'
 
 const DIFF = `diff --git a/a.txt b/a.txt
 index 111..222 100644
@@ -99,4 +100,11 @@ test('an unterminated marker is reported, not silently dropped', () => {
   assert.equal(hasMarkers(t), false)
   assert.equal(conflictLines(CONFLICT).has(1), true)
   assert.equal(excerpt(['', '  hello  ']), 'hello')
+})
+
+test('half-typed markdown always renders (an empty last list item used to throw)', () => {
+  for (const src of ['- ', '1. ', 'text\n\n- a\n- ', '- [ ] ', '- \n- b', '> - ', '```', '| a |\n|', '<div', '[x](', '![', '<!--', '- [ ']) {
+    assert.doesNotThrow(() => renderMarkdown(src), JSON.stringify(src))
+  }
+  assert.match(renderMarkdown('- '), /<ul><li>/)
 })

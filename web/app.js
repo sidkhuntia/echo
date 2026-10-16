@@ -1427,10 +1427,13 @@ function renderPreview(tab) {
   else {
     doc = document.createElement('article')
     doc.className = 'md-doc'
-    doc.append(...sanitize(renderMarkdown(tab.content), mdURL(tab)).childNodes)
+    // A bug in the renderer must not take the editor down with it: say so in the preview and go on.
+    try { doc.append(...sanitize(renderMarkdown(tab.content), mdURL(tab)).childNodes) } catch (e) {
+      doc.innerHTML = `<p class="faint">The preview could not be drawn (${esc(e.message)}). Switch to Edit to see the text.</p>`
+    }
   }
   view.replaceChildren(doc)
-  if (!Pv.isTable(tab.path)) paintPreview(doc)
+  if (!Pv.isTable(tab.path)) { try { paintPreview(doc) } catch {} }
   if (!same) view.scrollTop = tab.mdScroll || 0
   view.shownTab = tab
   view.shownText = tab.content

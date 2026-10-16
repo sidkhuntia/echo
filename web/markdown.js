@@ -137,7 +137,7 @@ function list(lines, i, ctx) {
       if (!blank && !listItem.test(l) && !fence.test(l) && !hr.test(l) && !/^ {0,3}[>#]/.test(l)) { item.push(l.trim()); continue }
       break
     }
-    while (item.length && !item.at(-1).trim()) item.pop()
+    while (item.length > 1 && !item.at(-1).trim()) item.pop()
     const next = i < lines.length && lines[i].match(listItem)
     if (blank && next && next[1].length === base && /\d/.test(next[2]) === ordered) loose = true
     items.push(item)
