@@ -551,7 +551,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .gbl { position: absolute; left: 10px; width: 160px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px/20px var(--sans); color: var(--muted); pointer-events: auto; cursor: pointer; }
 .gbl:hover { color: var(--accent); }
 .gbl.new { color: var(--faint); cursor: default; }
-.blame-ghost { position: absolute; z-index: 2; pointer-events: none; white-space: nowrap; max-width: 60%; overflow: hidden; text-overflow: ellipsis; font: italic 12px/20px var(--sans); color: var(--faint); }
+.blame-ghost { position: absolute; z-index: 2; pointer-events: none; white-space: nowrap; max-width: 60%; overflow: hidden; text-overflow: ellipsis; font: 12px/20px var(--sans); color: color-mix(in oklch, var(--fg) 55%, transparent); }
 #blame-toggle.on { color: var(--accent); background: var(--accent-soft); }
 .dots { font-family: var(--mono); min-width: 30px; }
 .compare { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2); font-size: 12px; white-space: nowrap; }
@@ -1399,7 +1399,7 @@ a.ws-row:hover { background: var(--hover); }
 .toolbar .diff-filter:focus { width: 260px; }
 .toolbar .diff-filter.filtered { border-color: var(--accent); }
 /* Editor: tabs that read as tabs, and secondary actions in one menu. */
-#file-bar #eol, #file-bar #note-add, #file-bar #open-ext, #file-bar #file-history, #file-bar #blame-toggle, #file-bar #json-format { display: none !important; }
+#file-bar #eol, #file-bar #note-add, #file-bar #open-ext, #file-bar #file-history, #file-bar #json-format { display: none !important; }
 #save:disabled { display: none; }
 .tab { background: none; box-shadow: none; padding: 0 4px 0 10px; border-radius: 6px; }
 .tab.active { background: var(--hover); box-shadow: none; }

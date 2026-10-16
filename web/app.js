@@ -2876,7 +2876,7 @@ async function ensureBlame(tab) {
     const data = await post('/api/blame', { path: tab.path, content: tab.eol === '\r\n' ? content.replace(/\n/g, '\r\n') : content })
     if (seq !== tab.blameSeq) return
     tab.blame = { content, key, data }
-  } catch { return }
+  } catch (e) { if (state.blameGutter && seq === tab.blameSeq) setStatus(`Blame unavailable: ${e.message}`, 'err'); return }
   if (tab === activeTab()) { paintGutter(); paintBlameGhost() }
 }
 
