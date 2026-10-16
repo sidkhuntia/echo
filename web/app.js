@@ -15,7 +15,7 @@ import { rebaseUI } from './rebase.js'
 import { compareUI } from './compare.js'
 import * as T from './tools.js'
 import * as Ed from './editor.js'
-import { recordSave } from './editing.js'
+import { recordSave, serializeSaves, isSaving } from './editing.js'
 import * as Rp from './replace.js'
 import * as Pv from './preview.js'
 import * as FO from './fileops.js'
@@ -2123,6 +2123,7 @@ async function reloadTab(tab) {
 async function syncTabs() {
   let changed = false
   for (const tab of [...state.tabs]) {
+    if (isSaving(tab)) continue // our own write: the hash below is not ours yet
     const expected = state.changes.get(tab.path)?.hash ?? null
     if (expected === tab.seen) continue
     tab.seen = expected
@@ -2152,23 +2153,29 @@ async function saveFile(force = false, auto = false) {
     tab.content = $('#editor').value
   }
   const sent = tab.content
-  tab.saving = true
-  try {
-    const content = tab.eol === '\r\n' ? sent.replace(/\n/g, '\r\n') : sent
-    const res = await post('/api/file', { action: 'save', path: tab.path, content, baseHash: tab.hash, force })
-    recordSave(tab, sent, res.hash)
-    state.diffStale = true
-    renderTabs(); renderEditor()
-    setStatus('Saved ' + tab.path, 'ok')
-    return true
-  } catch (e) {
-    if (e.status === 409) {
-      tab.conflict = /deleted/.test(e.message) ? 'deleted' : 'changed'
-      renderEditor()
-    }
-    setStatus(e.message, 'err')
-    return false
-  } finally { tab.saving = false }
+  // Queued behind a save in flight, so the base hash below is the one that save returned. If that save
+  // already wrote this text, there is nothing left to send.
+  const queued = isSaving(tab)
+  return serializeSaves(tab, async () => {
+    if (queued && !force && sent === tab.saved) return true
+    tab.saving = true
+    try {
+      const content = tab.eol === '\r\n' ? sent.replace(/\n/g, '\r\n') : sent
+      const res = await post('/api/file', { action: 'save', path: tab.path, content, baseHash: tab.hash, force })
+      recordSave(tab, sent, res.hash)
+      state.diffStale = true
+      renderTabs(); renderEditor()
+      setStatus('Saved ' + tab.path, 'ok')
+      return true
+    } catch (e) {
+      if (e.status === 409) {
+        tab.conflict = /deleted/.test(e.message) ? 'deleted' : 'changed'
+        renderEditor()
+      }
+      setStatus(e.message, 'err')
+      return false
+    } finally { tab.saving = false }
+  })
 }
 
 async function fileAction(action, dir = '') {

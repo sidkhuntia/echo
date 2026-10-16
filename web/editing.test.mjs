@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { detectIndent, indentUnit, indentLines, enterEdit, toggleComment, moveLines, duplicateLines, deleteLines, matchBracket, enclosingScopes, parseCSV, lineSpan, recordSave } from './editing.js'
+import { detectIndent, indentUnit, indentLines, enterEdit, toggleComment, moveLines, duplicateLines, deleteLines, matchBracket, enclosingScopes, parseCSV, lineSpan, recordSave, serializeSaves, isSaving } from './editing.js'
 
 const apply = (t, ed) => t.slice(0, ed.start) + ed.text + t.slice(ed.end)
 
@@ -90,4 +90,26 @@ test('a save records what it sent, so typing during the request stays unsaved', 
   const clean = { content: 'x', saved: 'y', hash: 'h0', conflict: '' }
   assert.equal(recordSave(clean, clean.content, 'h2'), false)
   assert.equal(clean.saved, 'x')
+})
+
+test('saves of one tab run one at a time, each from the hash the last one returned', async () => {
+  const tab = { hash: 'h0' }
+  const bases = []
+  const save = (next, ms) => serializeSaves(tab, async () => {
+    bases.push(tab.hash)
+    await new Promise(r => setTimeout(r, ms))
+    tab.hash = next
+  })
+  const a = save('h1', 20) // a manual save in flight
+  const b = save('h2', 0) // an autosave fires meanwhile
+  assert.equal(isSaving(tab), true)
+  await Promise.all([a, b])
+  assert.deepEqual(bases, ['h0', 'h1'])
+  assert.equal(isSaving(tab), false)
+  // another tab is not held up, and a failed save does not block the next one
+  const other = {}
+  await serializeSaves(tab, async () => { throw new Error('boom') }).catch(() => {})
+  await serializeSaves(other, async () => { other.ran = true })
+  assert.equal(other.ran, true)
+  assert.equal(isSaving(tab), false)
 })
