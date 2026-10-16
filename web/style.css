@@ -10,6 +10,9 @@
   --add-strong: color-mix(in oklch, var(--add) 55%, transparent);
   --del-strong: color-mix(in oklch, var(--del) 55%, transparent);
   --hover: color-mix(in oklch, var(--fg) 5%, transparent);
+  /* Two roles every theme gets the same way: the canvas is where the work is (editor, diff, log), and the chrome around it (side panel, title bar, toolbars, status bar) is the canvas moved toward the text color, so they differ in every theme, light or dark. */
+  --canvas: var(--sunk);
+  --chrome: color-mix(in oklch, var(--sunk), var(--fg) 9%);
   --shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 1px 2px -1px rgba(0, 0, 0, .08), 0 16px 40px -16px rgba(0, 0, 0, .45);
   --sans: "Geist", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   --mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
@@ -166,7 +169,7 @@ svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-widt
   gap: 12px;
   padding: 0 12px;
   border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--chrome);
   position: relative;
   z-index: 5;
 }
@@ -360,7 +363,7 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .desk.git-open #git-panel { visibility: visible; opacity: 1; transform: none; transition: opacity .18s var(--ease-out), transform .18s var(--ease-out); }
 .desk.pinned #git-panel { position: relative; inset: auto; width: auto; border: 0; border-left: 1px solid var(--line); border-radius: 0; box-shadow: none; transform: none; transition: none; }
 #git-pin[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
-.git-rail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 8px; background: var(--surface); border-left: 1px solid var(--line); }
+.git-rail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 8px; background: var(--chrome); border-left: 1px solid var(--line); }
 .git-rail button { position: relative; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
 .git-rail button::after { content: ""; position: absolute; inset: min(0px, (100% - 44px) / 2); }
 .git-rail button:hover { background: var(--hover); color: var(--fg); }
@@ -368,7 +371,7 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .git-rail .i { width: 16px; height: 16px; }
 .git-rail em { position: absolute; top: 1px; right: 0; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: 600 9.5px/15px var(--mono); font-style: normal; text-align: center; }
 .no-git-repo .git-rail button { opacity: .35; pointer-events: none; }
-.pane { min-width: 0; min-height: 0; position: relative; display: flex; flex-direction: column; overflow: clip; background: var(--surface); }
+.pane { min-width: 0; min-height: 0; position: relative; display: flex; flex-direction: column; overflow: clip; background: var(--chrome); }
 .sidebar { border-right: 1px solid var(--line); }
 .inspector { border-left: 1px solid var(--line); }
 
@@ -484,13 +487,13 @@ body.resizing { cursor: col-resize; user-select: none; }
 .empty b { display: block; font-size: 14px; font-weight: 600; color: var(--fg); margin-bottom: 4px; }
 
 /* ---------- review surface ---------- */
-.review { background: var(--bg); container: review / inline-size; }
+.review { background: var(--canvas); container: review / inline-size; }
 /* The toolbar sheds its least important parts as the review column narrows, which happens with
    the window, a wide sidebar, or a pinned Git panel alike, so it asks the column, not the window. */
 @container review (max-width: 900px) { #diff-summary, #stage-count { display: none; } }
 @container review (max-width: 720px) { .toolbar .toggle { display: none; } }
 .toolbar { min-width: 0; overflow: clip; }
-.toolbar { height: 40px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.toolbar { height: 40px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--chrome); }
 .toolbar > .vr { display: none; }
 .toolbar select.field, .toolbar .field.ref { background: transparent; border-color: transparent; color: var(--fg-2); }
 .toolbar select.field:hover, .toolbar .field.ref:hover, .toolbar .field.ref:focus { border-color: var(--line-2); }
@@ -510,7 +513,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .tab.dirty .x span { display: none; }
 .tab.dirty .x:hover::before { content: none; }
 .tab.dirty .x:hover span { display: inline; }
-.crumb { height: 32px; flex: none; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--surface); font: 12px var(--mono); color: var(--muted); }
+.crumb { height: 32px; flex: none; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--chrome); font: 12px var(--mono); color: var(--muted); }
 .file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-path i { font-style: normal; color: var(--muted); }
 .file-path b { color: var(--fg); font-weight: 500; }
@@ -532,11 +535,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 .stage { position: relative; flex: 1; min-height: 0; }
 .code-view, .editor, .diff-view { position: absolute; inset: 0; display: none; overflow: auto; margin: 0; }
 .code-view.active, .editor.active, .diff-view.active { display: block; }
-.code-view, .editor { background: var(--sunk); font: 12.5px/20px var(--mono); tab-size: 4; }
+.code-view, .editor { background: var(--canvas); font: 12.5px/20px var(--mono); tab-size: 4; }
 .editor { width: 100%; height: 100%; resize: none; border: 0; outline: none; padding: 10px 18px 40vh 72px; color: var(--fg); }
 
 /* editor gutter: line numbers and change bars; solid = unstaged, hollow = staged */
-.gutter { position: absolute; top: 0; left: 0; bottom: 0; width: 60px; display: none; overflow: clip; pointer-events: none; background: var(--sunk); z-index: 1; }
+.gutter { position: absolute; top: 0; left: 0; bottom: 0; width: 60px; display: none; overflow: clip; pointer-events: none; background: var(--canvas); z-index: 1; }
 .gutter.active { display: block; }
 .gl { position: absolute; left: 0; width: 60px; height: 20px; padding-right: 16px; text-align: right; font: 11px/20px var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
 .gb { position: absolute; top: 1px; bottom: 1px; right: 4px; width: 4px; border-radius: 1px; color: var(--add); background: currentColor; }
@@ -557,7 +560,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .compare { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2); font-size: 12px; white-space: nowrap; }
 .compare b { font: 600 12px var(--mono); color: var(--fg); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .compare [data-cmp="diff"] { margin-left: auto; }
-.lgroup { position: sticky; top: 0; z-index: 1; display: flex; gap: 8px; align-items: baseline; padding: 8px 14px 6px; background: var(--surface); border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--fg); }
+.lgroup { position: sticky; top: 0; z-index: 1; display: flex; gap: 8px; align-items: baseline; padding: 8px 14px 6px; background: var(--chrome); border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--fg); }
 .lgroup .faint { font-weight: 400; }
 /* word wrap: long lines wrap at the editor's right edge instead of scrolling sideways. The width is
    published by app.js as --content-w, because the textarea's own scrollbar makes its content box
@@ -584,7 +587,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .code-view .empty { font-family: var(--sans); padding-top: 18vh; }
 
 /* syntax: the textarea's text turns transparent over a layer that draws the visible lines in color */
-.syntax { position: absolute; inset: 0; display: none; overflow: clip; pointer-events: none; background: var(--sunk); color: var(--fg); font: 12.5px/20px var(--mono); tab-size: 4; }
+.syntax { position: absolute; inset: 0; display: none; overflow: clip; pointer-events: none; background: var(--canvas); color: var(--fg); font: 12.5px/20px var(--mono); tab-size: 4; }
 .syntax.active { display: block; }
 .syntax .sl { position: absolute; left: 72px; height: 20px; white-space: pre; }
 .stage.blame-on .syntax .sl { left: 242px; }
@@ -677,7 +680,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 /* diff */
 .diff-view { padding: 0 0 60vh; }
-.dfile { border-bottom: 1px solid var(--line); background: var(--bg); }
+.dfile { border-bottom: 1px solid var(--line); background: var(--canvas); }
 .dfile-head {
   position: sticky;
   top: 0;
@@ -687,7 +690,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   align-items: center;
   gap: 10px;
   padding: 0 10px 0 12px;
-  background: var(--surface);
+  background: var(--chrome);
   border-bottom: 1px solid var(--line);
   cursor: pointer;
 }
@@ -723,7 +726,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   height: 34px;
   padding: 4px 12px 0;
   color: var(--muted);
-  background: var(--bg);
+  background: var(--canvas);
   font-size: 11.5px;
   white-space: pre;
 }
@@ -865,7 +868,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .log-rows { grid-area: rows; }
 .log-detail { grid-area: detail; }
 #log-compare { grid-area: cmp; }
-.log-rows { overflow: auto; outline: none; padding: 4px 0 40px; background: var(--surface); }
+.log-rows { overflow: auto; outline: none; padding: 4px 0 40px; background: var(--canvas); }
 .lrow { display: grid; grid-template-columns: auto minmax(0, 1fr) 150px 72px; align-items: center; gap: 10px; height: 26px; padding: 0 14px 0 8px; font-size: 12.5px; color: var(--fg-2); white-space: nowrap; cursor: default; }
 .lrow .graph { display: block; }
 .lrow:hover { background: var(--hover); }
@@ -898,7 +901,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .no-git-repo .insp { opacity: .4; pointer-events: none; }
 
 /* ---------- status bar ---------- */
-.statusbar { height: 26px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-top: 1px solid var(--line); background: var(--surface); font: 11px var(--mono); color: var(--muted); }
+.statusbar { height: 26px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-top: 1px solid var(--line); background: var(--chrome); font: 11px var(--mono); color: var(--muted); }
 .live { width: 6px; height: 6px; border-radius: 50%; background: var(--add); flex: none; }
 .live.off { background: var(--del); }
 #status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
@@ -1129,7 +1132,7 @@ label.set-row { cursor: pointer; }
 .ntext { flex: 1; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .pickbar.restore { background: var(--warn-soft); }
 
-.filterbar { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.filterbar { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--line); background: var(--chrome); }
 .filterbar .field { height: 24px; }
 .filterbar #diff-filter { width: 260px; }
 .filterbar .grow { flex: 1; }
@@ -1223,7 +1226,7 @@ label.set-row { cursor: pointer; }
 .stage.has-side .minimap, .stage.has-side .mm-view { right: calc(14px + var(--side-w)); }
 .stage.has-side .sticky { right: var(--side-w); }
 .side-pane { position: absolute; z-index: 2; top: 0; right: 0; bottom: 0; width: var(--side-w); display: flex; flex-direction: column; border-left: 1px solid var(--line-2); background: var(--sunk); }
-.side-head { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.side-head { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--line); background: var(--chrome); }
 .side-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--mono); color: var(--fg-2); direction: rtl; text-align: left; }
 .side-acts { display: inline-flex; gap: 2px; }
 .side-code { flex: 1; overflow: auto; font: var(--ed-fs, 12.5px)/20px var(--mono); tab-size: var(--ed-tab, 4); }
@@ -1256,7 +1259,7 @@ label.set-row { cursor: pointer; }
 .layout-switch button { padding: 0 8px; }
 .layout-switch .i { width: 14px; height: 14px; }
 #diff-summary { margin-left: auto; }
-.commit-card.dock { flex: none; padding: 8px 10px 10px; border: 0; border-top: 1px solid var(--line); background: var(--surface); }
+.commit-card.dock { flex: none; padding: 8px 10px 10px; border: 0; border-top: 1px solid var(--line); background: var(--chrome); }
 .commit-card.dock[hidden] { display: none; }
 .commit-card.dock h4 { margin: 0 0 6px; }
 .commit-card.dock #commit-message { min-height: 54px; max-height: 120px; }
@@ -1298,7 +1301,7 @@ label.set-row { cursor: pointer; }
 
 /* ---------- workspace ---------- */
 /* One quiet line: names, with a count only where something changed. Branch and sync are in the title bar and the tooltip. */
-.wsbar { flex: none; display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 10px; overflow-x: auto; scrollbar-width: none; background: var(--surface); border-bottom: 1px solid var(--line); }
+.wsbar { flex: none; display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 10px; overflow-x: auto; scrollbar-width: none; background: var(--chrome); border-bottom: 1px solid var(--line); }
 .wsbar::-webkit-scrollbar { display: none; }
 .wsbar[hidden] { display: none; }
 .wsbar a { text-decoration: none; color: inherit; }
@@ -1322,7 +1325,7 @@ label.set-row { cursor: pointer; }
 .commit-card:not(:focus-within):has(#commit-message:placeholder-shown) .hint { display: none; }
 
 /* workspace overview */
-.wshead { flex: none; display: flex; align-items: center; gap: 14px; height: 52px; padding: 0 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.wshead { flex: none; display: flex; align-items: center; gap: 14px; height: 52px; padding: 0 14px; border-bottom: 1px solid var(--line); background: var(--chrome); }
 .wstitle { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; margin-right: 8px; }
 .wstitle b { font-size: 14px; }
 .wstitle span { font-size: 11.5px; }

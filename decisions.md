@@ -721,3 +721,9 @@ Local branches reachable from `HEAD` (`for-each-ref --merged HEAD`) get `merged:
 - **Default:** scroll lists get `overscroll-behavior: contain` with `scrollbar-gutter: stable`; the page sets `overscroll-behavior-y: none` (touch pointers keep the default) and `scroll-padding-block-start`. The commit box uses `field-sizing: content` (3–12 lines, fixed fallback where unsupported) and invalid inputs use `:user-invalid`; counts use `tabular-nums`.
 - **Not taken:** fluid `clamp()` type/space scales, content-grid breakouts, wrap-on-its-own sidebar, carousel scroll-snap, cross-document view transitions, and notch safe-areas. The desk is a fixed app shell with its own container queries (`review`, `stage`); icons stay at drawn px sizes because the 12px instrument layout needs larger-than-cap glyphs.
 
+## 23. Surface roles in themes
+
+- **Accepted:** every theme gives the same two surface roles, derived in `style.css` from the theme's tokens rather than hand-picked per theme: `--canvas` (the editor, the diff and the log: the theme's `--sunk`) and `--chrome` (the side panel, Git rail, title bar, toolbars, status bar and file headers: the canvas mixed 9% toward `--fg`). They differ by at least 4 on the OKLab scale in all 32 themes, light or dark, which the old hand-picked `--surface`, `--sunk` and `--bg` did not (six themes used one value for two of them).
+- **Default:** floating things (menus, dialogs, popups, fields) keep `--surface`, `--surface-2` and `--sunk`, so they read as raised or inset against either role.
+- **Why derived:** a new theme only has to give a good editor color and text color to get a distinct side panel; the ordering "chrome is a step toward the text" cannot be broken by a palette's own quirks.
+
