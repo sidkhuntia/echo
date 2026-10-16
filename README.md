@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/sidkhuntia/echo/main/install.sh | s
 
 Or download `echo-desk_<version>_<darwin|linux>_<arch>.tar.gz` from [Releases](https://github.com/sidkhuntia/echo/releases), check it against `checksums.txt`, and put `echo-desk` on your `PATH`.
 
-From source (Go 1.25+):
+From source (Go 1.26.9+):
 
 ```sh
 go build -o "$(go env GOPATH)/bin/echo-desk" .

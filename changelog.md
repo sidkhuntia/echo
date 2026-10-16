@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.1 (2026-10-16)
+
+- Built with Go 1.26.9. The 0.11.0 tag never published: its build stopped at the vulnerability scan, which reported ten standard-library issues (`net/http`, `crypto/tls`, `mime/multipart`) fixed in Go 1.26.9. Everything else is the 0.11.0 below.
+
 ## 0.11.0 (2026-10-16)
 
 - **A full audit pass.** About 180 agents read every source file and traced every feature area; about 400 of what they found were fixed, after each was checked against the code again (the rest were not real, or not worth the risk). The user-visible changes, by theme:
