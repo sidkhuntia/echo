@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The workspace repository bar is back to the earlier one-line look: plain names, a count only where something changed, and an accent underline on the open repository, instead of pills with dots and a shortened name prefix. Settings → Layout → Repository bar and `⌘⇧O` are unchanged.
 - UI revamp polish ("Signal", visual only, no behavior change): radius scale (`--r-sm/--r/--r-md/--r-lg`, concentric outer = inner + padding), quieter layered `--shadow` with borders-only depth, one `--ease-out` for all motion (no `ease-in`, no width animation), tighter title bar and review headers (36px file head, 34px hunk head, 12px grid padding), trace playhead as solid accent ring instead of glow with inset ring on the current file, inset 2px accent bar on the current sidebar row, and tabular numbers on diff stats.
 
 ## 0.10.0 (2026-10-08)

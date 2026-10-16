@@ -2484,32 +2484,23 @@ async function stopRepo(port, all) {
 }
 
 // ---------- workspace bar ----------
-// In a workspace every repository is a chip: a dot where something changed, and the count. It polls (a stream
+// In a workspace every repository is a chip with its name and, where something changed, the count. It polls (a stream
 // per tab would use up the browser's few connections to this one origin) and only while the tab is visible.
 // Settings can turn the bar off; ⌘⇧O still switches.
 let wsRepos = []
 const wsChanged = r => r.staged + r.unstaged + r.untracked + r.conflicts
 const wsBarOn = () => !!BASE && state.config.workspaceBar !== false
-// Names that all start the same ("provider-backend", "provider-frontend") are shown without it; the tooltip has the full name.
-function wsLabels(names) {
-  if (names.length < 3) return names
-  let p = names[0]
-  for (const n of names) while (!n.startsWith(p)) p = p.slice(0, -1)
-  p = p.slice(0, p.lastIndexOf('-') + 1)
-  return p.length > 3 && names.every(n => n.length > p.length) ? names.map(n => n.slice(p.length)) : names
-}
 function renderWsBar() {
   const bar = $('#wsbar')
   bar.hidden = !wsBarOn()
   if (bar.hidden) return
   const first = !bar.firstChild, left = bar.scrollLeft
-  const labels = wsLabels(wsRepos.map(r => r.name))
-  const chip = (r, i) => {
+  const chip = r => {
     const n = wsChanged(r)
-    const tip = [r.name, r.branch, r.ahead ? `${r.ahead} to push` : '', r.behind ? `${r.behind} to pull` : '', r.error].filter(Boolean).join(' · ')
-    return `<a class="ws-chip ${r.id === WS_ID ? 'on' : ''} ${n ? 'dirty' : ''} ${r.conflicts ? 'conflict' : ''}" href="/r/${encodeURIComponent(r.id)}/" title="${esc(tip)}"><i class="dot"></i><span class="nm">${esc(labels[i])}</span>${n ? `<em>${n}</em>` : ''}</a>`
+    const tip = [r.root, r.branch, r.ahead ? `${r.ahead} to push` : '', r.behind ? `${r.behind} to pull` : '', r.error].filter(Boolean).join('\n')
+    return `<a class="ws-chip ${r.id === WS_ID ? 'on' : ''} ${n ? 'dirty' : ''} ${r.conflicts ? 'conflict' : ''}" href="/r/${encodeURIComponent(r.id)}/" title="${esc(tip)}">${esc(r.name)}${n ? `<em>${n}</em>` : ''}</a>`
   }
-  bar.innerHTML = `<a class="ws-home" href="/" title="Workspace overview: every repository and every change" aria-label="Workspace overview"><svg class="i" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/></svg></a><span class="ws-chips">${wsRepos.map(chip).join('')}</span><a class="ws-chip files ${WS_ID === '_files' ? 'on' : ''}" href="/r/_files/" title="Files in the workspace folder that are in no repository">Files</a>`
+  bar.innerHTML = `<a class="ws-home" href="/" title="Workspace overview: every repository and every change" aria-label="Workspace overview"><svg class="i" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/></svg></a>${wsRepos.map(chip).join('')}<a class="ws-chip files ${WS_ID === '_files' ? 'on' : ''}" href="/r/_files/" title="Files in the workspace folder that are in no repository">Files</a>`
   // The bar keeps where it was scrolled to between polls; the first time it brings this repository into view.
   if (first) bar.querySelector('.ws-chip.on')?.scrollIntoView({ block: 'nearest', inline: 'center' })
   else bar.scrollLeft = left
