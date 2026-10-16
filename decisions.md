@@ -39,7 +39,7 @@ Status meanings:
 - **Accepted:** the browser never starts echo processes; opening another repository is done from Terminal.
 - **Accepted:** the browser may stop them. The switcher has a Stop button per running repository and a Quit all button, and both go through `POST /api/shutdown`, because ending a process is the opposite of taking over the machine: it is the safe direction, and it is what makes a dozen open repositories manageable. The request is answered before the server stops, so the tab can confirm it, and a stopped repository reopens with the usual Terminal command.
 - **Default:** `POST /api/shutdown` takes an optional `port` (a sibling, stopped by this process asking it, so the page still makes no cross-origin request) or `all` (every running process, this one last, so the list the page is looking at is still there). A stop request that has already happened is not repeated.
-- **Default:** a stop is graceful. The status stream ends first, because it waits on a tick and would otherwise hold the drain open; in-flight requests then get three seconds, which is far longer than a git call or a read, and anything still running is closed. `Ctrl-C` (`SIGINT`) and `SIGTERM` take the same path, so a Terminal interrupt and the page's Stop behave identically. Language servers were removed (§8), so there is nothing extra to stop.
+- **Default:** a stop is graceful. The status stream ends first, because it waits on a tick and would otherwise hold the drain open; in-flight requests then get three seconds, which is far longer than a git call or a read, and anything still running is closed. `Ctrl-C` (`SIGINT`) and `SIGTERM` take the same path, so a Terminal interrupt and the page's Stop behave identically. Language servers (§8) are asked to `shutdown` then `exit` before the process ends, for every repository of a workspace.
 - **Default:** the app binds to `127.0.0.1` only.
 - **Default:** the app does not support LAN, remote, or container access in v1.
 
@@ -235,7 +235,12 @@ The following Git capabilities were accepted as part of the product direction:
 - **Why not chroma/goldmark:** goldmark is a Markdown parser, not a highlighter. Chroma runs server-side, so the editor would pay a round trip per keystroke, and it is a Go dependency. A vendored browser library keeps highlighting local and instant, with the precedent of the vendored mermaid.
 - **Default:** the language comes from the file name (extension or `Makefile`). An unknown language or a buffer over 200,000 characters stays plain text (`web/highlight.js`, `MAX`). The common build has no Dockerfile grammar; Dockerfiles stay plain. To add a language, re-vendor a build that includes it.
 - **Default:** a diff hunk is colored as two streams, old (context + deleted) and new (context + added), so multi-line comments and strings color correctly inside a hunk. A token opened above the hunk is not seen.
-- **Deferred:** anything semantic (diagnostics, completion, hover, go-to-definition, references). It would mean bringing a language server back.
+- **Accepted (language servers return, narrowly):** go-to-definition and semantic coloring, both on top of highlight.js, which stays the base and the only highlighter for diffs. `lsp.go` starts a server lazily the first time a file of its language is asked about, one process per repository and server, speaking LSP over stdio. Servers are the ones already on the user's machine (`gopls`, `typescript-language-server`, `basedpyright`/`pyright`, `rust-analyzer`, `clangd`); echo never installs one. The earlier install banner, status chip and popover stay removed: with no server for a file, ⌘-click says so in the status line and the file keeps its hljs colors.
+- **Default:** positions are UTF-16 offsets end to end (the LSP default and the browser's string offsets); the browser computes line and character and Go passes them through. Before every request the editor's buffer is synced with `didOpen`/`didChange`, so unsaved edits line up.
+- **Default:** go-to-definition is ⌘-click (Ctrl-click) and `F12` on the word at the caret; `⌃-` goes back. A definition inside the repository opens in the editor at that line; one outside it (GOROOT, a module cache, `node_modules`) is named in the status line and not opened, because the file API is confined to the repository.
+- **Default:** semantic tokens are requested for the active tab only, debounced, and the previous request is aborted. They are merged over highlight.js per line and only while that line's text is unchanged, so typing never shows misplaced colors and never waits on a server still indexing.
+- **Default:** servers do not watch the disk, and an agent edits files echo never opened, so before a request echo sends `workspace/didChangeWatchedFiles` for the working tree's uncommitted files whose size or time moved since the last look (one `git status`, at most once a second; the first look only records). Only the document being asked about is held open, the others are closed, so the server reads them from disk again. A checkout or commit that rewrites many files is not noticed until the server restarts.
+- **Deferred:** semantic coloring in diffs (hljs only), hover, diagnostics, completion, references, rename, and opening definitions outside the repository.
 
 ## 9. Tabs and workspace model
 
@@ -477,7 +482,7 @@ These are YAGNI decisions for v1:
 - No native file-picker dependency.
 - ~~No conflict-resolution workflow UI.~~ Built in v2 (§21).
 - No virtualized editor.
-- No language servers; highlighting is lexical.
+- ~~No language servers; highlighting is lexical.~~ Language servers are back for go-to-definition and semantic coloring (§8); the base highlighting is still lexical.
 - No per-repository configuration.
 - ~~No closed-tab restore.~~ Built in v2 (§21).
 - No custom keybinding editor.

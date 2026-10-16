@@ -611,6 +611,13 @@ body.resizing { cursor: col-resize; user-select: none; }
 .hljs-params, .hljs-variable, .hljs-property, .hljs-subst, .hljs-code { color: var(--fg-2); }
 .hljs-operator, .hljs-punctuation { color: var(--muted); }
 .hljs-strong { font-weight: 700; }
+/* Semantic tokens from a language server, over the lexical colors: calls, types, parameters and constants the grammar cannot tell apart. */
+.sem-fn { color: color-mix(in oklch, var(--info) 50%, var(--add)); }
+.sem-type { color: var(--info); }
+.sem-param { color: color-mix(in oklch, var(--warn) 55%, var(--fg-2)); }
+.sem-const { color: var(--warn); }
+.sem-prop { color: var(--fg); }
+#editor.cmd-held { cursor: pointer; }
 .hljs-emphasis { font-style: italic; }
 
 /* markdown preview */

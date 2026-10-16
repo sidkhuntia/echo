@@ -40,3 +40,27 @@ export function highlightLines(code, path) {
     return out + '</span>'.repeat(open.length)
   })
 }
+
+// overlay wraps ranges of one highlighted row in extra spans, for semantic tokens. A range is
+// {start, end, cls} in characters of the row's plain text (what a language server counts in), sorted
+// and not overlapping. Only text is wrapped, never a tag, so the nesting stays valid; an entity such
+// as &lt; is one character, as it is in the text.
+export function overlay(html, ranges) {
+  if (!ranges || !ranges.length) return html
+  let out = '', pos = 0, ri = 0
+  for (const m of html.matchAll(/<[^>]*>|&(?:#x?[0-9a-fA-F]+|[a-zA-Z]+);|[^<&]+|&/g)) {
+    const s = m[0]
+    if (s[0] === '<') { out += s; continue }
+    const end = pos + (s[0] === '&' && s.length > 1 ? 1 : s.length), whole = end - pos === 1 && s.length > 1
+    let a = pos
+    while (a < end) {
+      while (ri < ranges.length && ranges[ri].end <= a) ri++
+      const r = ranges[ri]
+      if (!r || r.start >= end) { out += whole ? s : s.slice(a - pos); a = end }
+      else if (r.start > a) { const b = r.start; out += s.slice(a - pos, b - pos); a = b }
+      else { const b = Math.min(end, r.end); out += `<span class="${r.cls}">${whole ? s : s.slice(a - pos, b - pos)}</span>`; a = b }
+    }
+    pos = end
+  }
+  return out
+}

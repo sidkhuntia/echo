@@ -6,6 +6,7 @@ import * as G from './gitui.js'
 import * as Rp from './replace.js'
 import * as Ed from './editor.js'
 import { compareUI } from './compare.js'
+import * as Lsp from './lsp.js'
 
 const cfgToggle = key => () => { const v = !ctx.state.config[key]; ctx.state.config[key] = v; ctx.post('/api/config', { [key]: v }).then(() => ctx.setStatus(`${key}: ${v ? 'on' : 'off'}`, 'ok')); ctx.onConfig?.(key) }
 const file = () => ctx.activeTab()
@@ -37,6 +38,7 @@ export function commands() {
     ['Stash all changes', 'Git', () => G.stashFiles([...s.changes.keys()])],
     ...(st.operation ? [[`Continue the ${st.operation}`, 'Git', git({ action: `${st.operation}:continue` })], [`Abort the ${st.operation}`, 'Git', git({ action: `${st.operation}:abort` })]] : []),
     ['Save file', 'Editor', () => ctx.saveFile(), '⌘S'],
+    ['Go to definition', 'Editor', () => Lsp.goToDefinition(), 'F12'], ['Go back from a definition', 'Editor', () => Lsp.goBack(), '⌃-'],
     ['Next conflict (F7)', 'Conflicts', () => document.querySelector('#conflict-bar [data-cf="next"]')?.click()],
     ['Previous conflict (Shift-F7)', 'Conflicts', () => document.querySelector('#conflict-bar [data-cf="prev"]')?.click()],
     ['Accept current side of this conflict (⌘⌥1)', 'Conflicts', () => document.querySelector('#conflict-bar [data-cf="ours"]')?.click()],

@@ -1,5 +1,6 @@
 import { renderMarkdown, sanitize } from './markdown.js'
 import { highlight, highlightLines } from './highlight.js'
+import * as Lsp from './lsp.js'
 import { parseDiff } from './diffparse.js'
 import { splitLines, lineDiff } from './linediff.js'
 import { ctx } from './ctx.js'
@@ -1361,6 +1362,7 @@ function renderEditor() {
   Ops.renderConflictBar()
   refreshGutter()
   paintSyntax()
+  if (editing) Lsp.refresh()
   paintFind()
   Ed.onRender()
   $('#open-ext').hidden = !file || !tab
@@ -1382,7 +1384,7 @@ function paintSyntax() {
   if (!rows) { layer.innerHTML = ''; Ed.paintExtras(); return }
   const [first, last] = visibleRange(tab)
   let h = ''
-  for (let i = first; i < last; i++) h += `<div class="sl" style="top:${lineTop(i) - ed.scrollTop}px">${Ed.decorateRow(rows[i] ?? '')}</div>`
+  for (let i = first; i < last; i++) h += `<div class="sl" style="top:${lineTop(i) - ed.scrollTop}px">${Ed.decorateRow(Lsp.decorate(tab, i, rows[i] ?? ''))}</div>`
   layer.innerHTML = `<div style="transform:translateX(${-ed.scrollLeft}px)">${h}</div>`
   Ed.paintExtras()
 }
@@ -4359,6 +4361,7 @@ Object.assign(ctx, { currentPath, rerenderAll: () => { if (state.diffFiles.lengt
 R.initReview()
 Ops.initOps()
 Pv.initPreview()
+Lsp.initLsp()
 FO.initFileOps()
 Ed.initEditor()
 Rp.initReplace()

@@ -50,3 +50,41 @@ test('reads a language off what a fence actually says', () => {
 test('a block too big to color is left alone', () => {
   assert.equal(highlight('x'.repeat(200001), 'go'), null)
 })
+
+import { overlay } from './highlight.js'
+import { position, offsetOf, alignLine, groupTokens } from './lsp.js'
+
+test('overlay wraps text only, keeps entities whole and nests inside hljs spans', () => {
+  assert.equal(overlay('foo(bar)', [{ start: 0, end: 3, cls: 'x' }]), '<span class="x">foo</span>(bar)')
+  // &lt; is one character: "a<b" has b at offset 2.
+  assert.equal(overlay('a&lt;b', [{ start: 2, end: 3, cls: 'x' }]), 'a&lt;<span class="x">b</span>')
+  assert.equal(overlay('a&lt;b', [{ start: 1, end: 2, cls: 'x' }]), 'a<span class="x">&lt;</span>b')
+  // A token inside an hljs span stays inside it; one across tags splits at them.
+  assert.equal(overlay('<span class="k">func</span> main', [{ start: 5, end: 9, cls: 'x' }]), '<span class="k">func</span> <span class="x">main</span>')
+  assert.equal(overlay('<span class="k">ab</span>cd', [{ start: 1, end: 3, cls: 'x' }]), '<span class="k">a<span class="x">b</span></span><span class="x">c</span>d')
+  assert.equal(overlay('a', []), 'a')
+})
+
+test('lsp positions are UTF-16 offsets and clamp to the line', () => {
+  const t = 'ab\n😀cd\nxyz'
+  assert.deepEqual(position(t, 3), { line: 1, character: 0 })
+  assert.deepEqual(position(t, 5), { line: 1, character: 2 }) // after the emoji's two units
+  assert.equal(offsetOf(t, 1, 2), 5)
+  assert.equal(offsetOf(t, 0, 99), 2)
+  assert.equal(offsetOf(t, 9, 0), t.length)
+})
+
+test('semantic lines stay aligned across one edit', () => {
+  const old = ['a', 'b', 'c', 'd'], now = ['a', 'new', 'b', 'c', 'd']
+  assert.equal(alignLine(old, now, 0), 0)
+  assert.equal(alignLine(old, now, 1), -1)
+  assert.equal(alignLine(old, now, 2), 1)
+  assert.equal(alignLine(old, now, 4), 3)
+})
+
+test('groupTokens keeps the classes highlight.js cannot tell apart', () => {
+  const legend = ['keyword', 'function', 'variable'], mods = ['readonly']
+  const by = groupTokens([0, 0, 4, 0, 0, 1, 2, 3, 1, 0, 1, 7, 2, 2, 1], legend, mods)
+  assert.equal(by.get(0), undefined)
+  assert.deepEqual(by.get(1), [{ start: 2, end: 5, cls: 'sem-fn' }, { start: 7, end: 9, cls: 'sem-const' }])
+})

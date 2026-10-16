@@ -115,6 +115,16 @@ func (w *Workspace) setRepos(found []string) {
 	for _, r := range w.repos {
 		old[r.Root] = r
 	}
+	// A repository that is gone from the folder takes its language servers with it.
+	kept := map[string]bool{}
+	for _, p := range found {
+		kept[p] = true
+	}
+	for root, r := range old {
+		if !kept[root] && r.app != w.host {
+			go r.app.lsp.stopAll()
+		}
+	}
 	w.repos, w.byID = nil, map[string]*wsRepo{filesID: {ID: filesID, Name: "Workspace files", Root: w.root, app: w.host, mux: w.host.mux()}}
 	for _, p := range found {
 		r := old[p]

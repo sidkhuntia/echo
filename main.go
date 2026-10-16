@@ -151,6 +151,8 @@ type App struct {
 	hub       statusHub
 	// net serializes network actions; a second fetch/pull/push while one runs is refused, not queued.
 	net sync.Mutex
+	// lsp starts language servers on first use (lsp.go); it holds no process until a file asks.
+	lsp *lspManager
 	// srv is the running server, so the page can ask for a graceful stop. It is nil in tests,
 	// which drive routes() over their own listener; stopping then just closes the app.
 	srv *http.Server
@@ -392,6 +394,7 @@ func newApp(root string, port int) *App {
 		root:  root,
 		port:  port,
 		sigs:  map[string]fileSig{},
+		lsp:   newLSPManager(root),
 		hosts: map[string]bool{"127.0.0.1:" + p: true, "localhost:" + p: true},
 		done:  make(chan struct{}),
 	}
@@ -409,6 +412,8 @@ func (a *App) mux() *http.ServeMux {
 	mux.HandleFunc("/api/tree", a.handleTree)
 	mux.HandleFunc("/api/file", a.handleFile)
 	mux.HandleFunc("/api/raw", a.handleRaw)
+	mux.HandleFunc("/api/lsp/definition", a.handleLSPDefinition)
+	mux.HandleFunc("/api/lsp/tokens", a.handleLSPTokens)
 	mux.HandleFunc("/api/git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/git", a.handleGit)
 	mux.HandleFunc("/api/diff", a.handleDiff)
@@ -710,6 +715,8 @@ func (a *App) shutdown(why string) {
 		if a.done != nil {
 			close(a.done)
 		}
+		// Language servers exit the way the protocol says, so a Ctrl-C leaves no gopls behind.
+		stopAllLSP()
 		if a.srv == nil {
 			return
 		}
