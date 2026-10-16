@@ -252,3 +252,16 @@ export function recordSave(tab, sent, hash) {
   tab.conflict = ''
   return tab.content !== tab.saved
 }
+
+// Saves of one tab run one at a time. Each save sends the tab's hash as its base, and that hash only moves
+// when the previous save's response lands, so two saves in flight would send the same stale base and the
+// second would fail as a conflict with echo's own write. run is read for its result at the time it starts.
+const saving = new WeakMap()
+export function serializeSaves(tab, run) {
+  const next = (saving.get(tab) || Promise.resolve()).then(run, run)
+  saving.set(tab, next)
+  const clear = () => { if (saving.get(tab) === next) saving.delete(tab) }
+  next.then(clear, clear)
+  return next
+}
+export const isSaving = tab => saving.has(tab)

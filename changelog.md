@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed a false "changed on disk" conflict after saving. Saves of one tab now run one at a time, so an autosave (or save on blur) that fires while a manual save is in flight waits for it and sends the hash that save returned, instead of the stale one the server rejects with 409. A queued save whose text the earlier save already wrote is skipped, and the disk sync leaves a tab alone while its own save is in flight.
 - UI revamp polish ("Signal", visual only, no behavior change): radius scale (`--r-sm/--r/--r-md/--r-lg`, concentric outer = inner + padding), quieter layered `--shadow` with borders-only depth, one `--ease-out` for all motion (no `ease-in`, no width animation), tighter title bar and review headers (36px file head, 34px hunk head, 12px grid padding), trace playhead as solid accent ring instead of glow with inset ring on the current file, inset 2px accent bar on the current sidebar row, and tabular numbers on diff stats.
 
 ## 0.10.0 (2026-10-08)
