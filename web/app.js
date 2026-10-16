@@ -1067,12 +1067,20 @@ function hunkHTML(h, hi, path, total, f) {
   return `<div class="hunk ${split ? 'split' : ''}" data-h="${hi}"><div class="hunk-head" title="${esc(`${h.range} ${h.context}`.trim())}"><span class="hpill"><b>${hi + 1}/${total}</b>${label ? `<span class="hctx">${esc(label)}</span>` : ''}</span>${f ? R.hunkActsHTML(f, h, hi) : ''}<span class="hmeta">${size}<span>${where}</span></span></div>${split ? splitRows(h, f, hi) : stackedRows(h, f, hi)}</div>`
 }
 
+// The speech bubble in a line-number cell: it appears when the pointer is over the number, and stays
+// where the line already has a note. Clicking it writes a note; clicking the number selects the line.
+const NOTE_ICON = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10v7H8.5L5.5 13v-2.5H3z"/></svg>'
+const noteBubble = (f, l, noted) => f && l && l.t !== 'meta' && R.notable() ? `<i class="cm${noted ? ' on' : ''}" title="${noted ? 'This line has a note. Add another' : 'Add a note for the agent'}">${NOTE_ICON}</i>` : ''
+
 function stackedRows(h, f, hi) {
   return h.lines.map(l => {
-    const cls = rowClass(l)
+    const noted = R.hasNoteAt(f, l)
+    const cls = rowClass(l) + (noted ? ' noted' : '')
     const sign = l.t === 'add' ? '+' : l.t === 'del' ? '−' : ''
     const da = R.lineAttr(l)
-    return `<span class="no ${cls}"${da} title="Select this line to stage or discard just it">${l.o ?? ''}</span><span class="no ${cls}"${da}>${l.n ?? ''}</span><span class="sg ${cls}"${da} title="Add a note on this line">${sign}</span>${textCell(l, cls)}${f && l.t !== 'meta' ? R.noteRowsHTML(f, hi, l) : ''}`
+    const bubbleOld = l.n == null ? noteBubble(f, l, noted) : ''
+    const bubbleNew = l.n != null ? noteBubble(f, l, noted) : ''
+    return `<span class="no ${cls}"${da} title="Select this line to stage or discard just it">${bubbleOld}${l.o ?? ''}</span><span class="no ${cls}"${da}>${bubbleNew}${l.n ?? ''}</span><span class="sg ${cls}"${da} title="Add a note on this line">${sign}</span>${textCell(l, cls)}${f && l.t !== 'meta' ? R.noteRowsHTML(f, hi, l) : ''}`
   }).join('')
 }
 
@@ -1081,8 +1089,9 @@ function stackedRows(h, f, hi) {
 function splitRows(h, f, hi) {
   const side = (l, isNew) => {
     if (!l) return `<span class="no r-none ${isNew ? 'ns' : ''}"></span><span class="tx r-none"></span>`
-    const cls = rowClass(l)
-    return `<span class="no ${cls} ${isNew ? 'ns' : ''}"${R.lineAttr(l)}>${isNew ? l.n : l.o}</span>${textCell(l, cls)}`
+    const noted = R.hasNoteAt(f, l)
+    const cls = rowClass(l) + (noted ? ' noted' : '')
+    return `<span class="no ${cls} ${isNew ? 'ns' : ''}"${R.lineAttr(l)}>${noteBubble(f, l, noted)}${isNew ? l.n : l.o}</span>${textCell(l, cls)}`
   }
   const notes = l => (f && l ? R.noteRowsHTML(f, hi, l) : '')
   let out = '', dels = [], adds = []
@@ -1437,7 +1446,60 @@ function renderPreview(tab) {
   if (!same) view.scrollTop = tab.mdScroll || 0
   view.shownTab = tab
   view.shownText = tab.content
+  initPreviewNotes(view.firstElementChild)
 }
+
+// ---------- notes in the Markdown preview ----------
+// Each block the renderer draws knows the source lines it came from (data-src="a-b"). Pointing at a
+// block shows a speech bubble in the margin that writes a note on those lines; a block that has a
+// note is tinted and keeps a bubble for each, which edits it. The notes are the same ones the editor
+// and the diff show, because they point at the same lines of the file.
+function initPreviewNotes(doc) {
+  if (!doc || !doc.classList.contains('md-doc')) return
+  doc.insertAdjacentHTML('beforeend', `<div class="md-marks"><div class="md-ns"></div><button class="md-add" type="button" hidden title="Add a note for the agent on this part" aria-label="Add a note for the agent on this part">${NOTE_ICON}</button></div>`)
+  new ResizeObserver(paintPreviewNotes).observe(doc)
+  paintPreviewNotes()
+}
+
+function previewBlocks(doc) {
+  return [...doc.querySelectorAll('[data-src]')].map(el => ({ el, r: el.getBoundingClientRect(), range: el.dataset.src.split('-').map(Number) }))
+}
+
+function paintPreviewNotes() {
+  const view = $('#md'), tab = view.shownTab, doc = view.querySelector('.md-doc')
+  const ns = doc?.querySelector(':scope > .md-marks > .md-ns')
+  if (!ns || !tab || !view.classList.contains('active')) return
+  const base = doc.getBoundingClientRect().top
+  let h = ''
+  for (const { el, r, range: [a, b] } of previewBlocks(doc)) {
+    const notes = R.notesIn(tab.path, a, b)
+    el.classList.toggle('md-noted', notes.length > 0)
+    if (notes.length) h += `<button class="md-nm" type="button" data-nid="${esc(notes[0].id)}" style="top:${r.top - base + 2}px" title="${notes.length > 1 ? `${notes.length} notes for the agent are here. Click to edit the first` : 'A note for the agent is here. Click to edit'}" aria-label="Edit the note for the agent">${NOTE_ICON}</button>`
+  }
+  ns.innerHTML = h
+}
+
+let mdHover = null
+$('#md').addEventListener('mousemove', e => {
+  const view = $('#md'), tab = view.shownTab, doc = view.querySelector('.md-doc'), add = doc?.querySelector('.md-add')
+  if (!add || !tab) return
+  // The block under the pointer: the smallest one whose rows contain it (a list item, not its list).
+  let best = null
+  for (const b of previewBlocks(doc)) if (e.clientY >= b.r.top && e.clientY < b.r.bottom && (!best || b.r.height < best.r.height)) best = b
+  // A block that has a note shows that note's bubble in the same place instead.
+  if (!best || R.notesIn(tab.path, best.range[0], best.range[1]).length) { add.hidden = true; mdHover = null; return }
+  mdHover = best.range
+  add.style.top = best.r.top - doc.getBoundingClientRect().top + 2 + 'px'
+  add.hidden = false
+})
+$('#md').addEventListener('mouseleave', () => { const add = $('#md .md-add'); if (add) add.hidden = true })
+$('#md').addEventListener('click', e => {
+  const tab = $('#md').shownTab
+  if (!tab) return
+  const nm = e.target.closest('.md-nm')
+  if (nm) return R.openNoteById(nm.dataset.nid)
+  if (e.target.closest('.md-add') && mdHover) R.noteOnLines(tab.path, mdHover[0], mdHover[1], tab.content)
+})
 
 // A fenced block names its language on the <code>, so the preview can color it the way the
 // editor would, and a mermaid fence can become a diagram. This runs after sanitize(), which has
@@ -1934,7 +1996,7 @@ function paintGutter() {
         : `<span class="gbl" data-hash="${esc(c.hash)}" title="${esc(c.summary)}\n${esc(c.author)}, ${esc(new Date(c.time * 1000).toLocaleString())}\n${esc(c.hash.slice(0, 7))} · click to see the commit">${esc(c.author)} · ${ago(c.time).replace(' ago', '')}</span>`
     }
     const nid = noteLines.get(i + 1)
-    h += `<div class="gl${cf ? ' cf' : ''}" style="top:${lineTop(i) - ed.scrollTop}px${state.wrap ? `;height:${wrap.h[i]}px` : ''}">${who}${nid ? `<i class="gn" data-nid="${esc(nid)}" title="A note is here. Click to edit."></i>` : ''}${i + 1}`
+    h += `<div class="gl${cf ? ' cf' : ''}" style="top:${lineTop(i) - ed.scrollTop}px${state.wrap ? `;height:${wrap.h[i]}px` : ''}">${who}${nid ? `<i class="gn" data-nid="${esc(nid)}" title="A note for the agent is here. Click to edit.">${NOTE_ICON}</i>` : ''}${i + 1}`
       + (cf ? `<i class="gb cf" title="Conflict marker"></i>` : '')
       + (kind ? `<i class="gb ${kind}${mk.staged[i] ? ' staged' : ''}" title="${kind === 'add' ? 'Added' : 'Modified'}${mk.staged[i] ? ', staged' : ''}"></i>` : '')
       + (del !== undefined ? `<i class="gd${del ? ' staged' : ''}"></i>` : '')
@@ -3826,6 +3888,36 @@ $('#gutter').addEventListener('click', e => {
   const b = e.target.closest('.gbl[data-hash]'); if (b) showCommitInLog(b.dataset.hash)
 })
 $('#note-add').onclick = () => R.addEditorNote()
+
+// ---------- note icon over the line numbers ----------
+// Pointing at a line number in the editor shows a small speech bubble there; clicking it writes a note
+// for the agent on that line (or on the selection, when the line is part of it). Lines that already
+// have a note show their own marker instead.
+const noteHover = $('#note-hover')
+let hoverLine = 0
+const hideNoteHover = () => { noteHover.hidden = true }
+function lineIndexAt(tab, y) {
+  const [first, last] = visibleRange(tab)
+  for (let i = first; i < last; i++) if (y < lineTop(i + 1)) return Math.max(i, first)
+  return -1
+}
+$('#editor').addEventListener('mousemove', e => {
+  const tab = activeTab(), ed = $('#editor')
+  if (state.mode !== 'file' || !tab || tab.binary || !ed.classList.contains('active')) return hideNoteHover()
+  const rect = ed.getBoundingClientRect(), gw = state.blameGutter ? 230 : 60
+  if (e.clientX - rect.left > gw) return hideNoteHover()
+  const i = lineIndexAt(tab, e.clientY - rect.top + ed.scrollTop)
+  if (i < 0 || i >= lineCount(tab) || R.noteLinesFor(tab.path).has(i + 1)) return hideNoteHover()
+  hoverLine = i + 1
+  noteHover.style.left = gw - 56 + 'px'
+  noteHover.style.top = lineTop(i) - ed.scrollTop + 2 + 'px'
+  noteHover.hidden = false
+})
+$('#editor').addEventListener('mouseleave', e => { if (e.relatedTarget !== noteHover) hideNoteHover() })
+noteHover.addEventListener('mouseleave', e => { if (e.relatedTarget !== $('#editor')) hideNoteHover() })
+noteHover.addEventListener('mousedown', e => e.preventDefault())
+noteHover.addEventListener('click', () => { hideNoteHover(); R.noteOnEditorLine(hoverLine) })
+$('#editor').addEventListener('scroll', hideNoteHover)
 $('#file-history').onclick = () => { const t = activeTab(); if (t) openFileHistory(t.path) }
 $('#blame-toggle').onclick = () => { state.blameGutter = !state.blameGutter; renderEditor(); paintGutter() }
 // Wrapping changes every line's width and height, so the measured offsets belong to the old mode and
@@ -4360,7 +4452,7 @@ async function boot() {
   persistSession()
 }
 syncScopeInputs()
-Object.assign(ctx, { currentPath, rerenderAll: () => { if (state.diffFiles.length) renderDiff() }, undoLastCommit, openPalette, reopenClosedTab, openFileHistory, closeTab, showFind, stepFind, renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, lineTopAt, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => { Ed.applySettings(); TD.applyTabOrder(); applyWsBar() }, rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
+Object.assign(ctx, { noteLinesFor: R.noteLinesFor, currentPath, rerenderAll: () => { if (state.diffFiles.length) renderDiff() }, undoLastCommit, openPalette, reopenClosedTab, openFileHistory, closeTab, showFind, stepFind, renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, lineTopAt, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind(); paintPreviewNotes() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => { Ed.applySettings(); TD.applyTabOrder(); applyWsBar() }, rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
 R.initReview()
 Ops.initOps()
 Pv.initPreview()

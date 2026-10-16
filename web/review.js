@@ -144,6 +144,8 @@ export function handleDiffClick(e) {
   if (no && hunkEl && f) {
     const l = f.hunks[hi].lines[+no.dataset.l]
     if (!l) return false
+    // The speech bubble in the number cell adds a note; the number itself still selects the line.
+    if (e.target.closest('.cm')) { openEditor(f.path, hi, l); return true }
     // The sign column adds a note; the line-number column selects the line for staging and for a note.
     if (no.classList.contains('sg')) { openEditor(f.path, hi, l); return true }
     if (no.classList.contains('no') && (l.t === 'add' || l.t === 'del')) { toggleLine(f, hi, l, e.shiftKey); return true }
@@ -245,19 +247,41 @@ export function addFileNote(path) {
   noteDialog({ title: `Note on ${path.split('/').pop()}`, kicker: 'whole file', onSave: text => { review.notes.push({ id: newId(), path, side: 'new', line: 0, text, ts: Date.now(), done: false }); saveReview(path) } })
 }
 
+// A note on lines a..b (1-based, inclusive) of a file's text. Every place that can write a note on
+// lines ends up here: the editor, its line-number icon, and the Markdown preview.
+export function noteOnLines(path, a, b, text) {
+  const lines = text.split('\n').slice(a - 1, b)
+  noteDialog({
+    title: a === b ? `Note on line ${a}` : `Note on lines ${a}–${b}`, kicker: path.split('/').pop(), quote: quoteLines(lines),
+    onSave: body => { review.notes.push({ id: newId(), path, side: 'new', line: a, end: b > a ? b : undefined, code: quoteLines(lines), text: body, ts: Date.now(), done: false }); saveReview(path) },
+  })
+}
+
 // A note on the lines selected in the editor, or the caret's line.
 export function addEditorNote() {
   const t = ctx.activeTab(), ed = ctx.$('#editor')
   if (!t || t.binary || ctx.state.mode !== 'file') return ctx.setStatus('Open a text file in the editor first')
   const text = ed.value, s = ed.selectionStart, e = ed.selectionEnd
   const lineAt = off => text.slice(0, off).split('\n').length
-  const a = lineAt(s), b = lineAt(e > s && text[e - 1] === '\n' ? e - 1 : e)
-  const lines = text.split('\n').slice(a - 1, b)
-  noteDialog({
-    title: a === b ? `Note on line ${a}` : `Note on lines ${a}–${b}`, kicker: t.path.split('/').pop(), quote: quoteLines(lines),
-    onSave: body => { review.notes.push({ id: newId(), path: t.path, side: 'new', line: a, end: b > a ? b : undefined, code: quoteLines(lines), text: body, ts: Date.now(), done: false }); saveReview(t.path) },
-  })
+  noteOnLines(t.path, lineAt(s), lineAt(e > s && text[e - 1] === '\n' ? e - 1 : e), text)
 }
+
+// The line-number icon in the editor: a note on that line, or on the selection when the line is part of it.
+export function noteOnEditorLine(line) {
+  const t = ctx.activeTab(), ed = ctx.$('#editor')
+  if (!t || t.binary) return
+  const text = ed.value, s = ed.selectionStart, e = ed.selectionEnd
+  const lineAt = off => text.slice(0, off).split('\n').length
+  const a = lineAt(s), b = lineAt(e > s && text[e - 1] === '\n' ? e - 1 : e)
+  if (b > a && line >= a && line <= b) noteOnLines(t.path, a, b, text)
+  else noteOnLines(t.path, line, line, text)
+}
+
+// The open notes that touch lines a..b of a file, for marking them in the Markdown preview.
+export const notesIn = (path, a, b) => review.notes.filter(n => n.path === path && n.line > 0 && !n.done && n.line <= b && lastLine(n) >= a)
+
+// Whether a diff line has a note on it, to mark it.
+export const hasNoteAt = (f, l) => !!f && l.t !== 'meta' && notesAt(f.path, l).length > 0
 
 export const noteLinesFor = path => {
   const set = new Map()

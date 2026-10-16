@@ -106,5 +106,5 @@ test('half-typed markdown always renders (an empty last list item used to throw)
   for (const src of ['- ', '1. ', 'text\n\n- a\n- ', '- [ ] ', '- \n- b', '> - ', '```', '| a |\n|', '<div', '[x](', '![', '<!--', '- [ ']) {
     assert.doesNotThrow(() => renderMarkdown(src), JSON.stringify(src))
   }
-  assert.match(renderMarkdown('- '), /<ul><li>/)
+  assert.match(renderMarkdown('- '), /<ul><li[ >]/)
 })

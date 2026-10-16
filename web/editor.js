@@ -270,8 +270,24 @@ function minimapScroll(ev) {
 }
 
 // ---------- the one entry point app.js calls after it paints the text ----------
+// Lines that carry an open note for the agent are tinted across the editor, behind the text.
+function paintNoteBands() {
+  const el = ctx.$('#notebands'), t = tab()
+  const noted = inEditor() && ctx.noteLinesFor ? ctx.noteLinesFor(t.path) : null
+  el.classList.toggle('active', !!noted && noted.size > 0)
+  if (!noted || !noted.size) { el.innerHTML = ''; return }
+  const [first, last] = rowsInView()
+  let html = ''
+  for (let i = first; i < last; i++) {
+    if (!noted.has(i + 1)) continue
+    const top = ctx.lineTop(i)
+    html += `<i style="top:${top - ed().scrollTop}px;height:${ctx.lineTop(i + 1) - top}px"></i>`
+  }
+  el.innerHTML = html
+}
+
 export function paintExtras() {
-  paintRuler(); paintGuides(); paintOccurrences(); paintScopes(); paintMinimapView(); MC.paint(); Vim.refreshVim()
+  paintNoteBands(); paintRuler(); paintGuides(); paintOccurrences(); paintScopes(); paintMinimapView(); MC.paint(); Vim.refreshVim()
 }
 
 export function onRender() {

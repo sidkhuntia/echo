@@ -13,9 +13,12 @@ export function renderMarkdown(src) {
   const refs = new Map()
   const lines = src.replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split('\n')
   // Link reference definitions can appear anywhere; collect them first.
-  const body = lines.filter(l => {
+  // orig[k] is the source line that body[k] came from, so a block can say which lines it was drawn from.
+  const orig = []
+  const body = lines.filter((l, k) => {
     const m = l.match(/^ {0,3}\[([^\]]+)\]:\s*<?(\S+?)>?(?:\s+["'(](.*)["')])?\s*$/)
     if (m && !/^\^/.test(m[1])) { refs.set(m[1].toLowerCase(), { href: m[2], title: m[3] || '' }); return false }
+    orig.push(k)
     return true
   })
   const seen = new Map()
@@ -26,7 +29,7 @@ export function renderMarkdown(src) {
     const end = body.indexOf('---', 1)
     if (end > 0) { front = `<pre class="md-front"><code class="md-lang-yaml">${esc(body.slice(1, end).join('\n'))}</code></pre>`; start = end + 1 }
   }
-  return front + blocks(body.slice(start), ctx)
+  return front + blocks(body.slice(start), ctx, orig.slice(start))
 }
 
 const fence = /^ {0,3}(`{3,}|~{3,})\s*([^`\s]*)/
@@ -35,10 +38,13 @@ const listItem = /^( *)([-*+]|\d{1,9}[.)])( +|$)(.*)$/
 const htmlBlock = /^ {0,3}<\/?([a-zA-Z][\w-]*)(\s|\/?>|$)|^ {0,3}<!--/
 const tableDelim = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/
 
-function blocks(lines, ctx) {
-  let out = '', i = 0
+// blocks turns lines into HTML. With `map` (the top level only) each block carries data-src="a-b", the
+// source lines it was drawn from, which is how a comment made on the preview finds its place in the file.
+function blocks(lines, ctx, map) {
+  let out = '', i = 0, paraFrom = 0
   const para = []
-  const flush = () => { if (para.length) { out += `<p>${inline(para.join('\n').trim(), ctx)}</p>`; para.length = 0 } }
+  const mark = (html, a, b) => map ? html.replace(/^<([a-z0-9]+)/, `<$1 data-src="${map[a] + 1}-${map[Math.max(a, b - 1)] + 1}"`) : html
+  const flush = () => { if (para.length) { out += mark(`<p>${inline(para.join('\n').trim(), ctx)}</p>`, paraFrom, paraFrom + para.length); para.length = 0 } }
   while (i < lines.length) {
     const line = lines[i]
     let m
@@ -46,25 +52,25 @@ function blocks(lines, ctx) {
     if ((m = line.match(fence))) {
       flush()
       const close = new RegExp(`^ {0,3}${m[1][0]}{${m[1].length},}\\s*$`)
-      const code = []
+      const code = [], from = i
       for (i++; i < lines.length && !close.test(lines[i]); i++) code.push(lines[i])
       i++
-      out += `<pre><code${m[2] ? ` class="md-lang-${esc(m[2])}"` : ''}>${esc(code.join('\n'))}</code></pre>`
+      out += mark(`<pre><code${m[2] ? ` class="md-lang-${esc(m[2])}"` : ''}>${esc(code.join('\n'))}</code></pre>`, from, Math.min(i, lines.length))
       continue
     }
     if ((m = line.match(/^ {0,3}(#{1,6})\s+(.*?)(\s+#+)?\s*$/)) || (m = line.match(/^ {0,3}(#{1,6})$/))) {
-      flush(); out += heading(m[1].length, m[2] || '', ctx); i++; continue
+      flush(); out += mark(heading(m[1].length, m[2] || '', ctx), i, i + 1); i++; continue
     }
     // Setext headings: a paragraph line underlined with === or ---.
     if (para.length && /^ {0,3}(=+|-+)\s*$/.test(line)) {
       const text = para.join(' ').trim()
       para.length = 0
-      out += heading(line.trim()[0] === '=' ? 1 : 2, text, ctx); i++; continue
+      out += mark(heading(line.trim()[0] === '=' ? 1 : 2, text, ctx), paraFrom, i + 1); i++; continue
     }
-    if (hr.test(line)) { flush(); out += '<hr>'; i++; continue }
+    if (hr.test(line)) { flush(); out += mark('<hr>', i, i + 1); i++; continue }
     if (/^ {0,3}>/.test(line)) {
       flush()
-      const inner = []
+      const inner = [], from = i
       for (; i < lines.length && lines[i].trim() && (/^ {0,3}>/.test(lines[i]) || inner.length); i++) {
         if (!/^ {0,3}>/.test(lines[i]) && (fence.test(lines[i]) || hr.test(lines[i]) || listItem.test(lines[i]))) break
         inner.push(lines[i].replace(/^ {0,3}> ?/, ''))
@@ -72,19 +78,19 @@ function blocks(lines, ctx) {
       const alert = inner[0]?.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/i)
       if (alert) {
         const kind = alert[1].toLowerCase()
-        out += `<div class="md-alert md-alert-${kind}"><p class="md-alert-title">${kind[0].toUpperCase() + kind.slice(1)}</p>${blocks(inner.slice(1), ctx)}</div>`
-      } else out += `<blockquote>${blocks(inner, ctx)}</blockquote>`
+        out += mark(`<div class="md-alert md-alert-${kind}"><p class="md-alert-title">${kind[0].toUpperCase() + kind.slice(1)}</p>${blocks(inner.slice(1), ctx)}</div>`, from, i)
+      } else out += mark(`<blockquote>${blocks(inner, ctx)}</blockquote>`, from, i)
       continue
     }
     if ((m = line.match(listItem)) && (!para.length || m[4].trim()) && m[1].length < 4) {
       flush()
-      const r = list(lines, i, ctx)
+      const r = list(lines, i, ctx, map)
       out += r.html; i = r.next; continue
     }
     if (line.includes('|') && i + 1 < lines.length && tableDelim.test(lines[i + 1]) && lines[i + 1].includes('-')) {
       flush()
       const r = table(lines, i, ctx)
-      out += r.html; i = r.next; continue
+      out += mark(r.html, i, r.next); i = r.next; continue
     }
     if (!para.length && htmlBlock.test(line)) {
       const html = []
@@ -93,12 +99,13 @@ function blocks(lines, ctx) {
       continue
     }
     if (!para.length && /^ {4}/.test(line)) {
-      const code = []
+      const code = [], from = i
       for (; i < lines.length && (/^ {4}/.test(lines[i]) || !lines[i].trim()); i++) code.push(lines[i].slice(4))
       while (code.length && !code.at(-1).trim()) code.pop()
-      out += `<pre><code>${esc(code.join('\n'))}</code></pre>`
+      out += mark(`<pre><code>${esc(code.join('\n'))}</code></pre>`, from, from + code.length)
       continue
     }
+    if (!para.length) paraFrom = i
     para.push(line)
     i++
   }
@@ -115,7 +122,7 @@ function heading(level, text, ctx) {
 }
 
 // list reads one list starting at lines[i]: items continue while lines are indented past the marker.
-function list(lines, i, ctx) {
+function list(lines, i, ctx, map) {
   const first = lines[i].match(listItem)
   const ordered = /\d/.test(first[2])
   const base = first[1].length
@@ -127,6 +134,7 @@ function list(lines, i, ctx) {
     if (!m || m[1].length !== base || /\d/.test(m[2]) !== ordered) break
     const indent = m[1].length + m[2].length + Math.min(m[3].length || 1, 4)
     const item = [m[4]]
+    item.from = i
     let blank = false
     for (i++; i < lines.length; i++) {
       const l = lines[i]
@@ -138,6 +146,7 @@ function list(lines, i, ctx) {
       break
     }
     while (item.length > 1 && !item.at(-1).trim()) item.pop()
+    item.to = item.from + item.length
     const next = i < lines.length && lines[i].match(listItem)
     if (blank && next && next[1].length === base && /\d/.test(next[2]) === ordered) loose = true
     items.push(item)
@@ -148,7 +157,8 @@ function list(lines, i, ctx) {
     if (t) { task = `<input type="checkbox" disabled${t[1] !== ' ' ? ' checked' : ''}> `; item[0] = t[2] }
     let inner = blocks(item, ctx)
     if (!loose) inner = inner.replace(/^<p>([\s\S]*?)<\/p>/, '$1')
-    html += `<li${task ? ' class="md-task"' : ''}>${task}${inner}</li>`
+    const src = map ? ` data-src="${map[item.from] + 1}-${map[Math.max(item.from, item.to - 1)] + 1}"` : ''
+    html += `<li${src}${task ? ' class="md-task"' : ''}>${task}${inner}</li>`
   }
   return { html: html + (ordered ? '</ol>' : '</ul>'), next: i }
 }
@@ -216,7 +226,7 @@ function emphasis(s) {
 const TAGS = new Set('a abbr b blockquote br caption center code dd del details div dl dt em figcaption figure h1 h2 h3 h4 h5 h6 hr i img input ins kbd li mark ol p picture pre q s samp small span strong sub summary sup table tbody td tfoot th thead tr tt u ul var'.split(' '))
 // Elements removed with their content, rather than unwrapped to their text.
 const DROP = new Set('script style iframe object embed form textarea select button noscript template svg math link meta base frame frameset'.split(' '))
-const ATTRS = new Set(['href', 'src', 'alt', 'title', 'width', 'height', 'align', 'colspan', 'rowspan', 'start', 'open', 'type', 'checked', 'disabled', 'id', 'class'])
+const ATTRS = new Set(['href', 'src', 'alt', 'title', 'width', 'height', 'align', 'colspan', 'rowspan', 'start', 'open', 'type', 'checked', 'disabled', 'id', 'class', 'data-src'])
 
 // sanitize parses the HTML inertly (nothing loads or runs) and keeps only known-safe tags and
 // attributes. `url(href, kind)` rewrites or rejects each link and image address.
@@ -231,7 +241,7 @@ export function sanitize(html, url) {
       for (const a of [...el.attributes]) {
         const name = a.name.toLowerCase()
         // Only echo's own ids and classes survive, so a document cannot clobber the page's elements.
-        if (!ATTRS.has(name) || ((name === 'id' || name === 'class') && !/^md-/.test(a.value))) el.removeAttribute(a.name)
+        if (!ATTRS.has(name) || ((name === 'id' || name === 'class') && !/^md-/.test(a.value)) || (name === 'data-src' && !/^\d+-\d+$/.test(a.value))) el.removeAttribute(a.name)
       }
       if (tag === 'input' && el.getAttribute('type') !== 'checkbox') { el.remove(); continue }
       if (tag === 'input') el.setAttribute('disabled', '')

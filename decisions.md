@@ -727,3 +727,10 @@ Local branches reachable from `HEAD` (`for-each-ref --merged HEAD`) get `merged:
 - **Default:** floating things (menus, dialogs, popups, fields) keep `--surface`, `--surface-2` and `--sunk`, so they read as raised or inset against either role.
 - **Why derived:** a new theme only has to give a good editor color and text color to get a distinct side panel; the ordering "chrome is a step toward the text" cannot be broken by a palette's own quirks.
 
+
+## 24. Comments for the agent: where they can be written
+
+- **Accepted:** a note can be started from a speech bubble that appears when the pointer is over a line number (editor, both diff layouts) or over a block of the Markdown preview. This adds entry points only; the notes, their storage (`.git/echo`, `/api/review`) and the prompt export are unchanged (§§ on review notes).
+- **Default:** the Markdown renderer marks each top-level block, and each list item, with `data-src="a-b"`, the 1-based lines of the file it was drawn from (link reference definitions and front matter are accounted for). The sanitizer keeps the attribute only when it is two numbers, and it is the only way the preview maps a block back to the file. Blocks nested in a list item or a quote carry no mark of their own: the note goes on the enclosing item or quote.
+- **Default:** a block that has an open note shows that note's bubble in the margin instead of the add bubble (one bubble per block, editing the first note), so a second note on the same block is written from the editor.
+- **Deferred:** notes on CSV/table previews (no source lines), and on a block inside a list item.
