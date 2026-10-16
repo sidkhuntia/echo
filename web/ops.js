@@ -19,16 +19,24 @@ export function renderOpBar() {
   bar.hidden = false
 }
 
+let opBusy = false
+
 async function opClick(e) {
   const b = e.target.closest('[data-op]')
   const op = ctx.state.status?.operation
   if (!b || !op) return
   const verb = b.dataset.op
+  if (opBusy) return
   if (verb === 'abort') {
     const ok = await ctx.ask({ title: `Abort the ${op}`, kicker: 'goes back', tone: 'warn', ok: 'Abort', html: `<p>The ${op} stops and the repository returns to how it was before it started. Resolutions you made so far are dropped.</p>` })
     if (!ok) return
   }
-  await ctx.gitAction({ action: `${op}:${verb}` })
+  if (verb === 'skip') {
+    const ok = await ctx.ask({ title: `Skip this commit`, kicker: 'drops it', tone: 'warn', ok: 'Skip', html: `<p>The commit being replayed is dropped, together with any resolutions or staged changes you made for it.</p>` })
+    if (!ok) return
+  }
+  opBusy = true
+  try { await ctx.gitAction({ action: `${op}:${verb}` }) } finally { opBusy = false }
 }
 
 // ---------- the conflict toolbar ----------
@@ -43,8 +51,15 @@ function currentConflict(cs) {
   const at = ed ? ed.selectionStart : 0
   const inside = cs.findIndex(c => at >= c.start && at < c.end)
   if (inside >= 0) return (idx = inside)
-  idx = Math.max(0, Math.min(idx, cs.length - 1))
-  return idx
+  // Caret between conflicts: the next one below it, or the last when it is past them all.
+  const next = cs.findIndex(c => c.start >= at)
+  return (idx = next >= 0 ? next : cs.length - 1)
+}
+
+// The conflict buttons and keys edit the textarea, which is hidden (and stale) in Markdown preview.
+function ensureEditing() {
+  const ed = ctx.$('#editor'), tab = ctx.activeTab()
+  if (tab && ed && !ed.classList.contains('active')) ctx.setPreview?.(false)
 }
 
 function liveText(tab) {
@@ -56,7 +71,13 @@ function liveText(tab) {
 function goConflict(cs, dir) {
   const ed = ctx.$('#editor'), tab = ctx.activeTab()
   if (!cs.length) return
-  idx = (currentConflict(cs) + dir + cs.length) % cs.length
+  const at = ed.selectionStart, n = cs.length
+  const inside = cs.some(c => at >= c.start && at < c.end)
+  idx = currentConflict(cs)
+  // Outside every conflict, step from the caret: next is the one below it, previous the one above.
+  if (inside) idx = (idx + dir + n) % n
+  else if (dir < 0) idx = cs.findLastIndex(c => c.end <= at) >= 0 ? cs.findLastIndex(c => c.end <= at) : n - 1
+  else if (!cs.some(c => c.start >= at)) idx = 0
   const c = cs[idx]
   ed.focus({ preventScroll: true })
   ed.setSelectionRange(c.start, c.start)
@@ -83,7 +104,7 @@ export function renderConflictBar() {
       + `<span class="faint" title="${ctx.esc(tip)}">${ctx.esc(c.oursLabel || 'current')} ⇄ ${ctx.esc(c.theirsLabel || 'incoming')}</span>`
       + (badLine >= 0 ? `<span class="cf-warn" title="A start marker at line ${badLine + 1} has no end marker. Finish the edit or undo it.">· unterminated at ${badLine + 1}</span>` : '')
       + `<span class="grow"></span>`
-      + `<button class="btn sm quiet" data-cf="prev" title="Previous conflict (Shift-F7)">↑</button><button class="btn sm quiet" data-cf="next" title="Next conflict (F7)">↓</button>`
+      + `<button class="btn sm quiet" data-cf="prev" aria-label="Previous conflict" title="Previous conflict (Shift-F7)">↑</button><button class="btn sm quiet" data-cf="next" aria-label="Next conflict" title="Next conflict (F7)">↓</button>`
       + `<button class="btn sm" data-cf="ours" title="Keep only the current side (⌘⌥1)">Accept current</button>`
       + `<button class="btn sm" data-cf="theirs" title="Keep only the incoming side (⌘⌥2)">Accept incoming</button>`
       + `<button class="btn sm" data-cf="both" title="Keep current, then incoming (⌘⌥3)">Accept both</button>`
@@ -101,11 +122,14 @@ export function renderConflictBar() {
   // markers were already resolved. The kind decides which buttons make sense.
   const seq = ctx.state.statusSeq, cached = kindCache.get(tab.path)
   if (!cached || cached.seq !== seq) {
-    kindCache.set(tab.path, { seq, kind: cached?.kind || '' })
-    ctx.api(`/api/conflict?path=${encodeURIComponent(tab.path)}`).then(info => {
-      kindCache.set(tab.path, { seq: ctx.state.statusSeq, kind: info.kind || 'unknown', code: info.code })
+    kindCache.set(tab.path, { seq, kind: cached?.kind && cached.kind !== 'error' ? cached.kind : '' })
+    const done = entry => {
+      if (kindCache.get(tab.path)?.seq > seq) return
+      kindCache.set(tab.path, { seq, ...entry })
       if (ctx.activeTab() === tab) renderConflictBar()
-    }).catch(() => {})
+    }
+    ctx.api(`/api/conflict?path=${encodeURIComponent(tab.path)}`)
+      .then(info => done({ kind: info.kind || 'unknown', code: info.code }), () => done({ kind: 'error' }))
   }
   const kind = cached?.kind || ''
   bar.hidden = false
@@ -117,25 +141,30 @@ export function renderConflictBar() {
       + `<button class="btn sm" data-cf="keep">Keep file</button><button class="btn sm quiet" data-cf="drop">Delete file</button>`
   } else if (kind === 'both-added') {
     bar.innerHTML = `<span class="grow"><b>${ctx.esc(ctx.basename(tab.path))}</b> created differently on both sides with no base version.</span>`
-      + `<button class="btn sm" data-cf="ours-file" title="Keep your whole file">Keep mine</button><button class="btn sm" data-cf="theirs-file" title="Take their whole file">Take theirs</button>`
+      + `<button class="btn sm" data-cf="ours-file" title="Keep the current side's whole file (during a rebase, the branch being rebased onto)">Accept current</button><button class="btn sm" data-cf="theirs-file" title="Keep the incoming side's whole file">Accept incoming</button>`
+  } else if (kind === '') {
+    bar.innerHTML = `<span class="grow faint">Checking <b>${ctx.esc(ctx.basename(tab.path))}</b>…</span>`
+  } else if (kind === 'error') {
+    bar.innerHTML = `<span class="grow">Could not read the conflict kind of <b>${ctx.esc(ctx.basename(tab.path))}</b>.</span><button class="btn sm" data-cf="retry">Retry</button>`
   } else {
     bar.innerHTML = `<span class="grow"><b>${ctx.esc(ctx.basename(tab.path))}</b> was in conflict and no markers are left.</span><button class="btn sm primary" data-cf="stage">Mark resolved (stage)</button>`
   }
 }
 
 async function stageResolved(tab) {
-  if (tab.content !== tab.saved) await ctx.saveFile()
-  const after = ctx.activeTab()
-  const text = ctx.$('#editor').classList.contains('active') ? ctx.$('#editor').value : after.content
+  // A failed save (409, disk error) must not stage the stale copy on disk.
+  if (tab.content !== tab.saved && await ctx.saveFile() === false) return
+  const text = ctx.activeTab() === tab && ctx.$('#editor').classList.contains('active') ? ctx.$('#editor').value : tab.content
   if (findConflicts(text).length || findIncomplete(text) >= 0) {
     const ok = await ctx.ask({ title: 'Stage with markers left', kicker: 'marks stay', tone: 'warn', ok: 'Stage anyway',
-      html: `<p><b>${ctx.esc(after.path)}</b> still holds conflict markers. Staging marks it resolved, and the markers will be committed as text.</p>` })
+      html: `<p><b>${ctx.esc(tab.path)}</b> still holds conflict markers. Staging marks it resolved, and the markers will be committed as text.</p>` })
     if (!ok) return
   }
-  return ctx.gitAction({ action: 'add', paths: [after.path] })
+  return ctx.gitAction({ action: 'add', paths: [tab.path] })
 }
 
 function applyChoice(choice) {
+  ensureEditing()
   const ed = ctx.$('#editor')
   const cs = findConflicts(ed.value)
   if (!cs.length) return
@@ -157,8 +186,9 @@ async function cfClick(e) {
   const act = b.dataset.cf, ed = ctx.$('#editor'), tab = ctx.activeTab()
   if (!tab) return
   if (act === 'stage') return stageResolved(tab)
+  if (act === 'retry') { kindCache.delete(tab.path); return renderConflictBar() }
   if (act === 'keep') {
-    if (tab.content !== tab.saved) await ctx.saveFile()
+    if (tab.content !== tab.saved && await ctx.saveFile() === false) return
     return ctx.gitAction({ action: 'add', paths: [tab.path] })
   }
   if (act === 'drop') {
@@ -169,17 +199,19 @@ async function cfClick(e) {
   }
   if (act === 'ours-file' || act === 'theirs-file') {
     const side = act === 'ours-file' ? 'ours' : 'theirs'
-    const ok = await ctx.ask({ title: `Take ${side === 'ours' ? 'your' : 'their'} whole file`, kicker: 'throws away', tone: 'warn', ok: `Take ${side}`,
+    const label = side === 'ours' ? 'current' : 'incoming'
+    const ok = await ctx.ask({ title: `Take the ${label} whole file`, kicker: 'throws away', tone: 'warn', ok: `Take ${label}`,
       html: `<p>The other side of <b>${ctx.esc(tab.path)}</b> is thrown away for the whole file. A snapshot is kept first, so Restore brings it back.</p>` })
     if (ok) return ctx.gitAction({ action: 'resolve:' + side, paths: [tab.path] })
     return
   }
+  ensureEditing()
   const cs = findConflicts(ed.value)
   if (!cs.length) return
   if (act === 'prev') return goConflict(cs, -1)
   if (act === 'next') return goConflict(cs, 1)
   if (act === 'more') {
-    const c = cs[currentConflict(cs)], hasBase = c.base !== null
+    const c = cs[currentConflict(cs)], hasBase = c.base !== null, r = b.getBoundingClientRect()
     const { popMenu } = await import('./ui.js')
     popMenu([
       { label: 'All current (whole file)', run: () => applyChoice('all-ours') },
@@ -188,7 +220,7 @@ async function cfClick(e) {
       { label: 'All both, incoming first', run: () => applyChoice('all-both-rev') },
       ...(hasBase ? [{ label: 'This one: take base', run: () => applyChoice('base') }] : []),
       { label: 'This one: incoming first, then current', run: () => applyChoice('both-rev') },
-    ], e.clientX, e.clientY, 'Resolve all')
+    ], ...(e.detail === 0 ? [r.left, r.bottom] : [e.clientX, e.clientY]), 'Resolve all')
     return
   }
   if (['ours', 'theirs', 'both', 'both-rev', 'base'].includes(act)) return applyChoice(act)
@@ -200,10 +232,12 @@ export function conflictKeys(e) {
   const bar = ctx.$('#conflict-bar')
   if (!bar || bar.hidden) return false
   const mod = e.metaKey || e.ctrlKey
-  if (e.key === 'F7') { e.preventDefault(); e.stopPropagation(); goConflict(findConflicts(ctx.$('#editor').value), e.shiftKey ? -1 : 1); return true }
-  if (mod && e.altKey && ['1', '2', '3'].includes(e.key)) {
+  if (e.key === 'F7') { e.preventDefault(); e.stopPropagation(); ensureEditing(); goConflict(findConflicts(ctx.$('#editor').value), e.shiftKey ? -1 : 1); return true }
+  // e.code, not e.key: Option+digit types a symbol on macOS.
+  const pick = { Digit1: 'ours', Digit2: 'theirs', Digit3: 'both' }[e.code]
+  if (mod && e.altKey && pick) {
     e.preventDefault(); e.stopPropagation()
-    applyChoice(e.key === '1' ? 'ours' : e.key === '2' ? 'theirs' : 'both')
+    applyChoice(pick)
     return true
   }
   return false

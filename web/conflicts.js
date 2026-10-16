@@ -20,7 +20,8 @@ export function findConflicts(text) {
   lines.forEach((line, i) => {
     const len = line.length + 1
     let m
-    if (!cur && (m = line.match(START)) && isStart(line)) {
+    // A start while ours/base is open means the earlier block never closed: drop it, begin anew here.
+    if ((!cur || part !== 'theirs') && (m = line.match(START)) && isStart(line)) {
       cur = { start: off, startLine: i, ours: [], base: null, theirs: [], oursLabel: (m[1] || '').trim(), theirsLabel: '' }
       part = 'ours'
     } else if (cur && part === 'ours' && isBase(line)) {
@@ -52,9 +53,10 @@ export function hasMarkers(text) {
 // A file can hold both complete conflicts and one incomplete tail.
 export function findIncomplete(text) {
   const lines = text.split('\n')
-  let open = -1, part = ''
+  let open = -1, part = '', bad = -1
   lines.forEach((line, i) => {
-    if (open < 0 && isStart(line)) {
+    if ((open < 0 || part !== 'theirs') && isStart(line)) {
+      if (open >= 0 && bad < 0) bad = open // abandoned by a later start: that one never closed
       open = i
       part = 'ours'
     } else if (open >= 0 && part === 'ours' && isBase(line)) {
@@ -65,7 +67,7 @@ export function findIncomplete(text) {
       open = -1
     }
   })
-  return open
+  return bad >= 0 ? bad : open
 }
 
 // conflictLines returns the zero-based lines covered by complete conflicts,

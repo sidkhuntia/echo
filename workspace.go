@@ -67,7 +67,8 @@ func isRepoRoot(dir string) bool {
 }
 
 // discoverRepos returns the repositories below dir, depth folder levels down. Hidden and build
-// folders are skipped, symbolic links are not followed, and a repository's own subfolders are not searched.
+// folders are not searched (a repository with such a name is still found), symbolic links are not
+// followed, and a repository's own subfolders are not searched.
 func discoverRepos(dir string, depth int) []string {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
@@ -75,13 +76,13 @@ func discoverRepos(dir string, depth int) []string {
 	}
 	var out []string
 	for _, e := range ents {
-		if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 || strings.HasPrefix(e.Name(), ".") || skipDir(e.Name()) {
+		if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		p := filepath.Join(dir, e.Name())
 		if isRepoRoot(p) {
 			out = append(out, p)
-		} else if depth > 1 {
+		} else if depth > 1 && !skipDir(e.Name()) {
 			out = append(out, discoverRepos(p, depth-1)...)
 		}
 	}
@@ -178,7 +179,7 @@ func (w *Workspace) instanceInfo() (map[string]string, int, []RepoSummary) {
 	changes := 0
 	for _, s := range sums {
 		repos[s.ID] = s.Root
-		changes += s.Staged + s.Unstaged + s.Untracked + s.Conflicts
+		changes += s.Files
 	}
 	return repos, changes, sums
 }
@@ -196,6 +197,7 @@ type RepoSummary struct {
 	Unstaged  int    `json:"unstaged"`
 	Untracked int    `json:"untracked"`
 	Conflicts int    `json:"conflicts"`
+	Files     int    `json:"files"` // changed files, each counted once (staged and unstaged edits of one file are two above)
 	Error     string `json:"error,omitempty"`
 }
 
@@ -209,7 +211,9 @@ func (a *App) summary() RepoSummary {
 	}
 	head, rest, _ := strings.Cut(out, "\x00")
 	s.Branch, s.Upstream, s.Ahead, s.Behind = parseBranchLine(head)
-	for _, c := range parsePorcelain(rest) {
+	entries := parsePorcelain(rest)
+	s.Files = len(entries)
+	for _, c := range entries {
 		switch {
 		case c.Conflict:
 			s.Conflicts++
@@ -382,8 +386,8 @@ func (w *Workspace) netAll(pull bool) []RepoResult {
 		defer r.app.net.Unlock()
 		out, err := r.app.network(req)
 		res.OK, res.Message = err == nil, strings.TrimSpace(out)
-		if err != nil {
-			res.Message = strings.TrimSpace(out + "\n" + err.Error())
+		if err != nil && res.Message == "" {
+			res.Message = err.Error()
 		}
 		return res
 	})
@@ -398,6 +402,7 @@ func (w *Workspace) routes() http.Handler {
 	})
 	// The other echo processes on this machine, so the switcher can reach repositories outside the workspace.
 	mux.HandleFunc("/ws/instances", w.host.handleInstances)
+	mux.HandleFunc("/ws/shutdown", w.host.handleShutdown)
 	mux.HandleFunc("/ws/stream", w.handleStream)
 	mux.HandleFunc("/ws/changes", func(w2 http.ResponseWriter, r *http.Request) { writeJSON(w2, w.changes()) })
 	mux.HandleFunc("/ws/fetch", func(w2 http.ResponseWriter, r *http.Request) { w.handleNet(w2, r, false) })

@@ -7,15 +7,15 @@ import hljs from './vendor/hljs.js'
 const MAX = 200000
 
 // Names the library has no alias for. Everything else it resolves itself (js, ts, py, rs, sh, yml, html, toml...).
-const ALIAS = { markdown: 'markdown', mdx: 'markdown', mjs: 'javascript', cjs: 'javascript', jsonc: 'json', json5: 'json', mk: 'makefile', zsh: 'bash', env: 'ini', conf: 'ini', properties: 'ini', gradle: 'java', groovy: 'java', vue: 'xml', patch: 'diff' }
+const ALIAS = { markdown: 'markdown', mdx: 'markdown', mjs: 'javascript', cjs: 'javascript', jsonc: 'json', json5: 'json', mk: 'makefile', zsh: 'bash', env: 'ini', conf: 'ini', properties: 'ini', gradle: 'java', groovy: 'java', vue: 'xml', patch: 'diff', m: 'objectivec' }
 
 // Reads a language off what a fence says, so ```js title="app.js" and ```{.go} still find their grammar.
 function langOf(lang) {
   const clean = s => { const cut = s.search(/[^a-z0-9+#._-]/); return (cut < 0 ? s : s.slice(0, cut)).replace(/^\./, '') }
   const s = String(lang || '').toLowerCase().trim()
   const name = clean(s) || clean(s.replace(/[{}[\]]/g, ''))
-  const id = ALIAS[name] || name
-  return id && id !== 'plaintext' && hljs.getLanguage(id) ? id : null
+  const id = Object.hasOwn(ALIAS, name) ? ALIAS[name] : name
+  try { return id && id !== 'plaintext' && hljs.getLanguage(id) ? id : null } catch { return null }
 }
 
 // highlight returns highlighted HTML for a block, or null when the language is unknown or the block

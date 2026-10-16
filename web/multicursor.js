@@ -2,6 +2,7 @@
 // layer over the text, and every edit is applied to all of them in one replacement (one undo step).
 import { ctx } from './ctx.js'
 import { replaceRange } from './edit.js'
+import * as E from './editing.js'
 
 const ed = () => ctx.$('#editor')
 let extras = [] // { s, e } ranges besides the textarea's own selection
@@ -11,7 +12,7 @@ export function clear() {
   if (!extras.length) return
   extras = []
   paint()
-  ctx.setStatus('')
+  dismiss()
 }
 
 const all = () => [...extras, { s: ed().selectionStart, e: ed().selectionEnd, primary: true }].sort((a, b) => a.s - b.s)
@@ -36,7 +37,17 @@ function setFrom(list) {
   note()
 }
 
-const note = () => ctx.setStatus(extras.length ? `${extras.length + 1} cursors — Esc to go back to one` : '')
+// Only dismiss the status when it is ours; an empty setStatus would show "done" and wipe other messages.
+let noted = false
+function note() {
+  if (extras.length) { noted = true; return ctx.setStatus(`${extras.length + 1} cursors — Esc to go back to one`) }
+  dismiss()
+}
+function dismiss() {
+  const s = ctx.$('#status')
+  if (noted && s && s.textContent.includes('cursors')) { s.textContent = ''; s.title = ''; s.className = '' }
+  noted = false
+}
 
 // ---------- adding cursors ----------
 function wordAt(text, i) {
@@ -74,7 +85,9 @@ export function selectAllOccurrences() {
   if (s === en) { [s, en] = wordAt(text, s); if (s === en) return }
   const needle = text.slice(s, en), list = []
   for (let at = text.indexOf(needle); at >= 0 && list.length < 2000; at = text.indexOf(needle, at + needle.length)) list.push({ s: at, e: at + needle.length })
-  list.find(r => r.s === s).primary = true
+  const cur = list.find(r => r.s === s)
+  if (!cur) { setFrom([{ s, e: en, primary: true }]); return ctx.setStatus('Selection is outside the scanned matches') }
+  cur.primary = true
   setFrom(list)
 }
 
@@ -97,7 +110,7 @@ export function addCursorVertical(dir) {
 }
 
 function reveal(off) {
-  const e = ed(), line = lineCol(e.value, off)[0], top = ctx.lineTop(line)
+  const e = ed(), line = lineCol(e.value, off)[0], top = ctx.lineTopAt(ctx.activeTab(), line)
   if (top < e.scrollTop || top + 20 > e.scrollTop + e.clientHeight) e.scrollTop = Math.max(0, top - e.clientHeight / 3)
 }
 
@@ -115,13 +128,15 @@ function applyEach(fn) {
     out += text.slice(cursor, p.start)
     const at = lo + out.length
     out += p.text
-    carets.push({ pos: at + p.text.length, primary: !!p.r.primary })
-    cursor = p.end
+    carets.push({ s: at + (p.caret ?? p.text.length), e: at + (p.caret ?? p.text.length), primary: !!p.r.primary })
+    cursor = Math.max(cursor, p.end) // nested spans (two word-deletes) must not step back
   }
   out += text.slice(cursor, hi)
-  const primary = carets.find(c => c.primary) || carets.at(-1)
-  replaceRange(e, lo, hi, out, primary.pos)
-  extras = carets.filter(c => c !== primary).map(c => ({ s: c.pos, e: c.pos }))
+  // Carets that landed on one spot are one caret.
+  const norm = normalize(carets)
+  const primary = norm.find(c => c.primary) || norm.at(-1)
+  replaceRange(e, lo, hi, out, primary.s)
+  extras = norm.filter(c => c !== primary).map(({ s, e }) => ({ s, e }))
   paint()
   note()
 }
@@ -136,20 +151,27 @@ function onBeforeInput(ev) {
   const edit = {
     insertText: () => insertAll(ev.data ?? ''),
     insertLineBreak: () => insertAll('\n'),
-    insertParagraph: () => insertAll('\n'),
+    // Same indentation rule as a single caret's Enter.
+    insertParagraph: () => applyEach((r, text) => {
+      const x = E.enterEdit(text, r.s, r.e, ctx.indentUnit())
+      return { start: x.start, end: x.end, text: x.text, caret: x.selStart - x.start }
+    }),
     deleteContentBackward: () => applyEach((r, text) => r.s !== r.e ? { start: r.s, end: r.e, text: '' } : r.s > 0 ? { start: r.s - 1, end: r.s, text: '' } : { del: null }),
     deleteContentForward: () => applyEach((r, text) => r.s !== r.e ? { start: r.s, end: r.e, text: '' } : r.s < text.length ? { start: r.s, end: r.s + 1, text: '' } : { del: null }),
     deleteWordBackward: () => applyEach((r, text) => r.s !== r.e ? { start: r.s, end: r.e, text: '' } : { start: r.s - (text.slice(0, r.s).match(/(\s*[\w$]+|\s*[^\w\s$]|\s+)$/)?.[0].length || 0), end: r.s, text: '' }),
     deleteByCut: () => applyEach(r => ({ start: r.s, end: r.e, text: '' })),
     insertFromPaste: () => {
-      const pasted = ev.dataTransfer?.getData('text/plain') ?? ''
+      // A textarea gives the text in ev.data, not dataTransfer.
+      const pasted = ev.dataTransfer?.getData('text/plain') || ev.data || ''
+      if (!pasted) return
       const lines = pasted.split('\n'), list = all()
       // As many lines as cursors: one line each, the way VS Code pastes.
       if (lines.length === list.length) { let i = 0; applyEach(r => ({ start: r.s, end: r.e, text: lines[list.findIndex(x => x.s === r.s && x.e === r.e)] ?? lines[i++] })) }
       else insertAll(pasted)
     },
   }[t]
-  if (!edit) return
+  // Anything else (undo, line deletes, IME) is left to the browser at one caret; the others would go stale.
+  if (!edit) { clear(); return }
   ev.preventDefault()
   edit()
 }

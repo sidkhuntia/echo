@@ -8,7 +8,12 @@ import * as Ed from './editor.js'
 import { compareUI } from './compare.js'
 import * as Lsp from './lsp.js'
 
-const cfgToggle = key => () => { const v = !ctx.state.config[key]; ctx.state.config[key] = v; ctx.post('/api/config', { [key]: v }).then(() => ctx.setStatus(`${key}: ${v ? 'on' : 'off'}`, 'ok')); ctx.onConfig?.(key) }
+const cfgToggle = key => async () => {
+  const old = ctx.state.config[key], v = !old
+  ctx.state.config[key] = v; ctx.onConfig?.(key)
+  try { await ctx.post('/api/config', { [key]: v }); ctx.setStatus(`${key}: ${v ? 'on' : 'off'}`, 'ok') }
+  catch (e) { ctx.state.config[key] = old; ctx.onConfig?.(key); ctx.setStatus(e.message, 'err') }
+}
 const file = () => ctx.activeTab()
 const git = a => () => ctx.gitAction(a)
 
@@ -28,7 +33,7 @@ export function commands() {
     ['Collapse or expand all files', 'Review', () => ctx.$('#diff-collapse').click()],
     ['Add a note on the selected lines', 'Review', () => R.addEditorNote(), '⌘⌥M'],
     ['Add a note on this file', 'Review', () => R.addFileNote(ctx.currentPath())],
-    ['Copy review prompt for the agent', 'Review', () => ctx.copyText(R.promptText()).then(() => ctx.setStatus('Copied the review prompt', 'ok'))],
+    ['Copy review prompt for the agent', 'Review', () => ctx.copyText(R.promptText()).then(() => ctx.setStatus('Copied the review prompt', 'ok'), e => ctx.setStatus('Could not copy: ' + e.message, 'err'))],
     ['Reload', 'Git', ctx.refreshAll],
     ['Fetch all remotes', 'Git', git({ action: 'fetch' })], ['Pull', 'Git', git({ action: 'pull' })], ['Push', 'Git', git({ action: 'push' })],
     ['Compare branches…', 'Git', () => compareUI()],
@@ -36,7 +41,7 @@ export function commands() {
     ['Undo the last commit', 'Git', () => ctx.undoLastCommit()],
     ['Write a commit message', 'Git', () => { ctx.setRail('changes'); ctx.$('.desk').classList.remove('no-tree'); setTimeout(() => ctx.$('#commit-message').focus(), 50) }],
     ['Stash all changes', 'Git', () => G.stashFiles([...s.changes.keys()])],
-    ...(st.operation ? [[`Continue the ${st.operation}`, 'Git', git({ action: `${st.operation}:continue` })], [`Abort the ${st.operation}`, 'Git', git({ action: `${st.operation}:abort` })]] : []),
+    ...(st.operation ? [[`Continue the ${st.operation}`, 'Git', git({ action: `${st.operation}:continue` })], [`Abort the ${st.operation}`, 'Git', () => document.querySelector('#op-bar [data-op="abort"]')?.click()]] : []),
     ['Save file', 'Editor', () => ctx.saveFile(), '⌘S'],
     ['Go to definition', 'Editor', () => Lsp.goToDefinition(), 'F12'], ['Go back from a definition', 'Editor', () => Lsp.goBack(), '⌃-'],
     ['Next conflict (F7)', 'Conflicts', () => document.querySelector('#conflict-bar [data-cf="next"]')?.click()],
@@ -45,7 +50,7 @@ export function commands() {
     ['Accept incoming side of this conflict (⌘⌥2)', 'Conflicts', () => document.querySelector('#conflict-bar [data-cf="theirs"]')?.click()],
     ['Accept both sides of this conflict (⌘⌥3)', 'Conflicts', () => document.querySelector('#conflict-bar [data-cf="both"]')?.click()],
     ['Mark conflicted file resolved (stage)', 'Conflicts', () => document.querySelector('#conflict-bar [data-cf="stage"], #conflict-bar [data-cf="keep"]')?.click()],
-    ['Find in file', 'Editor', () => ctx.showFind(null), '⌘F'], ['Replace in file', 'Editor', () => { ctx.showFind(null); Rp.toggleReplace(true) }, '⌘⌥F'],
+    ['Find in file', 'Editor', () => ctx.showFind(null), '⌘F'], ['Replace in file', 'Editor', () => { if (ctx.showFind(null)) Rp.toggleReplace(true) }, '⌘⌥F'],
     ['Format JSON', 'Editor', () => Ed.formatJSON()], ['Minify JSON', 'Editor', () => Ed.formatJSON(true)],
     ['Convert line endings…', 'Editor', () => Ed.convertEol()],
     ['Toggle word wrap', 'Editor', () => { const b = ctx.$('#word-wrap'); b.checked = !b.checked; b.dispatchEvent(new Event('change')) }],

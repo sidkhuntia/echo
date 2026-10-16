@@ -25,6 +25,9 @@ export async function loadTemplate() {
   try { template = (await c().api('/api/git/template')).template || '' } catch { template = '' }
   fillTemplate()
 }
+// A box still holding the untouched template counts as empty.
+export const isTemplate = v => !!template && v.trim() === template.trim()
+
 export function fillTemplate() {
   const box = c().$('#commit-message')
   if (template && !box.value.trim()) { box.value = template; meter() }
@@ -52,7 +55,7 @@ export function showOutput(action, text, ok) {
 // One dialog for both: pick the branch to bring in, choose Merge or Rebase, read what will happen
 // (from /api/git/relation), then confirm. The target is always the branch that is checked out.
 export function integrate(from, method = 'merge') {
-  const { state, esc, api, setStatus, plural } = c(), st = state.status || {}, cur = st.branch
+  const { state, esc, api, setStatus, plural } = c(), st = state.status || {}, cur = st.branch && !st.branch.startsWith('detached@') ? st.branch : ''
   if (!cur) return setStatus('Check out a branch first: Merge and Rebase work on the current branch', 'err')
   const names = (st.branches || []).filter(b => b !== cur)
   if (!names.length) return setStatus('There is no other branch to bring changes from', 'err')
@@ -73,7 +76,7 @@ export function integrate(from, method = 'merge') {
   })
   const q = s => m.el.querySelector(`[data-im="${s}"]`), go = m.root.querySelector('.xmodal-actions .primary')
   const draw = () => {
-    m.el.querySelectorAll('[data-m]').forEach(b => b.classList.toggle('on', b.dataset.m === method))
+    m.el.querySelectorAll('[data-m]').forEach(b => { const on = b.dataset.m === method; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)) })
     go.textContent = method === 'rebase' ? `Rebase ${cur} onto ${from}` : `Merge ${from} into ${cur}`
     const info = q('info'), opts = q('opts')
     if (!rel) { info.textContent = 'Checking…'; opts.innerHTML = ''; go.disabled = true; return }
@@ -88,7 +91,7 @@ export function integrate(from, method = 'merge') {
     else say = rel.ff
       ? `${t} can fast-forward: it moves ahead ${plural(n, 'commit')} to ${f}, with no merge commit.`
       : `${plural(n, 'commit')} from ${f} come into ${t}, and a merge commit joins the two histories (${t} also has ${plural(rel.ours, 'commit')} of its own).`
-    const list = n ? `<ul class="im-commits">${rel.commits.map(x => `<li><span class="mono">${esc(x.slice(0, 7))}</span> ${esc(x.slice(8))}</li>`).join('')}${n > rel.commits.length ? `<li class="faint">and ${n - rel.commits.length} more</li>` : ''}</ul>` : ''
+    const list = n ? `<ul class="im-commits">${rel.commits.map(x => { const i = x.indexOf(' '); return `<li><span class="mono">${esc(i < 0 ? x : x.slice(0, i))}</span> ${esc(i < 0 ? '' : x.slice(i + 1))}</li>` }).join('')}${n > rel.commits.length ? `<li class="faint">and ${n - rel.commits.length} more</li>` : ''}</ul>` : ''
     const dirty = rel.dirty ? `<p class="im-warn">${plural(rel.dirty, 'file')} with uncommitted changes. Commit or stash first; Git may refuse otherwise.</p>` : ''
     info.innerHTML = `<p>${say}</p>${list}${dirty}`
     opts.hidden = method !== 'merge' || !n
@@ -124,7 +127,7 @@ export async function deleteBranch(name) {
   openModal({
     title: `Force delete ${name}?`, kicker: 'loses commits',
     body: `<p class="say">${list.length ? `These ${list.length === 1 ? 'commit is' : 'commits are'} only on <b>${c().esc(name)}</b> and would become hard to find (the reflog keeps them for a while).` : `Git says ${c().esc(name)} is not fully merged.`}</p>
-      <ul class="undone">${list.slice(0, 20).map(x => `<li class="mono">${c().esc(x.short)} ${c().esc(x.subject)}</li>`).join('')}${list.length > 20 ? `<li class="faint">and ${list.length - 20} more</li>` : ''}</ul>`,
+      <ul class="undone">${list.slice(0, 20).map(x => `<li class="mono">${c().esc(x.short)} ${c().esc(x.subject)}</li>`).join('')}${list.length > 20 ? `<li class="faint">and ${list.length >= 50 ? 'at least ' : ''}${list.length - 20} more</li>` : ''}</ul>`,
     actions: [{ label: 'Cancel' }, { label: 'Force delete', danger: true, primary: true, run: () => c().gitAction({ action: 'branch:delete:force', from: name }) }],
   })
 }
@@ -160,16 +163,18 @@ export function resetChoice(hash, soft) {
       <label class="check"><input type="radio" name="rm" value="hard"> <b>Hard</b> <span class="faint">throws away uncommitted work too — a snapshot is kept, and ⌘⇧P → Restore the last discard brings it back</span></label></div>`,
     actions: [{ label: 'Cancel' }, { label: 'Reset', primary: true, run: async mod => {
       const v = mod.el.querySelector('input[name=rm]:checked').value
-      if (v === 'soft') { await soft(hash); return }
+      if (v === 'soft') { mod.close(); await soft(hash); return }
       await c().gitAction({ action: 'reset:' + v, from: hash })
     } }],
   })
 }
 
 let remoteCache = { key: '', list: [] }
+// A remote edit changes config, not refs, so refsSig alone would keep the old list.
+export function resetRemotes() { remoteCache = { key: '', list: [] } }
 export async function remotes() {
   const key = c().state.status?.refsSig || ''
-  if (remoteCache.key !== key || !remoteCache.list.length) {
+  if (remoteCache.key !== key) {
     try { remoteCache = { key, list: await c().api('/api/remotes') } } catch { remoteCache = { key, list: [] } }
   }
   return remoteCache.list
@@ -194,7 +199,7 @@ export async function commitMenu(hash, subject, x, y, handlers) {
     { label: 'Checkout (detached)', run: () => c().gitAction({ action: 'branch:detach', from: hash }) },
     { label: 'Cherry-pick…', run: () => cherryPick(hash) },
     { label: 'Revert…', run: () => handlers.revert() },
-    { label: 'Reset branch here…', run: () => resetChoice(hash, handlers.soft) },
+    { label: 'Reset branch here…', disabled: handlers.isHead, run: () => resetChoice(hash, handlers.soft) },
     { label: 'Rebase interactively from here…', run: () => handlers.irebase() },
     { sep: true },
     { label: 'Compare with HEAD…', run: () => handlers.compare() },
@@ -210,8 +215,11 @@ export async function stashShow(ref) {
 
 export function diffTextHTML(text) {
   const e = c().esc
+  let inHunk = false // ---/+++ are file headers only before a file's first @@
   const rows = text.split('\n').map(l => {
-    const k = l.startsWith('diff ') || l.startsWith('+++') || l.startsWith('---') ? 'l-file' : l.startsWith('@@') ? 'l-hunk' : l.startsWith('+') ? 'l-add' : l.startsWith('-') ? 'l-del' : ''
+    if (l.startsWith('diff ')) inHunk = false
+    else if (l.startsWith('@@')) inHunk = true
+    const k = l.startsWith('diff ') || (!inHunk && (l.startsWith('+++') || l.startsWith('---'))) ? 'l-file' : l.startsWith('@@') ? 'l-hunk' : l.startsWith('+') ? 'l-add' : l.startsWith('-') ? 'l-del' : ''
     return `<span class="${k}">${e(l) || ' '}</span>`
   }).join('')
   return `<pre class="diff-text">${rows}</pre>`
@@ -223,6 +231,7 @@ export async function stashBranch(ref) {
 }
 
 export async function stashFiles(paths) {
+  if (!paths.length) return c().setStatus('Nothing to stash')
   const msg = await c().ask({ title: `Stash ${paths.length} file${paths.length === 1 ? '' : 's'}`, ok: 'Stash', input: { label: 'Message', value: 'echo stash' } })
   if (msg) await c().gitAction({ action: 'stash:create', message: msg, paths })
 }
@@ -235,6 +244,7 @@ export const intentToAdd = paths => c().gitAction({ action: 'add:intent', paths 
 export async function togglePullMenu(open) {
   const m = c().$('#pull-menu')
   m.hidden = !open
+  c().$('#pull-more')?.setAttribute('aria-expanded', String(open))
   if (!open) return
   const rs = c().state.status?.remotes || []
   m.innerHTML = '<button class="menu-item" data-pl="" role="menuitem">Pull (your Git settings)</button>'
@@ -262,10 +272,11 @@ export function init() {
   box.addEventListener('input', meter)
   meter()
   loadTemplate()
-  c().$('#pull-more')?.addEventListener('click', e => { e.stopPropagation(); togglePullMenu(c().$('#pull-menu').hidden) })
+  c().$('#pull-more')?.addEventListener('click', () => { togglePullMenu(c().$('#pull-menu').hidden) })
   c().$('#pull-menu').addEventListener('click', e => {
     const b = e.target.closest('.menu-item')
     if (!b) return
+    c().$('#pull-more').focus()
     togglePullMenu(false)
     if (b.dataset.fetch) c().gitAction({ action: 'fetch', remote: b.dataset.fetch })
     else c().gitAction({ action: 'pull', strategy: b.dataset.pl })

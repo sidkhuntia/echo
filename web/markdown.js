@@ -15,7 +15,15 @@ export function renderMarkdown(src) {
   // Link reference definitions can appear anywhere; collect them first.
   // orig[k] is the source line that body[k] came from, so a block can say which lines it was drawn from.
   const orig = []
+  let open = null // the fence being read, so definition-like lines inside code stay code
   const body = lines.filter((l, k) => {
+    if (open) {
+      if (new RegExp(`^ {0,3}${open[0]}{${open.length},}\\s*$`).test(l)) open = null
+      orig.push(k)
+      return true
+    }
+    const f = l.match(fence)
+    if (f) { open = f[1]; orig.push(k); return true }
     const m = l.match(/^ {0,3}\[([^\]]+)\]:\s*<?(\S+?)>?(?:\s+["'(](.*)["')])?\s*$/)
     if (m && !/^\^/.test(m[1])) { refs.set(m[1].toLowerCase(), { href: m[2], title: m[3] || '' }); return false }
     orig.push(k)
@@ -93,9 +101,9 @@ function blocks(lines, ctx, map) {
       out += mark(r.html, i, r.next); i = r.next; continue
     }
     if (!para.length && htmlBlock.test(line)) {
-      const html = []
+      const html = [], from = i
       for (; i < lines.length && lines[i].trim(); i++) html.push(lines[i])
-      out += html.join('\n')
+      out += mark(html.join('\n').replace(/^\s+/, ''), from, i)
       continue
     }
     if (!para.length && /^ {4}/.test(line)) {
@@ -196,7 +204,11 @@ function inline(text, ctx) {
   const link = (label, href, title, image) => {
     href = href.replace(/^&lt;(.*)&gt;$/, '$1')
     const t = title ? ` title="${title}"` : ''
-    return image ? hold(`<img src="${href}" alt="${label.replace(/<[^>]+>/g, '')}"${t}>`) : hold(`<a href="${href}"${t}>${emphasis(label)}</a>`)
+    // The label may hold placeholders for code and raw tags; restore them, then keep only the text.
+    let alt = label
+    for (let k = 0; k < 4 && alt.includes('\u0000'); k++) alt = alt.replace(/\u0000(\d+)\u0000/g, (_, n) => held[n])
+    alt = alt.replace(/<[^>]*>/g, '').replace(/"/g, '&quot;')
+    return image ? hold(`<img src="${href}" alt="${alt}"${t}>`) : hold(`<a href="${href}"${t}>${emphasis(label)}</a>`)
   }
   const ref = (label, key, image, whole) => {
     const r = ctx.refs.get((key || label).replace(/\u0000\d+\u0000/g, '').toLowerCase())
@@ -208,8 +220,15 @@ function inline(text, ctx) {
     s = s.replace(/(!?)\[([^\[\]]+)\](?:\[([^\[\]]*)\])?/g, (whole, bang, label, key) => ref(label, key, !!bang, whole))
   }
   s = s
-    .replace(/(^|[\s(])((?:https?:\/\/|www\.)[^\s<]*[^\s<.,:;"')\]!?*_~])/g, (_, pre, u) => pre + hold(`<a href="${u.startsWith('www.') ? 'https://' + u : u}">${u}</a>`))
+    .replace(/(^|[\s(])((?:https?:\/\/|www\.)[^\s<]*[^\s<.,:;"'\]!?*_~])/g, (_, pre, u) => {
+      // Trailing punctuation stays outside the link; a ")" stays inside only when the URL opened one.
+      let tail = ''
+      while (/[.,:;"')\]!?*_~]$/.test(u) && !(u.endsWith(')') && u.split(')').length <= u.split('(').length)) { tail = u.slice(-1) + tail; u = u.slice(0, -1) }
+      return pre + hold(`<a href="${u.startsWith('www.') ? 'https://' + u : u}">${u}</a>`) + tail
+    })
   s = emphasis(s).replace(/( {2,}|\\)\n/g, '<br>')
+  // Entities such as &amp; and &copy; were escaped with everything else; give real ones back to the parser.
+  s = s.replace(/&amp;(?=(?:#\d{1,7}|#[xX][\da-fA-F]{1,6}|[a-zA-Z][a-zA-Z\d]{1,31});)/g, '&')
   // Placeholders can hold placeholders (a link label with code), so restore until none are left.
   for (let k = 0; k < 4 && s.includes('\u0000'); k++) s = s.replace(/\u0000(\d+)\u0000/g, (_, n) => held[n])
   return s

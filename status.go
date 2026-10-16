@@ -63,8 +63,6 @@ func (h *statusHub) unsubscribe(ch chan []byte) {
 }
 
 func (h *statusHub) run(src pollSource, stop chan struct{}) {
-	ticker := time.NewTicker(src.interval)
-	defer ticker.Stop()
 	for {
 		data := src.produce()
 		h.mu.Lock()
@@ -85,12 +83,16 @@ func (h *statusHub) run(src pollSource, stop chan struct{}) {
 			}
 		}
 		h.mu.Unlock()
+		// a timer started after the work, so a slow status never runs back to back
+		t := time.NewTimer(src.interval)
 		select {
 		case <-stop:
+			t.Stop()
 			return
 		case <-src.done:
+			t.Stop()
 			return
-		case <-ticker.C:
+		case <-t.C:
 		}
 	}
 }

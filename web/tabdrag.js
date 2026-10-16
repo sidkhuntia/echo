@@ -35,11 +35,12 @@ const insertionPoint = (el, dragged, x) => [...el.children].find(b => b !== drag
 
 function reorderable(strip) {
   const el = document.querySelector(strip.sel)
-  let dragged = null
+  let dragged = null, snap = []
   el.querySelectorAll('button').forEach(b => { b.draggable = true })
   el.addEventListener('dragstart', e => {
     dragged = e.target.closest('button')
     if (!dragged) return
+    snap = [...el.children]
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('text/plain', strip.id(dragged))
     dragged.classList.add('dragging')
@@ -50,10 +51,15 @@ function reorderable(strip) {
     const before = insertionPoint(el, dragged, e.clientX)
     if (before !== dragged.nextElementSibling) el.insertBefore(dragged, before)
   })
-  el.addEventListener('dragend', () => {
+  el.addEventListener('dragend', e => {
     if (!dragged) return
     dragged.classList.remove('dragging')
     dragged = null
+    // Esc or a release outside the strip: put the buttons back and save nothing.
+    if (e.dataTransfer.dropEffect === 'none') {
+      snap.forEach(b => el.append(b))
+      return markIcons(el)
+    }
     markIcons(el)
     const order = [...el.children].map(strip.id)
     const tabOrder = { ...(ctx.state.config.tabOrder || {}), [strip.key]: order }
@@ -84,14 +90,14 @@ function fileTabs() {
     el.classList.toggle('drop-end', !over)
     el.dataset.to = to
   })
-  el.addEventListener('dragend', () => {
+  el.addEventListener('dragend', e => {
     el.querySelectorAll('.drop-before').forEach(t => t.classList.remove('drop-before'))
     el.classList.remove('drop-end')
     const to = +el.dataset.to
     const f = from
     from = -1
     delete el.dataset.to
-    if (f < 0 || Number.isNaN(to)) return ctx.renderTabs()
+    if (f < 0 || Number.isNaN(to) || e.dataTransfer.dropEffect === 'none') return ctx.renderTabs()
     const { state } = ctx, active = state.tabs[state.active]
     const [t] = state.tabs.splice(f, 1)
     state.tabs.splice(to > f ? to - 1 : to, 0, t)

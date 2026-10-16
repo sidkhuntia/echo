@@ -159,6 +159,9 @@ type App struct {
 	// done closes when a shutdown starts, so handlers that wait on their own (the status stream)
 	// can return instead of holding the drain open until the deadline.
 	done chan struct{}
+	// drained closes when shutdown has finished, so main can wait for in-flight requests: Serve
+	// returns as soon as Shutdown starts, not when it ends.
+	drained chan struct{}
 	// stop keeps a second stop request from starting a second shutdown.
 	stop sync.Once
 	// running lists the other echo processes. It is a field so a test can name its own servers
@@ -202,8 +205,16 @@ func main() {
 	if runCommand(rest, noOpenFlag) {
 		return
 	}
-	for _, r := range rest {
-		if strings.HasPrefix(r, "-") {
+	// Entries after a literal "--" are paths, whatever they start with.
+	literal := 0
+	for i, a := range os.Args[1:] {
+		if a == "--" {
+			literal = len(os.Args[1:]) - i - 1
+			break
+		}
+	}
+	for i, r := range rest {
+		if i < len(rest)-literal && strings.HasPrefix(r, "-") {
 			// A flag-like arg here is a typo or a subcommand flag in the wrong place,
 			// not a path. A path starting with "-" stays reachable as ./-foo or via --.
 			fmt.Fprintf(os.Stderr, "echo: unknown flag %s\n", r)
@@ -227,6 +238,10 @@ func main() {
 	root, err = filepath.Abs(root)
 	if err != nil {
 		fatal(err)
+	}
+	if fi, serr := os.Stat(root); serr != nil || !fi.IsDir() {
+		fmt.Fprintf(os.Stderr, "echo: %s is not a directory\n", root)
+		os.Exit(2)
 	}
 
 	open := func(url string) {
@@ -288,6 +303,10 @@ func main() {
 	}()
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fatal(err)
+	}
+	// Serve returns the moment Shutdown starts; wait for it to finish draining before exiting.
+	if app.drained != nil {
+		<-app.drained
 	}
 }
 
@@ -357,7 +376,7 @@ func locate(root string, list []Instance) (port int, sub string) {
 // instances asks every port in the range whether an echo is serving there. Closed ports refuse
 // at once, so the scan costs about one round trip.
 func instances() []Instance {
-	client := &http.Client{Timeout: 700 * time.Millisecond}
+	client := &http.Client{Timeout: 2 * time.Second}
 	found := make([]*Instance, lastPort-firstPort+1)
 	var wg sync.WaitGroup
 	for p := firstPort; p <= lastPort; p++ {
@@ -397,6 +416,8 @@ func newApp(root string, port int) *App {
 		lsp:   newLSPManager(root),
 		hosts: map[string]bool{"127.0.0.1:" + p: true, "localhost:" + p: true},
 		done:  make(chan struct{}),
+
+		drained: make(chan struct{}),
 	}
 	app.running = func() []Instance { return instances() }
 	return app
@@ -661,13 +682,15 @@ func (a *App) handleShutdown(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.All {
 		// Ask the siblings first and this one last, so the list the page is looking at is still there.
+		failed := []int{}
 		for _, in := range a.running() {
-			if in.Port != a.port {
-				stopInstance(in.Port)
+			if in.Port != a.port && !stopInstance(in.Port) {
+				failed = append(failed, in.Port)
 			}
 		}
 		go a.shutdown("page")
-		writeJSON(w, map[string]bool{"ok": true})
+		// Still 200: this process is stopping either way. The page reports the ports that did not.
+		writeJSON(w, map[string]any{"ok": len(failed) == 0, "failed": failed})
 		return
 	}
 	if req.Port == 0 || req.Port == a.port {
@@ -712,6 +735,9 @@ func stopInstance(port int) bool {
 // grace period, and closes what is left.
 func (a *App) shutdown(why string) {
 	a.stop.Do(func() {
+		if a.drained != nil {
+			defer close(a.drained)
+		}
 		if a.done != nil {
 			close(a.done)
 		}
@@ -734,7 +760,10 @@ func loadConfig() Config {
 		Renames: true, WordDiff: true, Indent: "auto", FontSize: 12, IndentGuides: true, Sticky: true, AutoClose: true, Occurrences: true, WorkspaceBar: true, Trace: true}
 	data, err := os.ReadFile(configPath())
 	if err == nil {
-		_ = json.Unmarshal(data, &cfg)
+		if json.Unmarshal(data, &cfg) != nil {
+			// A hand edit with a syntax error: keep it, because the next setting change saves defaults over it.
+			_ = os.WriteFile(configPath()+".bad", data, 0o600)
+		}
 	}
 	return cfg
 }
@@ -776,6 +805,9 @@ func loadPorts() map[string]int {
 	ports := map[string]int{}
 	if data, err := os.ReadFile(portsPath()); err == nil {
 		_ = json.Unmarshal(data, &ports)
+	}
+	if ports == nil { // a file holding null
+		ports = map[string]int{}
 	}
 	return ports
 }
@@ -848,6 +880,9 @@ func loadToken() string {
 			f.Close()
 		} else if b, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(b))) >= 32 {
 			return strings.TrimSpace(string(b)) // another echo created it first
+		} else {
+			// An empty or truncated file would otherwise give every launch its own unsaved token.
+			_ = writeAtomic(path, []byte(tok+"\n"))
 		}
 	}
 	return tok

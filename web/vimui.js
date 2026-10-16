@@ -11,6 +11,7 @@ const on = () => !!ctx.state.config.vim && ctx.state.mode === 'file' && ed().cla
 const LABEL = { normal: 'NORMAL', insert: 'INSERT', visual: 'VISUAL', vline: 'V-LINE' }
 
 function indicator() {
+  syncTab()
   const el = ctx.$('#vim-mode-badge')
   if (!el) return
   const show = on()
@@ -40,6 +41,8 @@ function keyName(e) {
   if (e.ctrlKey && e.key === '[') return 'Escape'
   if (e.ctrlKey && e.key.toLowerCase() === 'r') return 'C-r'
   if (e.ctrlKey || e.metaKey) return null
+  // A pending r/f/t/g takes a character; Backspace, Enter and arrows cancel it instead of becoming h/j/k/l.
+  if (vs.wait && /^(Arrow|Backspace$|Enter$)/.test(e.key)) return 'Escape'
   if (e.key === 'ArrowLeft') return 'h'
   if (e.key === 'ArrowRight') return 'l'
   if (e.key === 'ArrowUp') return 'k'
@@ -49,8 +52,19 @@ function keyName(e) {
   return e.key.length === 1 ? e.key : null
 }
 
+// Visual selection and pending operators belong to one file; another tab starts in normal mode.
+let vsTab = null
+function syncTab() {
+  const t = ctx.activeTab()
+  if (t === vsTab) return
+  vsTab = t
+  vs = { ...newVim(), reg: vs.reg, dot: vs.dot }
+}
+
 function step(key) {
+  syncTab()
   const e = ed()
+  vs.unit = ctx.indentUnit?.() || '\t'
   const r = feed(vs, key, e.value, e.selectionStart, e.selectionEnd)
   if (!r) return false
   if (r.edit) replaceRange(e, r.edit.start, r.edit.end, r.edit.text)
@@ -80,8 +94,12 @@ function onKeyDown(e) {
   }
   // ⌘ shortcuts (save, find, palette) are left to the page.
   if (e.metaKey || (e.ctrlKey && !['r', '[', 'd', 'u'].includes(e.key.toLowerCase()))) return
-  if (e.ctrlKey && (e.key === 'd' || e.key === 'u')) { e.preventDefault(); e.stopImmediatePropagation(); ed().scrollTop += (e.key === 'd' ? 1 : -1) * ed().clientHeight / 2; return }
+  const lk = e.key.toLowerCase()
+  if (e.ctrlKey && (lk === 'd' || lk === 'u')) { e.preventDefault(); e.stopImmediatePropagation(); ed().scrollTop += (lk === 'd' ? 1 : -1) * ed().clientHeight / 2; return }
+  if (e.key === 'Tab') return
   const k = keyName(e)
+  // With nothing pending, Escape is left to the page (close find, back to review).
+  if (k === 'Escape' && vs.mode === 'normal' && !vs.op && !vs.count && !vs.wait) return
   e.preventDefault()
   e.stopImmediatePropagation()
   if (k) step(k)
@@ -108,6 +126,7 @@ function closeCmd() {
 
 async function runCmd(text) {
   const cmd = text.trim()
+  if (!ctx.activeTab()) { ctx.setStatus('No file open', 'err'); return }
   if (/^\d+$/.test(cmd)) { ctx.placeCaret(+cmd); return }
   if (cmd === 'w') return ctx.saveFile()
   if (cmd === 'q' || cmd === 'q!') return ctx.closeTab(ctx.state.active, cmd === 'q!')
@@ -120,13 +139,18 @@ export function initVim() {
   const e = ed()
   e.addEventListener('keydown', onKeyDown)
   e.addEventListener('beforeinput', onBeforeInput)
-  e.addEventListener('mousedown', () => { if (vs.mode === 'visual' || vs.mode === 'vline') { vs.mode = 'normal'; indicator() } })
+  e.addEventListener('mousedown', () => {
+    if (vs.mode === 'visual' || vs.mode === 'vline') vs.mode = 'normal'
+    vs.op = null; vs.count = ''; vs.wait = ''
+    indicator()
+  })
   for (const ev of ['keyup', 'mouseup', 'focus', 'blur']) e.addEventListener(ev, () => requestAnimationFrame(indicator))
   e.addEventListener('scroll', () => requestAnimationFrame(paintCursor))
   ctx.$('#vim-cmd')?.addEventListener('keydown', ev => {
-    if (ev.key === 'Enter') { ev.preventDefault(); const v = ev.target.value; closeCmd(); runCmd(v) }
+    if (ev.key === 'Enter') { ev.preventDefault(); const v = ev.target.value; closeCmd(); runCmd(v).catch(err => ctx.setStatus(String(err.message || err), 'err')) }
     else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeCmd() }
   })
+  ctx.$('#vim-cmd')?.addEventListener('blur', ev => { ev.target.hidden = true })
 }
 
 // Called after the editor paints, so the badge and cursor follow tab and mode changes.

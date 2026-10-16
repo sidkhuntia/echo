@@ -77,15 +77,16 @@ button, input, select, textarea { font: inherit; color: inherit; }
   font-size: 12px;
   transition: background .12s var(--ease-out), border-color .12s var(--ease-out), color .12s var(--ease-out), transform .16s var(--ease-out);
 }
-.btn:hover { background: var(--hover); color: var(--fg); border-color: var(--line-2); }
+.btn:hover:not(:disabled) { background: var(--hover); color: var(--fg); border-color: var(--line-2); }
 .btn:active { transform: scale(.97); }
 .btn:disabled { opacity: .4; cursor: default; transform: none; }
 .btn.primary { background: var(--accent); border-color: transparent; color: var(--on-accent); font-weight: 600; }
 .btn.primary:hover:not(:disabled) { filter: brightness(1.07); }
 .btn.quiet { border-color: transparent; background: transparent; color: var(--muted); }
-.btn.quiet:hover { background: var(--hover); color: var(--fg); }
+.btn.quiet:hover:not(:disabled) { background: var(--hover); color: var(--fg); }
 .btn.icon { width: 26px; padding: 0; position: relative; }
 .btn.icon::after { content: ""; position: absolute; inset: min(0px, (100% - 44px) / 2); }
+.tb-group .btn.icon::after, .search-opts .btn.icon::after, .findbar .btn.icon::after { inset: 0; }
 .btn.sm { height: 22px; padding: 0 8px; font-size: 11.5px; }
 .btn kbd { background: transparent; border-color: currentColor; color: inherit; opacity: .6; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: max(2px, .08em) solid var(--accent); outline-offset: 2px; }
@@ -101,7 +102,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 input:user-invalid, textarea:user-invalid { border-color: var(--del); }
-.field::placeholder { color: var(--faint); }
+.field::placeholder { color: var(--muted); }
 select.field { padding-right: 4px; cursor: pointer; }
 kbd {
   font: 10.5px/1 var(--mono);
@@ -195,7 +196,7 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .track { display: inline-flex; gap: 6px; font: 600 11.5px/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .track .in { color: var(--info); }
 .track .out { color: var(--add); }
-.merged { font: 500 10.5px/1 var(--sans); color: var(--faint); border: 1px solid currentColor; border-radius: 8px; padding: 1px 5px; opacity: .75; white-space: nowrap; }
+.merged { font: 500 10.5px/1 var(--sans); color: var(--muted); border: 1px solid currentColor; border-radius: 8px; padding: 1px 5px; white-space: nowrap; }
 .track .gone { color: var(--warn); font: 500 11.5px/1 var(--sans); }
 .crumbs .net { flex: none; gap: 5px; }
 .crumbs .net .i { width: 13px; height: 13px; }
@@ -267,8 +268,8 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .rp-row .nm, .rp-row .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-row .path { font: 11px var(--mono); color: var(--faint); }
 .rp-row .nm { display: flex; align-items: baseline; gap: 8px; }
-.rp-row .nm b { font-weight: 500; flex: none; }
-.rp-row .meta { color: var(--muted); font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.rp-row .nm b { font-weight: 500; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-row .meta { color: var(--muted); font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; min-width: 6ch; max-width: 45%; }
 .rp-row .rp-stop { margin-left: 2px; }
 .rp-n { font: 600 11px var(--mono); padding: 1px 7px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
 .rp-row .port { font: 11px var(--mono); color: var(--faint); }
@@ -304,10 +305,11 @@ button.branch::after { content: "▾"; color: var(--faint); font-size: 9px; }
 .bref .nm { flex: 1; }
 .bref.current .nm { font-weight: 600; color: var(--fg); }
 .bref.current .nm::after { content: " ✓"; color: var(--accent); font-weight: 400; }
-.bref .bmore, .bref .bcopy, .bp-row .bcopy { visibility: hidden; border: 0; background: none; color: var(--muted); padding: 0 4px; border-radius: 4px; cursor: pointer; font-size: 13px; line-height: 18px; }
+.bref .bmore, .bref .bcopy, .bp-row .bcopy { opacity: 0; pointer-events: none; border: 0; background: none; color: var(--muted); padding: 0 4px; border-radius: 4px; cursor: pointer; font-size: 13px; line-height: 18px; }
 .bref .bcopy, .bp-row .bcopy { display: inline-grid; place-items: center; padding: 0 3px; }
 .bref .bcopy .i, .bp-row .bcopy .i { width: 13px; height: 13px; }
-.bref:hover .bmore, .bref:hover .bcopy, .bp-row:hover .bcopy { visibility: visible; }
+/* opacity, not visibility, so the buttons stay focusable and Tab reveals them. */
+.bref:hover .bmore, .bref:hover .bcopy, .bp-row:hover .bcopy, .bref:focus-within .bmore, .bref:focus-within .bcopy, .bp-row:focus-within .bcopy { opacity: 1; pointer-events: auto; }
 .bref .bmore:hover, .bref .bcopy:hover, .bp-row .bcopy:hover { background: var(--hover); color: var(--fg); }
 .bsec { margin-top: 6px; font-size: 11px; font-weight: 600; color: var(--muted); }
 .bsec .count { margin-left: auto; }
@@ -432,9 +434,13 @@ body.resizing { cursor: col-resize; user-select: none; }
 .qpath i { font-style: normal; color: var(--faint); margin-left: 6px; font-size: 11.5px; }
 .qmeta, .qacts { display: flex; align-items: center; gap: 6px; font: 11px var(--mono); }
 /* Row and group actions appear on hover, like VS Code; the letter badge stays so the row never jumps. */
-.qacts, .gacts { display: none; gap: 0; }
-.qrow:hover .qacts, .qgroup:hover .gacts { display: flex; }
-.qrow:hover .qmeta { display: none; }
+/* The row actions overlay the badge (absolute, so the name never reflows) and stay focusable; Tab reveals them. */
+.qrow { position: relative; }
+.qacts { position: absolute; right: 8px; top: 0; bottom: 0; padding-left: 6px; background: inherit; gap: 0; opacity: 0; pointer-events: none; }
+.gacts { display: flex; width: 0; overflow: hidden; gap: 0; opacity: 0; }
+.qrow:hover .qacts, .qrow:focus-within .qacts { opacity: 1; pointer-events: auto; }
+.qgroup:hover .gacts, .qgroup:focus-within .gacts { width: auto; overflow: visible; opacity: 1; }
+.qrow:hover .qmeta, .qrow:focus-within .qmeta { visibility: hidden; }
 .qrow .st { background: none; }
 .churn { display: flex; width: 44px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
 .churn > span { display: flex; gap: 1px; height: 100%; }
@@ -443,6 +449,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .churn .m[style="flex:0"], .churn .p[style="flex:0"] { display: none; }
 .qrow.current .qpath b { font-weight: 500; }
 .btn.icon.xs { width: 20px; height: 20px; }
+.btn.icon.xs::after { inset: 0; }
 .btn.icon.xs .i { width: 13px; height: 13px; }
 .qgroup { justify-content: flex-start; gap: 4px; height: 26px; padding: 8px 6px 2px 4px; cursor: pointer; user-select: none; }
 .qgroup .tw { width: 12px; color: var(--faint); font-size: 10px; text-align: center; }
@@ -452,7 +459,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* The group total gives way to the group actions on hover, like a row's own counts do. */
 .qgroup .gstat { display: flex; gap: 5px; font: 500 10.5px var(--mono); text-transform: none; letter-spacing: 0; }
 .qgroup .gstat:empty { display: none; }
-.qgroup:hover .gstat { display: none; }
+.qgroup:hover .gstat, .qgroup:focus-within .gstat { display: none; }
 .dacts .btn .i { width: 12px; height: 12px; margin-right: 3px; }
 
 .tnode { display: flex; align-items: center; gap: 6px; height: 26px; padding-right: 8px; border-radius: var(--r); cursor: pointer; color: var(--fg-2); white-space: nowrap; }
@@ -476,7 +483,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .sgroup .gname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
 .sgroup .gname b { font-weight: 500; color: var(--fg); }
 .sgroup .gname i { font-style: normal; margin-left: 6px; }
-.srow { display: flex; gap: 8px; align-items: baseline; height: 24px; line-height: 24px; padding: 0 8px 0 22px; border-radius: var(--r); cursor: pointer; white-space: nowrap; overflow: hidden; font: 11.5px var(--mono); color: var(--fg-2); }
+.srow { display: flex; gap: 8px; align-items: baseline; height: 24px; padding: 0 8px 0 22px; border-radius: var(--r); cursor: pointer; white-space: nowrap; overflow: hidden; font: 11.5px/24px var(--mono); color: var(--fg-2); }
 .srow:hover { background: var(--hover); }
 .srow .sline { flex: none; min-width: 2.5ch; text-align: right; color: var(--faint); }
 .srow .stext { overflow: hidden; text-overflow: ellipsis; }
@@ -507,7 +514,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .tab:hover { background: var(--hover); color: var(--fg); }
 .tab.active { background: var(--surface-2); color: var(--fg); box-shadow: 0 0 0 1px var(--line); }
 .tab .x { border: 0; background: transparent; width: 18px; height: 18px; border-radius: 4px; color: var(--faint); cursor: pointer; font-size: 13px; line-height: 1; padding: 0; display: grid; place-items: center; position: relative; }
-.tab .x::after { content: ""; position: absolute; inset: min(0px, (100% - 44px) / 2); }
+.tab .x::after { content: ""; position: absolute; inset: -4px; }
 .tab .x:hover { background: var(--hover); color: var(--fg); }
 .tab.dirty .x::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .tab.dirty .x span { display: none; }
@@ -551,6 +558,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* blame: a column left of the line numbers, and a ghost note at the end of the caret line */
 .stage.blame-on .gutter, .stage.blame-on .gl { width: 230px; }
 .stage.blame-on .editor { padding-left: 242px; }
+.stage.blame-on .sticky-row { padding-left: 242px; }
 .gbl { position: absolute; left: 10px; width: 160px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px/20px var(--sans); color: var(--muted); pointer-events: auto; cursor: pointer; }
 .gbl:hover { color: var(--accent); }
 .gbl.new { color: var(--faint); cursor: default; }
@@ -579,7 +587,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   overflow-wrap: break-word;
 }
 .wrap-mirror > div { min-height: 20px; }
-.wrap-mirror .caret { display: inline-block; width: 0; }
+.wrap-mirror .caret { display: inline-block; width: 0; height: 20px; vertical-align: top; }
 .code-view { padding: 10px 0 40vh; counter-reset: ln; color: var(--fg-2); }
 .code-view .l { display: block; white-space: pre; padding-right: 24px; min-width: max-content; }
 .code-view .l::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 56px; padding-right: 18px; text-align: right; color: var(--faint); user-select: none; }
@@ -599,7 +607,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .findbar { position: absolute; z-index: 3; top: 8px; right: 22px; display: flex; align-items: center; gap: 2px; padding: 4px; background: var(--surface); border: 1px solid var(--line-2); border-radius: 10px; box-shadow: var(--shadow); animation: drop .16s var(--ease-out) both; }
 .findbar[hidden] { display: none; }
 .findbar .field { width: 190px; height: 26px; margin-right: 2px; }
-.findbar .btn { font: 600 10.5px var(--mono); color: var(--faint); }
+.findbar .btn { font: 600 10.5px var(--mono); color: var(--muted); }
 .findbar .btn:hover { color: var(--fg); }
 .findbar .btn[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
 .find-count { min-width: 70px; padding: 0 6px; text-align: center; font: 11px var(--mono); color: var(--muted); white-space: nowrap; }
@@ -663,9 +671,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .md-doc pre.md-drawing { visibility: hidden; }
 .md-doc .md-diagram { position: relative; margin: 0 0 1em; padding: 8px; overflow: auto; background: var(--sunk); border: 1px solid var(--line); border-radius: var(--r); text-align: center; }
 .md-doc .md-diagram > svg { max-width: 100%; height: auto; }
-/* The expand button stays faintly visible, since a hover is not always there. */
-.md-doc .md-expand { position: absolute; top: 6px; right: 6px; opacity: .4; }
-.md-doc .md-diagram:hover .md-expand, .md-doc .md-diagram:focus-within .md-expand { opacity: 1; }
+/* The expand button stays visible at full strength: faded, it fell below 3:1 contrast. */
+.md-doc .md-expand { position: absolute; top: 6px; right: 6px; }
 .md-doc .md-alert { padding: 8px 16px; border-left: 3px solid var(--info); background: color-mix(in oklch, var(--info) 8%, transparent); border-radius: 0 var(--r) var(--r) 0; }
 .md-doc .md-alert > :last-child { margin-bottom: 0; }
 .md-doc .md-alert-title { font-weight: 600; color: var(--info); margin-bottom: .3em; }
@@ -710,7 +717,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .dstat .note.unsaved { color: var(--warn); }
 .spacer { flex: 1; }
 .dacts { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
-.dfile:hover .dacts, .dfile.current .dacts { opacity: 1; }
+.dfile:hover .dacts, .dfile.current .dacts, .dacts:focus-within { opacity: 1; }
 .dbody { overflow-x: auto; }
 .dfile.folded .dbody { display: none; }
 .dnote { padding: 14px 18px; color: var(--muted); font-size: 12.5px; }
@@ -788,7 +795,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .hrow.join > .field:focus { position: relative; z-index: 1; }
 .sync { display: flex; align-items: center; gap: 4px; }
 .sync .btn { height: 26px; }
-.sync .btn:not(.quiet) { flex: 1; }
+.sync .btn:not(.quiet):not(.caret) { flex: 1; }
 .sync .vr { height: 14px; margin: 0 2px; }
 /* the commit card: what will be committed, the message, then one wide split button */
 .commit-card { background: none; }
@@ -799,7 +806,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .btn-split { display: flex; }
 .btn-split .btn { height: 30px; }
 .push-split { flex: 1; }
-.push-split .btn { height: 26px; }
+.push-split .btn, .pull-split .btn { height: 26px; }
+.btn-split .btn.sm { height: 22px; }
 .push-split #push { flex: 1; border-radius: var(--r) 0 0 var(--r); }
 .push-split .caret { width: 24px; padding: 0; border-radius: 0 var(--r) var(--r) 0; border-left: 0; }
 .btn-split #commit { border-radius: var(--r) 0 0 var(--r); }
@@ -848,6 +856,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .c-detail .err, .ld-body .err { color: var(--del); }
 .chip.head { font-weight: 700; }
 .c-subject .chip { flex: none; }
+.c-subject .c-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- graph ---------- */
 .graph path { fill: none; stroke: var(--g); stroke-width: 1.6; }
@@ -934,6 +943,9 @@ body.resizing { cursor: col-resize; user-select: none; }
   overflow: clip;
 }
 .modal-card { padding-bottom: 14px; }
+#help .modal-card { max-height: calc(100vh - 12vh - 16px); display: flex; flex-direction: column; }
+#help .modal-head, #help .modal-foot { flex: none; }
+#help .keys { overflow: auto; min-height: 0; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--line); font-weight: 600; }
 .keys { display: grid; grid-template-columns: 110px 1fr; gap: 8px 14px; margin: 14px 16px; font-size: 12.5px; }
 .keys dd { margin: 0; color: var(--fg-2); }
@@ -993,7 +1005,7 @@ label.set-row { cursor: pointer; }
 }
 
 @media (max-width: 1100px) {
-  .desk { --tree-t: 240px; --git-t: 300px; }
+  .desk { --tree-t: min(240px, 42%); --git-t: min(300px, 42%); }
   .tabs { min-width: 90px; }
   /* The tracks are fixed at this width, so a grip would promise a drag that does nothing. */
   .grip { display: none; }
@@ -1042,8 +1054,8 @@ label.set-row { cursor: pointer; }
 .dialog-actions .btn { height: 28px; padding: 0 14px; transition: background .12s, border-color .12s, color .12s, transform .12s var(--ease-out); }
 .dialog-actions .btn:active { transform: scale(.97); }
 .dialog .btn.primary { background: var(--tone); }
-.dialog[data-tone="danger"] .btn.primary { color: #fff; }
-.dialog[data-tone="warn"] .btn.primary { color: #1a1408; }
+.dialog[data-tone="danger"] .btn.primary { color: light-dark(#fff, var(--bg)); }
+.dialog[data-tone="warn"] .btn.primary { color: light-dark(#fff, #1a1408); }
 @media (max-width: 520px) { .dialog-keys { display: none; } }
 
 /* multi-select in the Changes rail */
@@ -1064,8 +1076,8 @@ label.set-row { cursor: pointer; }
 .dacts .vr { height: 14px; margin: 0 4px; }
 /* Discard is a quiet icon that only turns red when you aim at it; Stage is the one filled action. */
 .btn.danger:hover, .btn.danger:focus-visible { color: var(--del); background: color-mix(in oklch, var(--del) 14%, transparent); }
-.dacts .btn.stage { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in oklch, var(--accent) 35%, transparent); }
-.dacts .btn.stage:hover { background: color-mix(in oklch, var(--accent) 22%, transparent); }
+.dacts .btn.do-stage { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in oklch, var(--accent) 35%, transparent); }
+.dacts .btn.do-stage:hover { background: color-mix(in oklch, var(--accent) 22%, transparent); }
 #commit:disabled { opacity: .45; cursor: default; }
 #commit-hint { line-height: 1.4; }
 /* Branch & sync and Stash stay folded until needed, so the commit box owns the panel. */
@@ -1098,7 +1110,7 @@ label.set-row { cursor: pointer; }
 
 /* ---------- review: hunk actions, line selection, notes, word diff ---------- */
 .hacts { display: inline-flex; gap: 4px; margin-left: 8px; align-items: center; opacity: 0; transition: opacity .12s; }
-.hunk:hover .hacts, .hunk.current .hacts, .hunk.hk-accepted .hacts, .hunk.hk-rejected .hacts { opacity: 1; }
+.hunk:hover .hacts, .hunk:focus-within .hacts, .hunk.current .hacts, .hunk.hk-accepted .hacts, .hunk.hk-rejected .hacts { opacity: 1; }
 .hbtn { height: 20px; padding: 0 7px; font: 11px/18px var(--sans); border-radius: 5px; border: 1px solid var(--line); background: var(--surface); color: var(--fg-2); cursor: pointer; }
 .hbtn:hover { background: var(--hover); color: var(--fg); border-color: var(--line-2); }
 .hbtn.danger:hover { color: var(--del); border-color: var(--del-strong); }
@@ -1174,7 +1186,8 @@ label.set-row { cursor: pointer; }
 .xmodal-card.wide { width: min(1000px, calc(100vw - 32px)); }
 .xmodal-body { overflow: auto; padding: 12px 16px; flex: 1; min-height: 0; }
 .xmodal-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--line); }
-.xmodal-body pre.diff-text { margin: 0; font: 11.5px/1.5 var(--mono); white-space: pre; overflow: auto; }
+.xmodal-body pre.diff-text { margin: 0; font: 11.5px/1.5 var(--mono); white-space: pre; width: max-content; min-width: 100%; }
+.diff-text > span { display: block; }
 .diff-text .l-add { color: var(--add); background: var(--add-soft); display: block; } .diff-text .l-del { color: var(--del); background: var(--del-soft); display: block; } .diff-text .l-hunk { color: var(--info); display: block; } .diff-text .l-file { color: var(--fg); font-weight: 600; display: block; }
 .tool-sec { border-bottom: 1px solid var(--line); padding: 8px 0; }
 .tool-sec > summary { cursor: pointer; font-weight: 600; font-size: 12px; display: flex; gap: 8px; align-items: center; list-style: none; }
@@ -1196,6 +1209,7 @@ label.set-row { cursor: pointer; }
 
 /* ---------- editor extras ---------- */
 .code-view, .editor { font: var(--ed-fs, 12.5px)/20px var(--mono); tab-size: var(--ed-tab, 4); }
+.hunk, .md-doc pre code, .sticky { tab-size: var(--ed-tab, 4); }
 .syntax, .wrap-mirror { font: var(--ed-fs, 12.5px)/20px var(--mono); tab-size: var(--ed-tab, 4); }
 .guides { background: transparent; z-index: 0; }
 .guides i { position: absolute; left: 0; height: 20px; background-image: linear-gradient(90deg, var(--guide, color-mix(in oklch, var(--fg) 14%, transparent)) 1px, transparent 1px); background-repeat: repeat-x; }
@@ -1242,6 +1256,7 @@ label.set-row { cursor: pointer; }
 .side-row { display: flex; min-width: max-content; }
 .side-no { width: 52px; padding-right: 12px; text-align: right; color: var(--faint); user-select: none; font-size: 11px; flex: none; }
 .side-tx { white-space: pre; padding-right: 24px; }
+.code-view:has(> .img-view) { padding: 0; }
 .img-view { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 20px; height: 100%; overflow: auto; }
 .img-frame { background: repeating-conic-gradient(var(--hover) 0 25%, transparent 0 50%) 0 0 / 16px 16px; border: 1px solid var(--line); padding: 8px; max-width: 100%; }
 .img-frame img { display: block; max-width: 100%; max-height: 70vh; }
@@ -1314,8 +1329,9 @@ label.set-row { cursor: pointer; }
 .lnote-row.file { padding-left: 14px; padding-top: 6px; }
 .note-quote { margin: 0 0 10px; padding: 8px 10px; background: var(--sunk); border-radius: 6px; font: 12px/1.5 var(--mono); color: var(--fg-2); white-space: pre-wrap; max-height: 120px; overflow: auto; }
 .note-ta { width: 100%; resize: vertical; height: auto; padding: 8px; font: 13px/1.5 var(--sans); }
-.nrow .nacts { display: none; gap: 2px; margin-left: auto; }
-.nrow:hover .nacts { display: inline-flex; }
+.nrow .nacts { display: inline-flex; gap: 2px; margin-left: auto; opacity: 0; }
+.nrow:hover .nacts, .nrow:focus-within .nacts { opacity: 1; }
+@media (hover: none) { .nrow .nacts { opacity: 1; } }
 
 /* ---------- workspace ---------- */
 /* One quiet line: names, with a count only where something changed. Branch and sync are in the title bar and the tooltip. */
@@ -1339,8 +1355,7 @@ label.set-row { cursor: pointer; }
 .filterbar #diff-collapse, .filterbar .fb-keys { display: none; }
 .filterbar #diff-status:not(.on) { display: none; }
 .filterbar #diff-filter { width: 100%; max-width: 420px; }
-.commit-card:not(:focus-within):has(#commit-message:placeholder-shown) .commit-extras,
-.commit-card:not(:focus-within):has(#commit-message:placeholder-shown) .hint { display: none; }
+.commit-card:not(:focus-within):has(#commit-message:placeholder-shown) .commit-extras { display: none; }
 
 /* workspace overview */
 .wshead { flex: none; display: flex; align-items: center; gap: 14px; height: 52px; padding: 0 14px; border-bottom: 1px solid var(--line); background: var(--chrome); }
@@ -1354,7 +1369,9 @@ label.set-row { cursor: pointer; }
 .wsmain { flex: 1; min-height: 0; overflow: auto; padding: 18px 22px 40px; max-width: 1180px; width: 100%; margin: 0 auto; }
 .wsmain h2 { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 22px 0 8px; }
 .wsmain h2:first-child, .wsmain section:first-child h2 { margin-top: 0; }
-.ws-table { border: 1px solid var(--line); border-radius: 8px; overflow: clip; background: var(--surface); }
+.ws-table { border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; background: var(--surface); }
+.ws-table .ws-row { min-width: 774px; }
+.ws-table .ws-row.else { min-width: 560px; }
 .ws-row { display: grid; grid-template-columns: minmax(160px, 1.6fr) minmax(110px, 1.1fr) 120px repeat(4, 74px); align-items: center; gap: 10px; padding: 8px 14px; border-top: 1px solid var(--line); color: inherit; text-decoration: none; }
 .ws-row:first-child { border-top: 0; }
 .ws-row.head { font-size: 11px; color: var(--muted); background: var(--surface-2); text-transform: uppercase; letter-spacing: .06em; }
@@ -1430,9 +1447,10 @@ a.ws-row:hover { background: var(--hover); }
 #file-bar #eol, #file-bar #note-add, #file-bar #open-ext, #file-bar #file-history, #file-bar #json-format { display: none !important; }
 #save:disabled { display: none; }
 .tab { background: none; box-shadow: none; padding: 0 4px 0 10px; border-radius: 6px; }
-.tab.active { background: var(--hover); box-shadow: none; }
+.tab.active { background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); }
+.tab.active.drop-before { box-shadow: 0 0 0 1px var(--line), inset 2px 0 0 var(--accent); }
 .tab .x { opacity: 0; transition: opacity .1s; }
-.tab:hover .x, .tab.active .x, .tab.dirty .x { opacity: 1; }
+.tab:hover .x, .tab.active .x, .tab.dirty .x, .tab .x:focus-visible { opacity: 1; }
 .tab.dirty:not(:hover) .x:hover::before { content: ""; }
 .mode-switch + .vr { display: block; }
 

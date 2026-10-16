@@ -46,16 +46,20 @@ func (a *App) handleReflog(w http.ResponseWriter, r *http.Request) {
 	if n <= 0 || n > 1000 {
 		n = 200
 	}
-	out, err := a.git("reflog", "--format=%H%x1f%h%x1f%gd%x1f%gs%x1f%ct", "-n", strconv.Itoa(n))
+	// With --date=unix %gd reads HEAD@{<when HEAD moved>}, which is the time we want (%ct is the commit's own date).
+	out, err := a.git("reflog", "--date=unix", "--format=%H%x1f%h%x1f%gd%x1f%gs", "-n", strconv.Itoa(n))
 	entries := []ReflogEntry{}
 	if err == nil {
-		for _, l := range parseLines(out) {
+		for i, l := range parseLines(out) {
 			f := strings.Split(l, "\x1f")
-			if len(f) < 5 {
+			if len(f) < 4 {
 				continue
 			}
-			t, _ := strconv.ParseInt(f[4], 10, 64)
-			entries = append(entries, ReflogEntry{Hash: f[0], Short: f[1], Ref: f[2], Subject: f[3], Time: t})
+			var t int64
+			if _, s, ok := strings.Cut(f[2], "@{"); ok {
+				t, _ = strconv.ParseInt(strings.TrimSuffix(s, "}"), 10, 64)
+			}
+			entries = append(entries, ReflogEntry{Hash: f[0], Short: f[1], Ref: "HEAD@{" + strconv.Itoa(i) + "}", Subject: f[3], Time: t})
 		}
 	}
 	writeJSON(w, entries)
@@ -108,7 +112,9 @@ type Submodule struct {
 
 func parseSubmodules(s string) []Submodule {
 	out := []Submodule{}
-	for _, l := range parseLines(s) {
+	// Not parseLines: it trims, and the leading space of a clean submodule is its status.
+	for _, l := range strings.Split(s, "\n") {
+		l = strings.TrimRight(l, "\r")
 		if len(l) < 42 {
 			continue
 		}
@@ -153,7 +159,9 @@ func (a *App) handleCompare(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	res["commits"] = parseCommits(out)
+	commits := parseCommits(out)
+	res["commits"] = commits
+	res["truncated"] = len(commits) >= 500
 	codes, err := a.git("diff", "--name-status", "-z", "--no-renames", spec, "--")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -190,7 +198,19 @@ func (a *App) handleRebasePlan(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err)
 		return
 	}
-	writeJSON(w, plan)
+	// A reword amends with the whole message, so the editor starts from the full text, body included.
+	type planItem struct {
+		Commit
+		Message string `json:"message"`
+	}
+	items := make([]planItem, len(plan))
+	for i, c := range plan {
+		items[i] = planItem{Commit: c, Message: c.Subject}
+		if out, err := a.git("log", "-1", "--format=%B", c.Hash); err == nil && strings.TrimSpace(out) != "" {
+			items[i].Message = strings.TrimRight(out, "\n")
+		}
+	}
+	writeJSON(w, items)
 }
 
 func (a *App) handleStashShow(w http.ResponseWriter, r *http.Request) {
@@ -309,7 +329,8 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "path not allowed", http.StatusBadRequest)
 		return
 	}
-	if _, err := os.Lstat(path); err != nil {
+	// Stat, not Lstat: a dangling symlink must not be handed to an editor, which would create its target.
+	if _, err := os.Stat(path); err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -351,6 +372,7 @@ func (a *App) handleOpen(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+var bareDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 var dateArg = regexp.MustCompile(`^[0-9A-Za-z .:/+-]{1,40}$`)
 
 // Remote is a configured remote with the URLs fetch and push use.
@@ -376,20 +398,26 @@ func parseRemotes(s string) []Remote {
 	by := map[string]*Remote{}
 	var order []string
 	for _, l := range parseLines(s) {
-		f := strings.Fields(l)
-		if len(f) < 3 {
+		// "name<TAB>url (fetch|push)"; the url may contain spaces.
+		name, rest, ok := strings.Cut(l, "\t")
+		i := strings.LastIndex(rest, " (")
+		if !ok || i < 0 {
 			continue
 		}
-		r := by[f[0]]
-		if r == nil {
-			r = &Remote{Name: f[0]}
-			by[f[0]] = r
-			order = append(order, f[0])
+		url, dir := rest[:i], rest[i+1:]
+		if dir != "(push)" && dir != "(fetch)" {
+			continue
 		}
-		if f[2] == "(push)" {
-			r.Push = f[1]
+		r := by[name]
+		if r == nil {
+			r = &Remote{Name: name}
+			by[name] = r
+			order = append(order, name)
+		}
+		if dir == "(push)" {
+			r.Push = url
 		} else {
-			r.Fetch = f[1]
+			r.Fetch = url
 		}
 	}
 	out := []Remote{}

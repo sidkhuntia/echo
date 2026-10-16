@@ -6,7 +6,7 @@ import { newId, noteRef, notesText, reviewPrompt, quoteFor } from './notes.js'
 import { hunkPatch } from './patch.js'
 import { openModal } from './ui.js'
 
-export const review = { notes: [], sel: null, editing: null, loaded: false }
+export const review = { notes: [], kept: [], sel: null, editing: null, loaded: false, failed: false }
 const esc = s => String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]))
 
 // ---------- storage ----------
@@ -14,8 +14,16 @@ export async function loadReview() {
   try {
     const doc = await ctx.api('/api/review')
     // Notes made on a commit or a comparison (an older version allowed them) point at code that is not in the working tree.
-    review.notes = (Array.isArray(doc.notes) ? doc.notes : []).filter(n => !n.ref)
-  } catch { /* a repository with no notes yet */ }
+    // They are hidden, but kept in the file when the notes are saved.
+    const all = Array.isArray(doc.notes) ? doc.notes : []
+    review.notes = all.filter(n => !n.ref)
+    review.kept = all.filter(n => n.ref)
+    review.failed = false
+  } catch (e) {
+    // A repository with no notes yet answers with an empty document, so this is a real failure: saving now would replace the stored notes.
+    review.failed = true
+    ctx.setStatus('Could not load review notes: ' + e.message, 'err')
+  }
   review.loaded = true
   renderNotesPane()
 }
@@ -23,7 +31,20 @@ export async function loadReview() {
 let saveTimer = 0
 function saveReview(path) {
   clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => ctx.post('/api/review', { notes: review.notes }).catch(e => ctx.setStatus('Could not save review notes: ' + e.message, 'err')), 500)
+  saveTimer = setTimeout(async () => {
+    try {
+      if (review.failed) {
+        // Try to load once more, and put what was written meanwhile on top of what is stored.
+        const pending = review.notes
+        await loadReview()
+        if (review.failed) return ctx.setStatus('Review notes were not saved: they could not be loaded. Reload the page.', 'err')
+        review.notes = review.notes.concat(pending.filter(n => !review.notes.some(x => x.id === n.id)))
+        renderNotesPane()
+        ctx.paintAll?.()
+      }
+      await ctx.post('/api/review', { notes: review.notes.concat(review.kept) })
+    } catch (e) { ctx.setStatus('Could not save review notes: ' + e.message, 'err') }
+  }, 500)
   renderNotesPane()
   ctx.paintAll?.()
   // The diff draws notes inline, so the file they are in is drawn again.
@@ -53,7 +74,7 @@ function sideOf(f) {
   return c.work && c.index ? 'both' : ''
 }
 
-const BTN = (act, label, title, cls = '') => `<button class="hbtn ${cls}" data-hact="${act}" title="${esc(title)}">${label}</button>`
+const BTN = (act, label, title, cls = '', aria = '') => `<button class="hbtn ${cls}" data-hact="${act}" title="${esc(title)}"${aria ? ` aria-label="${esc(aria)}"` : ''}>${label}</button>`
 const ICO = {
   note: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10v7H8.5L5.5 13v-2.5H3z"/></svg>',
   undo: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5 3 6l2.5 2.5"/><path d="M3 6h6.5a3.5 3.5 0 0 1 0 7H7"/></svg>',
@@ -67,7 +88,7 @@ export function hunkActsHTML(f, h, hi) {
   let quiet = '', main = ''
   if (notable()) {
     const n = review.notes.filter(x => x.path === f.path && x.line > 0 && h.lines.some(l => l.i !== undefined && x.side === lineSide(l) && lastLine(x) === lineNo(l))).length
-    quiet += BTN('note', ICO.note + (n ? `<span class="n">${n}</span>` : ''), picked ? `Add a note on the ${lines(picked)} selected (c)` : n ? `${n} note${n === 1 ? '' : 's'} on this hunk. Click to add another (c)` : 'Add a note to this hunk (c)', n ? 'has' : 'icon')
+    quiet += BTN('note', ICO.note + (n ? `<span class="n">${n}</span>` : ''), picked ? `Add a note on the ${lines(picked)} selected (c)` : n ? `${n} note${n === 1 ? '' : 's'} on this hunk. Click to add another (c)` : 'Add a note to this hunk (c)', n ? 'has' : 'icon', n ? `${n} note${n === 1 ? '' : 's'} on this hunk` : '')
   }
   if (side === 'work') {
     quiet += picked ? BTN('discard', `Discard ${picked}`, 'Throw away only the selected lines', 'danger') : BTN('discard', ICO.undo, 'Discard this hunk', 'danger icon')
@@ -88,19 +109,27 @@ const rangeLabel = n => (n.end && n.end !== n.line ? `<span class="lnote-range">
 const noteBlock = n => `<div class="lnote${n.done ? ' done' : ''}" data-note="${esc(n.id)}"><span class="lnote-ico">${ICO.note}</span><div class="lnote-text">${rangeLabel(n)}${esc(n.text)}</div><span class="lnote-acts"><button class="hbtn" data-nact="done" title="${n.done ? 'Reopen' : 'Mark as addressed'}">${n.done ? 'Reopen' : 'Done'}</button><button class="hbtn" data-nact="edit">Edit</button><button class="hbtn danger" data-nact="delete">Delete</button></span></div>`
 
 export function noteRowsHTML(f, hi, l) {
+  // Notes are drawn only where they can be written: a commit or a comparison has other line numbers.
+  if (!notable()) return ''
   let h = ''
-  for (const n of notesAt(f.path, l)) h += review.editing?.id === n.id ? editorHTML(n.text, n.id) : `<div class="lnote-row">${noteBlock(n)}</div>`
   const e = review.editing
-  if (e && !e.id && e.path === f.path && e.side === lineSide(l) && (e.end || e.line) === lineNo(l) && e.hi === hi) h += editorHTML('', '')
+  for (const n of notesAt(f.path, l)) h += e?.id === n.id ? editorHTML(e.text ?? n.text, n.id) : `<div class="lnote-row">${noteBlock(n)}</div>`
+  if (e && !e.id && e.path === f.path && e.side === lineSide(l) && (e.end || e.line) === lineNo(l) && e.hi === hi) h += editorHTML(e.text ?? '', '')
   return h
 }
 
 // Notes on the whole file sit under its header.
 export function fileNotesHTML(f) {
-  return fileNotesOf(f.path).map(n => `<div class="lnote-row file">${noteBlock(n)}</div>`).join('')
+  if (!notable()) return ''
+  return fileNotesOf(f.path).map(n => review.editing?.id === n.id ? editorHTML(review.editing.text ?? n.text, n.id) : `<div class="lnote-row file">${noteBlock(n)}</div>`).join('')
 }
 
-const editorHTML = (text, id) => `<div class="lnote-row"><div class="lnote-edit"><textarea class="field" rows="3" placeholder="Note for the agent. ⌘↵ saves, Esc cancels." data-nid="${esc(id)}">${esc(text)}</textarea><span class="lnote-acts"><button class="btn sm primary" data-nact="save">Save note</button><button class="btn sm quiet" data-nact="cancel">Cancel</button></span></div></div>`
+// A draft stashed by keepDraft() survives a re-render of the diff (a layout switch).
+export function keepDraft() {
+  const t = ctx.$('#diff .lnote-edit textarea')
+  if (t && review.editing) review.editing.draft = t.value
+}
+const editorHTML = (text, id) => `<div class="lnote-row"><div class="lnote-edit"><textarea class="field" rows="3" placeholder="Note for the agent. ⌘↵ saves, Esc cancels." data-nid="${esc(id)}">${esc(review.editing?.draft ?? text)}</textarea><span class="lnote-acts"><button class="btn sm primary" data-nact="save">Save note</button><button class="btn sm quiet" data-nact="cancel">Cancel</button></span></div></div>`
 
 export function noteAt(f, hi, l) { if (l) openEditor(f.path, hi, l) }
 
@@ -111,10 +140,18 @@ function openEditor(path, hi, l, range) {
   const picked = range && h ? h.lines.filter(x => range.has(x.i)) : []
   const news = picked.filter(x => x.n != null)
   const first = news[0], last = news.at(-1)
+  // One note is one range, so picks with a gap would claim the lines between them.
+  if (news.some((x, k) => k > 0 && x.n !== news[k - 1].n + 1)) return ctx.setStatus('Picked lines are not contiguous: note one run at a time')
+  const prev = review.editing?.path
+  // A selection of one added line (next to a removed one) is a note on that added line.
   review.editing = news.length > 1
     ? { id: '', path, hi, side: 'new', line: first.n, end: last.n, code: quoteLines(news.map(x => x.text)) }
-    : { id: '', path, hi, side: lineSide(l), line: lineNo(l), code: quoteFor(l.text) }
+    : news.length === 1
+      ? { id: '', path, hi, side: 'new', line: first.n, code: quoteFor(first.text) }
+      : { id: '', path, hi, side: lineSide(l), line: lineNo(l), code: quoteFor(l.text) }
   repaintFileOf(path)
+  // Only one editor is open: the one in another file is drawn again without it.
+  if (prev && prev !== path) repaintFileOf(prev)
   ctx.$('#diff .lnote-edit textarea')?.focus()
 }
 
@@ -124,6 +161,8 @@ const quoteLines = lines => {
 }
 
 function repaintFileOf(path) {
+  // A redrawn hunk no longer shows its selected lines, and its indexes may mean other lines now.
+  if (review.sel?.path === path) review.sel = null
   const i = ctx.state.diffFiles.findIndex(f => f.path === path)
   if (i >= 0) ctx.rerenderFile(i)
 }
@@ -155,7 +194,10 @@ export function handleDiffClick(e) {
 
 function toggleLine(f, hi, l, range) {
   const h = f.hunks[hi]
-  if (!review.sel || review.sel.path !== f.path || review.sel.hi !== hi) review.sel = { path: f.path, hi, lines: new Set(), anchor: null }
+  const prev = review.sel
+  if (!prev || prev.path !== f.path || prev.hi !== hi) review.sel = { path: f.path, hi, lines: new Set(), anchor: null }
+  // The hunk the selection leaves is drawn without it.
+  const left = prev && review.sel !== prev ? ctx.state.diffFiles.find(x => x.path === prev.path) : null
   const s = review.sel
   if (range && s.anchor != null) {
     const [a, b] = [Math.min(s.anchor, l.i), Math.max(s.anchor, l.i)]
@@ -163,13 +205,14 @@ function toggleLine(f, hi, l, range) {
   } else s.lines.has(l.i) ? s.lines.delete(l.i) : s.lines.add(l.i)
   s.anchor = l.i
   if (!s.lines.size) review.sel = null
+  if (left) paintSelection(left, prev.hi)
   paintSelection(f, hi)
 }
 
 function paintSelection(f, hi) {
   const hunkEl = ctx.$(`#diff .dfile[data-i="${ctx.state.diffFiles.indexOf(f)}"] .hunk[data-h="${hi}"]`)
   if (!hunkEl) return
-  const sel = review.sel && review.sel.hi === hi ? review.sel.lines : new Set()
+  const sel = review.sel && review.sel.path === f.path && review.sel.hi === hi ? review.sel.lines : new Set()
   hunkEl.querySelectorAll('[data-l]').forEach(el => el.classList.toggle('lsel', sel.has(+el.dataset.l)))
   const head = hunkEl.querySelector('.hacts')
   if (head) head.outerHTML = hunkActsHTML(f, f.hunks[hi], hi)
@@ -213,8 +256,25 @@ function noteAction(btn, f) {
   const n = review.notes.find(x => x.id === row.dataset.note)
   if (!n) return
   if (act === 'done') { n.done = !n.done; saveReview(); repaintFileOf(f.path) }
-  else if (act === 'edit') { review.editing = { id: n.id }; repaintFileOf(f.path); ctx.$('#diff .lnote-edit textarea')?.focus() }
+  else if (act === 'edit') {
+    const prev = review.editing?.path
+    review.editing = { id: n.id, path: f.path }
+    repaintFileOf(f.path)
+    if (prev && prev !== f.path) repaintFileOf(prev)
+    ctx.$('#diff .lnote-edit textarea')?.focus()
+  }
   else if (act === 'delete') { review.notes = review.notes.filter(x => x.id !== n.id); saveReview(); repaintFileOf(f.path) }
+}
+
+// What is typed is kept in the editing state, so drawing the diff again does not lose it.
+document.addEventListener('input', e => {
+  if (review.editing && e.target.matches?.('.lnote-edit textarea')) review.editing.text = e.target.value
+})
+
+// After the diff is drawn again, the note being written gets its focus back.
+export function refocusEditor() {
+  const ta = review.editing && document.activeElement === document.body && ctx.$('#diff .lnote-edit textarea')
+  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length) }
 }
 
 // ⌘↵ saves and Esc cancels the note being written.
@@ -250,6 +310,9 @@ export function addFileNote(path) {
 // A note on lines a..b (1-based, inclusive) of a file's text. Every place that can write a note on
 // lines ends up here: the editor, its line-number icon, and the Markdown preview.
 export function noteOnLines(path, a, b, text) {
+  // Notes point at the file on disk (like the diff), so unsaved edits would shift the line numbers.
+  const tab = ctx.state.tabs.find(t => t.path === path)
+  if (tab && tab.content !== tab.saved) return ctx.setStatus('Save the file (⌘S) before adding a note, so its line numbers match the diff')
   const lines = text.split('\n').slice(a - 1, b)
   noteDialog({
     title: a === b ? `Note on line ${a}` : `Note on lines ${a}–${b}`, kicker: path.split('/').pop(), quote: quoteLines(lines),
@@ -278,14 +341,14 @@ export function noteOnEditorLine(line) {
 }
 
 // The open notes that touch lines a..b of a file, for marking them in the Markdown preview.
-export const notesIn = (path, a, b) => review.notes.filter(n => n.path === path && n.line > 0 && !n.done && n.line <= b && lastLine(n) >= a)
+export const notesIn = (path, a, b) => review.notes.filter(n => n.path === path && n.line > 0 && !n.done && n.side !== 'old' && n.line <= b && lastLine(n) >= a)
 
 // Whether a diff line has a note on it, to mark it.
-export const hasNoteAt = (f, l) => !!f && l.t !== 'meta' && notesAt(f.path, l).length > 0
+export const hasNoteAt = (f, l) => !!f && notable() && l.t !== 'meta' && notesAt(f.path, l).length > 0
 
 export const noteLinesFor = path => {
   const set = new Map()
-  for (const n of review.notes) if (n.path === path && n.line > 0 && !n.done) for (let k = n.line; k <= lastLine(n); k++) set.set(k, n.id)
+  for (const n of review.notes) if (n.path === path && n.line > 0 && !n.done && n.side !== 'old') for (let k = n.line; k <= lastLine(n); k++) set.set(k, n.id)
   return set
 }
 
@@ -333,7 +396,7 @@ export function renderNotesPane() {
   if (!review.notes.length) h += `<div class="empty"><b>No notes yet</b>Click the sign column of a diff line, pick lines by their numbers and press <kbd>c</kbd>, or select lines in the editor and use <b>Note</b>. Add a note to a whole file from its header.</div>`
   for (const [path, ns] of byFile) {
     h += `<div class="group-label qgroup"><span class="gname">${esc(path.split('/').pop())} <i>${esc(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')}</i></span><span class="count">${ns.length}</span></div>`
-    h += ns.map(n => `<div class="nrow${n.done ? ' done' : ''}" data-nid="${esc(n.id)}" title="${esc(noteRef(n))}"><span class="nline">${rowRange(n)}</span><span class="ntext">${esc(n.text)}</span><span class="nacts"><button class="hbtn icon" data-nedit title="Edit">✎</button><button class="hbtn icon" data-ndel title="Delete">✕</button></span></div>`).join('')
+    h += ns.map(n => `<div class="nrow${n.done ? ' done' : ''}" data-nid="${esc(n.id)}" title="${esc(noteRef(n))}"><span class="nline">${rowRange(n)}</span><span class="ntext">${esc(n.text)}</span><span class="nacts"><button class="hbtn icon" data-nedit title="Edit" aria-label="Edit note">✎</button><button class="hbtn icon" data-ndel title="Delete" aria-label="Delete note">✕</button></span></div>`).join('')
   }
   box.innerHTML = h
 }

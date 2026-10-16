@@ -38,6 +38,12 @@ export function applyText(ed, newText) {
   let bo = old.length, bn = newText.length
   while (bo > a && bn > a && old[bo - 1] === newText[bn - 1]) { bo--; bn-- }
   const caret = ed.selectionStart, delta = newText.length - old.length
-  const next = caret <= a ? caret : caret >= bo ? caret + delta : a + (bn - a)
+  let next = caret <= a ? caret : caret >= bo ? caret + delta : a
+  if (caret > a && caret < bo) {
+    // Inside the rewritten region: keep the caret after the same count of non-whitespace characters.
+    let n = 0
+    for (let k = a; k < caret; k++) if (!/\s/.test(old[k])) n++
+    while (next < bn && n > 0) { if (!/\s/.test(newText[next])) n--; next++ }
+  }
   replaceRange(ed, a, bo, newText.slice(a, bn), next)
 }

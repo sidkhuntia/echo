@@ -9,6 +9,7 @@ const inDir = (p, dir) => p === dir || p.startsWith(dir + '/')
 function retarget(from, to) {
   for (const t of c().state.tabs) if (inDir(t.path, from)) t.path = to + t.path.slice(from.length)
   if (c().state.selected && inDir(c().state.selected, from)) c().state.selected = to + c().state.selected.slice(from.length)
+  if (side && inDir(side.path, from)) { side.path = to + side.path.slice(from.length); paintSide() }
 }
 
 async function run(body, after) {
@@ -17,7 +18,8 @@ async function run(body, after) {
     after?.()
     await c().refreshAll()
     c().renderTabs?.(); c().renderEditor?.()
-  } catch (e) { c().setStatus(e.message, 'err') }
+    return true
+  } catch (e) { c().setStatus(e.message, 'err'); return false }
 }
 
 export async function rename(path) {
@@ -29,19 +31,24 @@ export async function duplicate(path) {
   const dot = path.lastIndexOf('.'), slash = path.lastIndexOf('/')
   const guess = dot > slash + 1 ? `${path.slice(0, dot)} copy${path.slice(dot)}` : `${path} copy`
   const to = await c().ask({ title: 'Duplicate', ok: 'Duplicate', input: { label: 'Path of the copy', value: guess } })
-  if (to && to !== path) { await run({ action: 'duplicate', path, newPath: to }); c().openFile(to) }
+  if (to && to !== path && await run({ action: 'duplicate', path, newPath: to })) c().openFile(to)
 }
 
 export async function remove(path, isDir) {
-  const files = isDir ? c().state.tree.filter(f => inDir(f.path, path)).length : 1
+  // The tree leaves out ignored files, so a count would undercount; say "everything in it" instead.
+  const dirty = c().state.tabs.filter(t => inDir(t.path, path) && t.content !== t.saved)
+  const warn = dirty.length ? `<p><b>Unsaved edits in ${dirty.map(t => c().esc(t.path)).join(', ')} will be lost.</b></p>` : ''
   const ok = await c().ask({
-    title: isDir ? `Delete folder ${path}` : `Delete ${path}`, kicker: 'no undo here', tone: 'danger', ok: 'Delete',
-    html: isDir ? `<p>${c().plural(files, 'file')} in <b>${c().esc(path)}</b> will be deleted from disk. Tracked files can be restored with Git; untracked ones cannot.</p>` : '<p>The file is deleted from disk. If Git tracks it, you can restore it from Git; otherwise it is gone.</p>',
+    title: isDir ? `Delete folder ${path}` : `Delete ${path}`, kicker: 'no undo here', tone: 'danger', ok: dirty.length ? 'Delete and discard' : 'Delete',
+    html: (isDir ? `<p><b>${c().esc(path)}</b> and everything in it, ignored files included, will be deleted from disk. Tracked files can be restored with Git; untracked and ignored ones cannot.</p>` : '<p>The file is deleted from disk. If Git tracks it, you can restore it from Git; otherwise it is gone.</p>') + warn,
   })
   if (!ok) return
   await run({ action: isDir ? 'delete:dir' : 'delete', path }, () => {
-    c().state.tabs = c().state.tabs.filter(t => !inDir(t.path, path))
-    c().state.active = Math.min(c().state.active, c().state.tabs.length - 1)
+    const st = c().state, cur = st.tabs[st.active]
+    st.tabs = st.tabs.filter(t => !inDir(t.path, path))
+    st.active = st.tabs.includes(cur) ? st.tabs.indexOf(cur) : Math.min(st.active, st.tabs.length - 1)
+    if (st.selected && inDir(st.selected, path)) st.selected = ''
+    if (side && inDir(side.path, path)) closeSide()
   })
 }
 
@@ -81,7 +88,7 @@ export function paintSide() {
   el.hidden = !show
   stage.classList.toggle('has-side', show)
   if (!show) return
-  c().$('#side-title').textContent = side.path
+  c().$('#side-title').textContent = '‎' + side.path
   c().$('#side-title').title = side.path
   const lines = side.content.split('\n')
   const rows = highlightLines(side.content.split('\n').slice(0, 4000).join('\n'), side.path)

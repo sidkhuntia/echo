@@ -13,14 +13,18 @@ export function csvDoc(tab) {
   const sep = /\.tsv$/i.test(tab.path) ? '\t' : ','
   const rows = parseCSV(tab.content, sep, 5001)
   const table = document.createElement('table')
+  const head = table.createTHead(), body = table.createTBody()
+  const w = rows[0]?.length || 0
+  const MAX = 2000 // an unterminated quote swallows the rest of the file into one cell
   rows.slice(0, 5000).forEach((r, i) => {
     const tr = document.createElement('tr')
-    for (const cell of r) {
+    for (let k = 0; k < Math.max(w, r.length); k++) {
       const td = document.createElement(i === 0 ? 'th' : 'td')
-      td.textContent = cell
+      const cell = r[k] ?? ''
+      td.textContent = cell.length > MAX ? cell.slice(0, MAX) + '… (cell cut)' : cell
       tr.append(td)
     }
-    table.append(tr)
+    ;(i === 0 ? head : body).append(tr)
   })
   doc.append(table)
   if (rows.length > 5000) {

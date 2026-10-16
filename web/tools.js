@@ -23,11 +23,11 @@ function render() {
   const sec = (id, title, count, inner) => `<details class="tool-sec" data-sec="${id}"${openSec.has(id) ? ' open' : ''}><summary><span>${title}</span><span class="count">${count}</span></summary>${inner}</details>`
   const branches = (ctx.state.status?.local || []).map(b => `<option value="${e(b.name)}">${e(b.name)}</option>`).join('')
   const remotes = data.remotes.map(r => `<div class="tool-row" data-remote="${e(r.name)}"><span class="nm" title="${e(r.fetch)}"><b>${e(r.name)}</b> <span class="sub">${e(r.fetch)}</span></span>
-      <button class="btn quiet sm" data-t="fetch">Fetch</button><button class="btn quiet sm" data-t="rename">Rename</button><button class="btn quiet sm" data-t="seturl">URL</button><button class="btn quiet sm" data-t="remove" title="Remove this remote">✕</button></div>`).join('')
+      <button class="btn quiet sm" data-t="fetch">Fetch</button><button class="btn quiet sm" data-t="rename">Rename</button><button class="btn quiet sm" data-t="seturl">URL</button><button class="btn quiet sm" data-t="remove" title="Remove this remote" aria-label="Remove remote ${e(r.name)}">✕</button></div>`).join('')
     + `<div class="tool-form"><input class="field" data-f="rname" placeholder="name" spellcheck="false"><input class="field" data-f="rurl" placeholder="URL" spellcheck="false"><button class="btn sm" data-t="radd">Add remote</button></div>`
   const worktrees = data.worktrees.map(w => `<div class="tool-row" data-wt="${e(w.path)}"><span class="nm" title="${e(w.path)}"><b>${e(w.branch || (w.detached ? 'detached' : ''))}</b> <span class="sub">${e(w.path)}</span></span>
-      <button class="btn quiet sm" data-t="wcopy" title="Copy the command that opens it in echo">Copy open</button>${w.main ? '' : '<button class="btn quiet sm" data-t="wremove">Remove</button>'}</div>`).join('')
-    + `<div class="tool-form"><input class="field" data-f="wpath" placeholder="folder, e.g. ../feature-x" spellcheck="false"><input class="field" data-f="wname" placeholder="new branch (optional)" spellcheck="false"><select class="field" data-f="wfrom"><option value="">from HEAD</option>${branches}</select><button class="btn sm" data-t="wadd">Add worktree</button></div>`
+      <button class="btn quiet sm" data-t="wcopy" title="Copy the command that opens it in echo">Copy open</button>${w.main ? '' : w.locked ? '<span class="sub" title="Locked; run git worktree unlock first">locked</span>' : '<button class="btn quiet sm" data-t="wremove">Remove</button>'}</div>`).join('')
+    + `<div class="tool-form"><input class="field" data-f="wpath" placeholder="folder, e.g. ../feature-x" spellcheck="false"><input class="field" data-f="wname" placeholder="new branch (optional)" spellcheck="false"><select class="field" data-f="wfrom" aria-label="Start from branch"><option value="">from HEAD</option>${branches}</select><button class="btn sm" data-t="wadd">Add worktree</button></div>`
   const subs = data.submodules.length
     ? data.submodules.map(s => `<div class="tool-row"><span class="nm" title="${e(s.path)}"><b>${e(s.path)}</b> <span class="sub">${e(s.hash.slice(0, 7))} ${e(s.detail || '')}</span></span><span class="sub">${e(s.state)}</span></div>`).join('') + '<div class="tool-form"><button class="btn sm" data-t="sub-update" title="git submodule update --init --recursive">Update all (init, recursive)</button></div>'
     : '<div class="faint tool-row">No submodules</div>'
@@ -54,15 +54,16 @@ async function click(e) {
   if (t === 'remove') { const ok = await c.ask({ title: `Remove ${row.dataset.remote}`, tone: 'danger', ok: 'Remove', html: '<p>Its remote-tracking branches go with it. Nothing on the server changes.</p>' }); if (ok) await c.gitAction({ action: 'remote:remove', from: row.dataset.remote }); return }
   if (t === 'radd') return c.gitAction({ action: 'remote:add', from: field('rname'), url: field('rurl') })
   if (t === 'wadd') return c.gitAction({ action: 'worktree:add', from: field('wpath'), name: field('wname'), to: field('wfrom') })
-  if (t === 'wremove') { const ok = await c.ask({ title: 'Remove this worktree', tone: 'danger', ok: 'Remove', html: `<p>${c.esc(row.dataset.wt)} is deleted. Git refuses if it has uncommitted changes.</p>` }); if (ok) await c.gitAction({ action: 'worktree:remove', from: row.dataset.wt }); return }
+  if (t === 'wremove') { const ok = await c.ask({ title: 'Remove this worktree', tone: 'danger', ok: 'Remove', html: `<p>${c.esc(row.dataset.wt)} and everything in it, including git-ignored files such as .env, is deleted. Git refuses only if tracked files are modified or untracked files exist.</p>` }); if (ok) await c.gitAction({ action: 'worktree:remove', from: row.dataset.wt }); return }
   if (t === 'wcopy') return c.copyText(`echo-desk '${row.dataset.wt.replace(/'/g, `'\\''`)}'`).then(() => c.setStatus('Copied the open command', 'ok'))
   if (t === 'sub-update') return c.gitAction({ action: 'submodule:update' })
   if (t === 'rbranch') return G.newBranchAt(row.dataset.hash)
-  if (t === 'rreset') return G.resetChoice(row.dataset.hash, hash => c.gitAction({ action: 'reset:soft', from: hash }))
+  if (t === 'rreset') return G.resetChoice(row.dataset.hash, c.resetHere)
 }
 
 export function initTools() {
-  ctx.$('#tools')?.addEventListener('click', click)
+  // Remote, worktree and submodule changes move no ref, so re-read the lists after every click.
+  ctx.$('#tools')?.addEventListener('click', async e => { await click(e); refreshTools() })
 }
 
 export const toolsShown = () => { if (shown()) refreshTools() }

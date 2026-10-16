@@ -16,8 +16,9 @@ export function lineDiff(a, b) {
   const marks = [], dels = new Set()
   const ops = myers(a.slice(s, ea), b.slice(s, eb))
   if (!ops) {
-    // Too different to diff cheaply: call the whole middle modified.
-    for (let i = s; i < eb; i++) marks[i] = 'mod'
+    // Too different to diff cheaply: approximate, marking only lines whose text is absent from the old middle.
+    const seen = new Set(a.slice(s, ea))
+    for (let i = s; i < eb; i++) if (!seen.has(b[i])) marks[i] = 'mod'
     if (eb === s && ea > s) dels.add(s)
     return { marks, dels }
   }

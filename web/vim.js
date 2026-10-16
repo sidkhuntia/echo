@@ -9,12 +9,13 @@ export const newVim = () => ({ mode: 'normal', op: null, count: '', wait: '', re
 
 const isWord = c => /[\w$]/.test(c)
 const cls = (c, big) => !c || /\s/.test(c) ? 0 : big ? 1 : isWord(c) ? 1 : 2
-const ls = (t, i) => t.lastIndexOf('\n', i - 1) + 1
+const ls = (t, i) => i <= 0 ? 0 : t.lastIndexOf('\n', i - 1) + 1
 const le = (t, i) => { const n = t.indexOf('\n', i); return n < 0 ? t.length : n }
 const firstNonBlank = (t, i) => { const a = ls(t, i); let k = a; while (k < le(t, a) && /[ \t]/.test(t[k])) k++; return k }
 const lineNo = (t, i) => { let n = 0; for (let k = t.indexOf('\n'); k >= 0 && k < i; k = t.indexOf('\n', k + 1)) n++; return n }
-const lineAt = (t, n) => { let p = 0; for (let i = 0; i < n; i++) { const k = t.indexOf('\n', p); if (k < 0) return ls(t, t.length); p = k + 1 } return p }
-const lastLineStart = t => ls(t, t.length)
+const lineAt = (t, n) => { let p = 0; for (let i = 0; i < n; i++) { const k = t.indexOf('\n', p); if (k < 0) return lastLineStart(t); p = k + 1 } return p }
+// The last line is the one holding text, not the empty tail after a final newline.
+const lastLineStart = t => ls(t, t.endsWith('\n') ? t.length - 1 : t.length)
 // In normal mode the cursor sits on a character, never past the last one of a line.
 const clampNormal = (t, i) => { const e = le(t, i), a = ls(t, i); return Math.max(a, Math.min(i, e > a ? e - 1 : a)) }
 
@@ -23,7 +24,8 @@ function wordFwd(t, i, big) {
   let k = i
   if (c0) while (k < t.length && cls(t[k], big) === c0) k++
   while (k < t.length && cls(t[k], big) === 0 && !(t[k] === '\n' && t[k + 1] === '\n' && k > i)) k++
-  return k
+  // A blank line is a word of its own: stop on it, not on the newline that ends the line before.
+  return k < t.length && t[k] === '\n' && t[k + 1] === '\n' && k > i ? k + 1 : k
 }
 function wordBack(t, i, big) {
   let k = i - 1
@@ -69,7 +71,7 @@ function motion(vs, t, pos, key, n, wantCol) {
     case 'h': return { to: Math.max(ls(t, pos), pos - count) }
     case 'l': return { to: Math.min(le(t, pos), pos + count) }
     case 'j': case 'k': {
-      const ln = lineNo(t, pos), total = t.split('\n').length, target = key === 'j' ? Math.min(total - 1, ln + count) : Math.max(0, ln - count)
+      const ln = lineNo(t, pos), total = Math.max(ln + 1, lineNo(t, lastLineStart(t)) + 1), target = key === 'j' ? Math.min(total - 1, ln + count) : Math.max(0, ln - count)
       if (target === ln) return null
       const a = lineAt(t, target), c = wantCol ?? col
       return { to: Math.min(a + c, le(t, a)), linewise: true, keepCol: true }
@@ -79,7 +81,7 @@ function motion(vs, t, pos, key, n, wantCol) {
     case 'e': case 'E': { let p = pos; for (let i = 0; i < count; i++) p = wordEnd(t, p, key === 'E'); return { to: p, inclusive: true } }
     case '0': return { to: ls(t, pos) }
     case '^': return { to: firstNonBlank(t, pos) }
-    case '$': { let p = pos; for (let i = 1; i < count; i++) { const e = le(t, p); if (e >= t.length) break; p = e + 1 } return { to: Math.max(ls(t, p), le(t, p) - 1), inclusive: true } }
+    case '$': { let p = pos; for (let i = 1; i < count; i++) { const e = le(t, p); if (e >= t.length) break; p = e + 1 } return { to: Math.max(ls(t, p), le(t, p) - 1), inclusive: le(t, p) > ls(t, p) } }
     case 'G': return { to: n ? lineAt(t, n - 1) : lastLineStart(t), linewise: true, first: true }
     case 'gg': return { to: n ? lineAt(t, n - 1) : 0, linewise: true, first: true }
     case '}': return { to: para(t, pos, 1) }
@@ -128,6 +130,9 @@ export function feed(vs, key, text, s, e) {
     return null
   }
 
+  // Keys after an operator are kept so that the dot repeat can run them again.
+  if (vs.op && vs.opSeq && key !== 'Escape' && key !== 'C-[') vs.opSeq.push(key)
+
   // ---- pending second key
   if (vs.wait) {
     const w = vs.wait; vs.wait = ''
@@ -170,10 +175,17 @@ export function feed(vs, key, text, s, e) {
     if (key === 'V') { if (vs.mode === 'vline') return done(null, clampNormal(t, vs.cur)); vs.mode = 'vline'; return finish(visSel(vs, t)) }
     if (key === 'o') { [vs.anchor, vs.cur] = [vs.cur, vs.anchor]; return finish(visSel(vs, t)) }
     const line = vs.mode === 'vline'
+    // These would otherwise run as normal-mode commands at the cursor and leave visual mode on.
+    if ('DCXYSr'.includes(key)) return finish(visSel(vs, t))
     if (key === 'y') { vs.reg = { text: t.slice(a, b), line }; out.fx.push({ yank: vs.reg.text }); return done(null, clampNormal(t, a)) }
-    if (key === 'd' || key === 'x') { vs.reg = { text: t.slice(a, b), line }; out.fx.push({ yank: vs.reg.text }); return done({ start: a, end: b, text: '' }, clampNormal(t.slice(0, a) + t.slice(b), a)) }
+    if (key === 'd' || key === 'x') {
+      vs.reg = { text: t.slice(a, b), line }; out.fx.push({ yank: vs.reg.text })
+      // The last line of a text without a final newline goes with the newline before it.
+      const es = line && b > a && b >= t.length && a > 0 && t[a - 1] === '\n' && t[b - 1] !== '\n' ? a - 1 : a
+      return done({ start: es, end: b, text: '' }, clampNormal(t.slice(0, es) + t.slice(b), es))
+    }
     if (key === 'c' || key === 's') { vs.reg = { text: t.slice(a, b), line }; vs.mode = 'insert'; vs.insFrom = a; vs.rec = { cmd: 'ins' }; return finish([a, a], { start: a, end: line ? Math.max(a, b - (t[b - 1] === '\n' ? 1 : 0)) : b, text: '' }) }
-    if (key === '>' || key === '<') return done(indentEdit(t, a, b, key === '<'), a)
+    if (key === '>' || key === '<') return done(indentEdit(t, a, b, key === '<', vs.unit), a)
     if (key === '~') return done({ start: a, end: b, text: swapCase(t.slice(a, b)) }, a)
     if (key === 'J') return done(joinEdit(t, a, b), a)
     if (key === 'p' || key === 'P') { const r = vs.reg; return done({ start: a, end: b, text: r.text }, a) }
@@ -182,13 +194,14 @@ export function feed(vs, key, text, s, e) {
   // ---- operators
   if (vs.mode === 'normal' && (key === 'd' || key === 'c' || key === 'y' || key === '>' || key === '<') ) {
     if (vs.op === key) { // dd cc yy >> <<
-      const cnt = (vs.opCount || 1) * (n || 1), a = ls(t, s), lastLn = lineNo(t, t.length)
+      const cnt = (vs.opCount || 1) * (n || 1), a = ls(t, s), lastLn = Math.max(lineNo(t, s), lineNo(t, lastLineStart(t)))
       const endLn = Math.min(lineNo(t, s) + cnt - 1, lastLn)
       const b = Math.min(t.length, le(t, lineAt(t, endLn)) + 1)
       vs.op = null; vs.count = ''; vs.opCount = 0
       return runOp(vs, key, t, a, b, true, finish, s)
     }
     vs.op = key; vs.opCount = n; vs.count = ''
+    vs.opSeq = n ? [...String(n), key] : [key]
     return finish([s, e])
   }
 
@@ -196,16 +209,20 @@ export function feed(vs, key, text, s, e) {
   if (key === 'g') { vs.wait = 'g'; return finish([s, e]) }
   if ('fFtT'.includes(key) && key.length === 1) { vs.wait = key; return finish([s, e]) }
   if (key === ';' || key === ',') {
-    if (!vs.find) return finish([s, e])
+    if (!vs.find) { vs.op = null; vs.count = ''; return finish([s, e]) }
     const flip = { f: 'F', F: 'f', t: 'T', T: 't' }
     const kind = key === ';' ? vs.find.kind : flip[vs.find.kind]
     const m = findChar(t, pos0, vs.find.ch, kind, n || 1, true)
     vs.count = ''
-    return m ? applyResolved(vs, t, s, e, m, finish, pos0) : finish([s, e])
+    if (m) return applyResolved(vs, t, s, e, m, finish, pos0)
+    vs.op = null
+    return finish([s, e])
   }
   const mkey = key
   const m = motion(vs, t, pos0, mkey, vs.op ? (vs.opCount || 1) * (n || 1) : n, vs.col)
   if (m) return applyResolved(vs, t, s, e, m, finish, pos0, mkey)
+  // An operator followed by something that is not a motion (a text object, p, u) is cancelled, not run as a command.
+  if (vs.op) { vs.op = null; vs.count = ''; return finish([s, e]) }
 
   // ---- normal-mode commands
   const cnt = n || 1
@@ -222,7 +239,10 @@ export function feed(vs, key, text, s, e) {
     case 'O': { const p = ls(t, cur), ind = t.slice(p).match(/^[ \t]*/)[0]; vs.mode = 'insert'; vs.insFrom = p + ind.length; vs.rec = { cmd: 'O' }; return finish([p + ind.length, p + ind.length], { start: p, end: p, text: ind + '\n' }) }
     case 'x': case 'X': case 's': {
       const a = key === 'X' ? Math.max(ls(t, cur), cur - cnt) : cur, b = key === 'X' ? cur : Math.min(le(t, cur), cur + cnt)
-      if (a === b) return finish([cur, cur])
+      if (a === b) {
+        if (key === 's') { vs.mode = 'insert'; vs.insFrom = cur; vs.rec = { cmd: 's' } }
+        return finish([cur, cur])
+      }
       vs.reg = { text: t.slice(a, b), line: false }; out.fx.push({ yank: vs.reg.text })
       if (key === 's') { vs.mode = 'insert'; vs.insFrom = a; vs.rec = { cmd: 's' }; return finish([a, a], { start: a, end: b, text: '' }) }
       vs.dot = { cmd: key, n: cnt }
@@ -264,7 +284,12 @@ export function feed(vs, key, text, s, e) {
     case '/': out.fx.push({ search: true }); return finish([s, e])
     case 'n': out.fx.push({ searchNext: 1 }); return finish([s, e])
     case 'N': out.fx.push({ searchNext: -1 }); return finish([s, e])
-    case '*': { const w = (t.slice(0, cur).match(/[\w$]*$/)[0] + t.slice(cur).match(/^[\w$]*/)[0]); if (w) out.fx.push({ searchWord: w }); return finish([s, e]) }
+    case '*': {
+      const before = t.slice(0, cur).match(/[\w$]*$/)[0], w = before + t.slice(cur).match(/^[\w$]*/)[0]
+      // The caret goes to the start of the word so the find counts this occurrence as the current one and steps past it.
+      if (w) { out.fx.push({ searchWord: w }); const p = cur - before.length; return finish([p, p]) }
+      return finish([s, e])
+    }
     case ':': out.fx.push({ ex: true }); return finish([s, e])
     case '.': return replayDot(vs, t, s, e, finish)
     default: return finish([s, e])
@@ -288,11 +313,13 @@ function applyResolved(vs, t, s, e, m, finish, pos0, key) {
     const op = vs.op; vs.op = null
     // cw behaves like ce
     if (op === 'c' && (key === 'w' || key === 'W') && /\S/.test(t[pos0] || '')) m = { to: wordEnd2(t, pos0, key === 'W'), inclusive: true }
+    // dw on the last word of a line stops at the line end instead of joining the next line
+    if ((key === 'w' || key === 'W') && m.to > le(t, pos0) && !/\S/.test(t.slice(ls(t, m.to), m.to))) m = { to: Math.max(pos0, ls(t, m.to) - 1) }
     const r = range(t, pos0, m, op)
     return runOp(vs, op, t, r.a, r.b, r.line, finish, s, op === 'c' && r.line)
   }
   if (vs.mode === 'visual' || vs.mode === 'vline') {
-    vs.cur = m.to
+    vs.cur = clampNormal(t, m.to)
     if (!m.keepCol) vs.col = null
     return finish(visSel(vs, t))
   }
@@ -305,32 +332,39 @@ function wordEnd2(t, i, big) { let k = i; const c0 = cls(t[k], big); while (k + 
 
 function runOp(vs, op, t, a, b, line, finish, caret, keepLine) {
   const text = t.slice(a, b)
-  vs.reg = { text, line }
+  // Indenting leaves the register alone.
+  if (op !== '>' && op !== '<') vs.reg = { text, line }
   const fx = { yank: text }
-  if (op === 'y') { const r = finish([Math.min(caret, a), Math.min(caret, a)]); r.fx.push(fx); return r }
-  vs.dot = { cmd: 'op', op, a: a - caret, len: b - a, line, motionLen: b - a }
-  if (op === '>' || op === '<') { const ed = indentEdit(t, a, b, op === '<'); return finish([firstNonBlank(applyEdit(t, ed), a), firstNonBlank(applyEdit(t, ed), a)], ed) }
+  // An empty range must not become an edit: replacing nothing with nothing deletes backwards.
+  const edit = ed => ed.start === ed.end && !ed.text ? undefined : ed
+  if (op === 'y') { const p = line && a === ls(t, caret) ? caret : Math.min(caret, a); const r = finish([p, p]); r.fx.push(fx); return r }
+  // The dot repeat re-runs the operator and motion keys from the new cursor.
+  vs.dot = { cmd: 'op', op, keys: vs.opSeq || [] }
+  if (op === '>' || op === '<') { const ed = indentEdit(t, a, b, op === '<', vs.unit); return finish([firstNonBlank(applyEdit(t, ed), a), firstNonBlank(applyEdit(t, ed), a)], ed) }
   if (op === 'c') {
-    vs.mode = 'insert'; vs.insFrom = a; vs.rec = { cmd: 'c' }
+    vs.mode = 'insert'; vs.insFrom = a; vs.rec = { cmd: 'c', keys: vs.opSeq || [] }
     const end = line ? Math.max(a, b - (t[b - 1] === '\n' ? 1 : 0)) : b
     const ind = line ? t.slice(a).match(/^[ \t]*/)[0] : ''
-    const r = finish([a + ind.length, a + ind.length], { start: a, end, text: ind })
+    const r = finish([a + ind.length, a + ind.length], edit({ start: a, end, text: ind }))
     r.fx.push(fx)
     return r
   }
-  const after = t.slice(0, a) + t.slice(b)
-  const p = clampNormal(after, line ? firstNonBlank(after, Math.min(a, after.length)) : a)
-  const r = finish([p, p], { start: a, end: b, text: '' })
+  // Deleting the last line of a text without a final newline takes the newline before it too.
+  const es = line && b > a && b >= t.length && a > 0 && t[a - 1] === '\n' && t[b - 1] !== '\n' ? a - 1 : a
+  const after = t.slice(0, es) + t.slice(b)
+  const p = clampNormal(after, line ? firstNonBlank(after, Math.min(es, after.length)) : a)
+  const r = finish([p, p], edit({ start: es, end: b, text: '' }))
   r.fx.push(fx)
   return r
 }
 
 const applyEdit = (t, ed) => t.slice(0, ed.start) + ed.text + t.slice(ed.end)
 const swapCase = s => [...s].map(c => c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()).join('')
-function indentEdit(t, a, b, out) {
+function indentEdit(t, a, b, out, unit = '\t') {
+  const strip = new RegExp('^(\\t| {1,' + (unit[0] === '\t' ? 4 : unit.length) + '})')
   const lines = t.slice(a, b).split('\n')
   const trail = lines.at(-1) === '' ? lines.pop() !== undefined : false
-  const res = lines.map(l => out ? l.replace(/^(\t| {1,4})/, '') : (l ? '\t' + l : l)).join('\n') + (trail ? '\n' : '')
+  const res = lines.map(l => out ? l.replace(strip, '') : (l ? unit + l : l)).join('\n') + (trail ? '\n' : '')
   return { start: a, end: b, text: res }
 }
 function joinEdit(t, a, b) {
@@ -344,19 +378,18 @@ function replayDot(vs, t, s, e, finish) {
   const d = vs.dot
   if (!d) return finish([s, e])
   let r
-  if (d.cmd === 'x') r = feed(vs, 'x', t, s, e)
-  else if (d.cmd === 'X') r = feed(vs, 'X', t, s, e)
+  if (d.cmd === 'x' || d.cmd === 'X') { vs.count = String(d.n); r = feed(vs, d.cmd, t, s, e) }
   else if (d.cmd === 'D') r = feed(vs, 'D', t, s, e)
   else if (d.cmd === 'J') r = feed(vs, 'J', t, s, e)
   else if (d.cmd === 'p' || d.cmd === 'P') r = feed(vs, d.cmd, t, s, e)
   else if (d.cmd === '~') { vs.count = String(d.n); r = feed(vs, '~', t, s, e) }
   else if (d.cmd === 'r') { vs.count = String(d.n); feed(vs, 'r', t, s, e); r = feed(vs, d.key, t, s, e) }
-  else if (d.cmd === 'op') {
-    const a = s + d.a, b = a + d.len
-    r = runOp(vs, d.op, t, a, b, d.line, finish, s)
-  } else if (d.text !== undefined) {
-    // an insert command: do the entry, then type what was typed before
-    const first = feed(vs, d.cmd === 'ins' ? 'i' : d.cmd === 'c' ? 'i' : d.cmd, t, s, e)
+  else if (d.cmd === 'op') { for (const k of d.keys) r = feed(vs, k, t, s, e) }
+  else if (d.text !== undefined) {
+    // an insert command: do the entry (a change re-runs its operator and motion), then type what was typed before
+    let first
+    if (d.keys) for (const k of d.keys) first = feed(vs, k, t, s, e)
+    else first = feed(vs, d.cmd === 'ins' ? 'i' : d.cmd, t, s, e)
     const base = first.edit ? applyEdit(t, first.edit) : t
     const at = first.sel[0]
     const typed = { start: at, end: at, text: d.text }

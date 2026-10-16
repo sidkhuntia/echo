@@ -734,3 +734,11 @@ Local branches reachable from `HEAD` (`for-each-ref --merged HEAD`) get `merged:
 - **Default:** the Markdown renderer marks each top-level block, and each list item, with `data-src="a-b"`, the 1-based lines of the file it was drawn from (link reference definitions and front matter are accounted for). The sanitizer keeps the attribute only when it is two numbers, and it is the only way the preview maps a block back to the file. Blocks nested in a list item or a quote carry no mark of their own: the note goes on the enclosing item or quote.
 - **Default:** a block that has an open note shows that note's bubble in the margin instead of the add bubble (one bubble per block, editing the first note), so a second note on the same block is written from the editor.
 - **Deferred:** notes on CSV/table previews (no source lines), and on a block inside a list item.
+
+## 25. Policies from the 0.11.0 audit
+
+- **Accepted:** an action that discards work asks first and says what is lost: deleting files (unsaved edits and ignored files are named), dropping a stash, aborting or skipping a merge, rebase or revert, and removing a worktree. Undo-able actions (staging, a discard that snapshots) do not ask.
+- **Accepted:** a file whose bytes are not valid UTF-8 opens read-only, because the editor's JSON round trip would rewrite the invalid bytes as U+FFFD.
+- **Accepted:** a save through a symlink writes the target and keeps the link, and a path is checked for `.git` after its symlinks are resolved, not only by its name.
+- **Accepted:** a failed save stops whatever was about to act on the saved file (Mark resolved, Keep, stage), and a notes load that failed is reported and blocks saving notes, so a transient error never turns into an overwrite.
+- **Default:** the audit's 281 low-severity findings were not worked through; its findings were checked against the code before any change, and about a quarter were skipped as not real.

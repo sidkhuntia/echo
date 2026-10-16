@@ -19,9 +19,19 @@ export function quotePath(p) {
   return out + '"'
 }
 
-export function fileHeader(f) {
+// A creation or removal header only holds when the whole file goes: staging some removed lines of a
+// deleted file, or unstaging some added lines of a new file, leaves the file behind, so those use the
+// plain header (the file exists on the side being patched).
+function partialWhole(f, lines, reverse) {
+  if (!lines || !(reverse ? f.isNew : f.isDeleted)) return false
+  const want = f.isNew ? 'add' : 'del'
+  return f.hunks.some(h => h.lines.some(l => l.t === want && !lines.has(l.i)))
+}
+
+export function fileHeader(f, { lines = null, reverse = false } = {}) {
   const a = quotePath('a/' + f.path), b = quotePath('b/' + f.path)
   const mode = f.fileMode || '100644'
+  if (partialWhole(f, lines, reverse)) return `diff --git ${a} ${b}\n--- ${a}\n+++ ${b}\n`
   if (f.isNew) return `diff --git ${a} ${b}\nnew file mode ${mode}\n--- /dev/null\n+++ ${b}\n`
   if (f.isDeleted) return `diff --git ${a} ${b}\ndeleted file mode ${mode}\n--- ${a}\n+++ /dev/null\n`
   return `diff --git ${a} ${b}\n--- ${a}\n+++ ${b}\n`
@@ -50,11 +60,11 @@ export function hunkBody(h, { lines = null, reverse = false } = {}) {
 // hunkPatch is a complete patch for one hunk of a file, or null.
 export function hunkPatch(f, hi, opts = {}) {
   const body = hunkBody(f.hunks[hi], opts)
-  return body && fileHeader(f) + body
+  return body && fileHeader(f, opts) + body
 }
 
 // filePatch covers every hunk of a file (for the actions that take a whole file's worth at once).
 export function filePatch(f, opts = {}) {
   const bodies = f.hunks.map(h => hunkBody(h, opts)).filter(Boolean)
-  return bodies.length ? fileHeader(f) + bodies.join('') : null
+  return bodies.length ? fileHeader(f, opts) + bodies.join('') : null
 }

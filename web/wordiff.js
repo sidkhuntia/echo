@@ -1,6 +1,6 @@
 // Word-level changes inside a changed line: which characters of a deleted line and its replacement differ.
 
-const TOKEN = /\w+|\s+|[^\w\s]/g
+const TOKEN = /\w+|\s+|[^\w\s]/gu
 const MAX_TOKENS = 300
 
 const tokens = s => {
@@ -25,8 +25,9 @@ export function wordRanges(a, b) {
     else j++
   }
   // Less than a third in common reads as a rewrite, and a mark over everything says nothing.
-  const common = [...keepX].reduce((sum, i) => sum + x[i].s.length, 0)
-  if (common < Math.min(a.length, b.length) / 3) return null
+  // Shared whitespace and indentation do not count as similarity.
+  const common = [...keepX].reduce((sum, i) => sum + (x[i].s.trim() ? x[i].s.length : 0), 0)
+  if (common < Math.min(a.trim().length, b.trim().length) / 3) return null
   const ranges = (t, keep) => {
     const out = []
     t.forEach((tok, i) => {

@@ -214,6 +214,12 @@ func (m *lspManager) client(ctx context.Context, s lspServer) (*lspClient, error
 			if e.err == nil {
 				select {
 				case <-e.c.dead:
+					// One that died soon after starting is left alone like a failed start, so a
+					// crash loop does not respawn and re-index on every request.
+					if time.Since(e.at) < lspRetry {
+						m.mu.Unlock()
+						return nil, fmt.Errorf("%s exited; trying again shortly", s.ID)
+					}
 					e = nil
 				default:
 				}
@@ -387,6 +393,10 @@ func (c *lspClient) write(msg any) error {
 	}
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
+	// A server that stopped reading would block this write, and with it every request and the
+	// shutdown; killing the process closes the pipe and fails the write.
+	t := time.AfterFunc(5*time.Second, c.kill)
+	defer t.Stop()
 	_, err = fmt.Fprintf(c.in, "Content-Length: %d\r\n\r\n%s", len(body), body)
 	return err
 }
@@ -626,14 +636,23 @@ func (a *App) lspOpen(ctx context.Context, req lspRequest) (*lspClient, string, 
 	}
 	c, err := a.lsp.client(ctx, s)
 	if err != nil {
-		return nil, "", "", &LSPResult{Status: "error", Message: err.Error()}
+		return nil, "", "", &LSPResult{Status: "error", Message: lspErrMessage(err)}
 	}
-	a.diskChanges(c)
+	a.diskChanges(ctx, c)
 	uri := fileURI(abs)
 	if err := c.sync(uri, s.Langs[strings.ToLower(filepath.Ext(abs))], req.Content); err != nil {
 		return nil, "", "", &LSPResult{Status: "error", Message: err.Error()}
 	}
 	return c, uri, abs, nil
+}
+
+// lspErrMessage turns a timeout into what the user can act on: the server is usually still
+// indexing, and asking again works.
+func lspErrMessage(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "The language server is still starting or indexing. Try again in a moment."
+	}
+	return err.Error()
 }
 
 func readLSPRequest(w http.ResponseWriter, r *http.Request) (lspRequest, bool) {
@@ -668,7 +687,7 @@ func (a *App) handleLSPTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	toks, err := c.semanticTokens(ctx, uri)
 	if err != nil {
-		writeJSON(w, LSPResult{Status: "error", Message: err.Error()})
+		writeJSON(w, LSPResult{Status: "error", Message: lspErrMessage(err)})
 		return
 	}
 	writeJSON(w, LSPResult{Status: "ok", Legend: c.legend, Modifiers: c.mods, Tokens: toks})
@@ -693,7 +712,7 @@ func (a *App) handleLSPDefinition(w http.ResponseWriter, r *http.Request) {
 		"position":     map[string]int{"line": req.Line, "character": req.Character},
 	})
 	if err != nil {
-		writeJSON(w, LSPResult{Status: "error", Message: err.Error()})
+		writeJSON(w, LSPResult{Status: "error", Message: lspErrMessage(err)})
 		return
 	}
 	writeJSON(w, LSPResult{Status: "ok", Locations: a.lspLocations(raw)})
@@ -771,14 +790,18 @@ func (a *App) relInRepo(abs string) (string, bool) {
 // uncommitted ones (one `git status`, at most once a second); the first look only records them,
 // because the server has just read the disk. A checkout or commit that rewrites files is not
 // noticed until the server restarts.
-func (a *App) diskChanges(c *lspClient) {
+func (a *App) diskChanges(ctx context.Context, c *lspClient) {
 	c.dmu.Lock()
 	defer c.dmu.Unlock()
 	if time.Since(c.dchecked) < time.Second || a.noGit {
 		return
 	}
 	c.dchecked = time.Now()
-	out, err := a.git("status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all")
+	// Bounded, because dmu is held: a stalled git must not queue every later request behind it.
+	gctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	outB, err := a.gitCmdContext(gctx, "status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all").Output()
+	out := string(outB)
 	if err != nil {
 		return
 	}

@@ -86,7 +86,10 @@ func patchPaths(patch string) []string {
 			if s, err := strconv.Unquote(rest[i+1:]); err == nil {
 				p = strings.TrimPrefix(s, "b/")
 			}
-		} else if i := strings.LastIndex(rest, " b/"); i >= 0 {
+		} else if n := len(rest) - 5; n >= 0 && n%2 == 0 && strings.HasPrefix(rest, "a/") && rest[2+n/2:5+n/2] == " b/" && rest[2:2+n/2] == rest[5+n/2:] {
+			// Unrenamed: both halves are the same name, which may itself contain " b/".
+			p = rest[5+n/2:]
+		} else if i := strings.Index(rest, " b/"); i >= 0 {
 			p = rest[i+3:]
 		}
 		if p != "" && !seen[p] {
@@ -265,6 +268,11 @@ func (a *App) undoCommit() (string, error) {
 		if _, err := a.git("rev-parse", "--verify", "-q", "HEAD"); err != nil {
 			return "", errors.New("there is no commit to undo")
 		}
+		// At a shallow boundary HEAD~1 does not resolve though the commit has a parent; emptying the branch
+		// there would delete it.
+		if raw, _ := a.git("cat-file", "-p", "HEAD"); strings.Contains(raw, "\nparent ") {
+			return "", errors.New("history is truncated (shallow clone); cannot undo the boundary commit")
+		}
 		return a.gitCombined("update-ref", "-d", "HEAD")
 	}
 	return a.gitCombined("reset", "--soft", "HEAD~1")
@@ -305,7 +313,11 @@ func (a *App) addToGitignore(paths []string) (string, error) {
 			have[pat] = true
 		}
 	}
+	trackedNote := "Some of these files are already tracked; run git rm --cached to stop tracking them."
 	if len(add) == 0 {
+		if tracked, _ := a.git(append([]string{"ls-files", "--"}, paths...)...); strings.TrimSpace(tracked) != "" {
+			return "Already ignored. " + trackedNote, nil
+		}
 		return "Already ignored", nil
 	}
 	body := string(existing)
@@ -318,7 +330,7 @@ func (a *App) addToGitignore(paths []string) (string, error) {
 	}
 	// A pattern does not untrack a file Git already tracks; say so, since the file will keep showing.
 	if tracked, _ := a.git(append([]string{"ls-files", "--"}, paths...)...); strings.TrimSpace(tracked) != "" {
-		return "Added to .gitignore. Some of these files are already tracked; run git rm --cached to stop tracking them.", nil
+		return "Added to .gitignore. " + trackedNote, nil
 	}
 	return "Added to .gitignore: " + strings.Join(add, ", "), nil
 }
@@ -334,17 +346,18 @@ func (a *App) resetTo(ref, mode string) (string, error) {
 		return "", fmt.Errorf("finish or abort the %s in progress first", op)
 	}
 	if mode == "hard" {
-		if out, err := a.git("status", "--porcelain=v1", "-z", "--untracked-files=all"); err == nil {
-			var paths []string
-			for _, c := range parsePorcelain(out) {
-				if !strings.ContainsAny(c.Path, "\n") {
-					paths = append(paths, c.Path)
-				}
-			}
-			if len(paths) > 0 {
-				if _, err := a.snapshotPaths(paths); err != nil {
-					return "", fmt.Errorf("could not snapshot before the hard reset: %w", err)
-				}
+		out, err := a.git("status", "--porcelain=v1", "-z", "--untracked-files=all")
+		if err != nil {
+			return "", fmt.Errorf("could not list changes before the hard reset: %w", err)
+		}
+		var paths []string
+		for _, c := range parsePorcelain(out) {
+			paths = append(paths, c.Path)
+		}
+		// snapshotPaths refuses a name with a line break, which stops the reset rather than lose that file.
+		if len(paths) > 0 {
+			if _, err := a.snapshotPaths(paths); err != nil {
+				return "", fmt.Errorf("could not snapshot before the hard reset: %w", err)
 			}
 		}
 	}
@@ -377,7 +390,7 @@ func (a *App) worktreeAdd(req gitRequest) (string, error) {
 	}
 	path := req.From
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(filepath.Dir(a.root), path)
+		path = filepath.Join(a.root, path)
 	}
 	switch {
 	case req.To == "" && req.Name == "":
@@ -428,7 +441,13 @@ func (a *App) rebaseInteractive(onto string, todo []TodoItem) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(dir)
+	// The reword message files must outlive a stop on a conflict: rebase --continue still runs their exec lines.
+	keep := false
+	defer func() {
+		if !keep {
+			os.RemoveAll(dir)
+		}
+	}()
 	var lines []string
 	for i, t := range todo {
 		h, err := a.resolveCommit(t.Hash)
@@ -461,6 +480,7 @@ func (a *App) rebaseInteractive(onto string, todo []TodoItem) (string, error) {
 	cmd := a.gitCmdContext(context.Background(), "rebase", "-i", base)
 	cmd.Env = append(cmd.Env, "GIT_SEQUENCE_EDITOR=cp '"+file+"'", "GIT_EDITOR=true")
 	out, err := cmd.CombinedOutput()
+	keep = err != nil && a.operationInProgress() != ""
 	return string(out), err
 }
 

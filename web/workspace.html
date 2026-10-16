@@ -27,7 +27,7 @@
 <main class="wsmain">
   <section aria-labelledby="ws-h-repos">
     <h2 id="ws-h-repos">Repositories</h2>
-    <div id="ws-repos" class="ws-table" role="table"></div>
+    <div id="ws-repos" class="ws-table"></div>
   </section>
   <section id="ws-else" aria-labelledby="ws-h-else" hidden>
     <h2 id="ws-h-else">Open elsewhere</h2>
@@ -38,7 +38,7 @@
     <div id="ws-changes"></div>
   </section>
 </main>
-<footer class="statusbar"><span class="live"></span><span id="status"></span></footer>
+<footer class="statusbar"><span class="live"></span><span id="status" role="status" aria-live="polite"></span></footer>
 <script type="module" src="/workspace.js"></script>
 </body>
 </html>

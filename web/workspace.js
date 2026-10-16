@@ -37,19 +37,22 @@ function visibleRepos() {
   return state.repos.filter(r => (!f || r.name.toLowerCase().includes(f) || (r.branch || '').toLowerCase().includes(f)) && (!state.dirty || count(r) > 0))
 }
 
+let reposHTML = ''
 function renderRepos() {
   const list = visibleRepos()
-  const head = `<div class="ws-row head" role="row"><span>Repository</span><span>Branch</span><span>Sync</span><span class="r">Staged</span><span class="r">Unstaged</span><span class="r">Untracked</span><span class="r">Conflicts</span></div>`
+  const head = `<div class="ws-row head"><span>Repository</span><span>Branch</span><span>Sync</span><span class="r">Staged</span><span class="r">Unstaged</span><span class="r">Untracked</span><span class="r">Conflicts</span></div>`
   const row = r => {
     const sync = r.error ? `<span class="err" title="${esc(r.error)}">error</span>`
       : !r.upstream ? '<span class="faint">no upstream</span>'
       : r.ahead || r.behind ? `${r.ahead ? `<span class="ah">↑${r.ahead}</span>` : ''} ${r.behind ? `<span class="bh">↓${r.behind}</span>` : ''}`
       : '<span class="faint">in sync</span>'
-    return `<a class="ws-row ${count(r) ? 'dirty' : ''}" role="row" href="${href(r.id)}" title="${esc(r.root)}">
+    return `<a class="ws-row ${count(r) ? 'dirty' : ''}" href="${href(r.id)}" title="${esc(r.root)}">
       <span class="nm"><b>${esc(r.name)}</b></span><span class="mono">${esc(r.branch || '—')}</span><span>${sync}</span>
       ${num(r.staged, 'add')}${num(r.unstaged)}${num(r.untracked)}${num(r.conflicts, 'del')}</a>`
   }
-  $('#ws-repos').innerHTML = head + (list.map(row).join('') || `<div class="empty">${state.repos.length ? 'No repository matches.' : 'No repositories found.'}</div>`)
+  const html = head + (list.map(row).join('') || `<div class="empty">${!state.repos.length ? 'No repositories found.' : state.filter ? `No repository matches “${esc(state.filter)}”.` : 'No repository has changes. Clear “Changed only” to see all.'}</div>`)
+  // Skip identical markup so a focused repository link survives a refresh.
+  if (html !== reposHTML) { reposHTML = html; $('#ws-repos').innerHTML = html }
   const dirtyN = state.repos.filter(r => count(r) > 0).length
   $('#ws-sum').textContent = `${state.repos.length} repositories · ${dirtyN} with changes`
 }
@@ -74,7 +77,7 @@ function renderChanges() {
     return `<div class="ws-group ${folded ? 'folded' : ''}"><div class="ws-gh"><button class="fold" data-fold="${esc(g.id)}" aria-expanded="${!folded}" title="${folded ? 'Expand' : 'Fold'}"><svg class="i" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
       <a class="gname" href="${href(g.id)}"><b>${esc(g.name)}</b></a><span class="mono faint">${esc(g.branch)}</span><span class="grow"></span>
       <span class="faint">${g.files.length} files</span><span class="add">+${add}</span><span class="del">−${del}</span></div>${rows}</div>`
-  }).join('') || `<div class="empty">${state.loaded ? 'No changes in any repository.' : 'Loading…'}</div>`
+  }).join('') || `<div class="empty">${state.loaded ? (state.filter ? `No file matches “${esc(state.filter)}”.` : 'No changes in any repository.') : state.failed ? 'Couldn’t load changes. Retrying…' : 'Loading…'}</div>`
 }
 
 // Changed files are fetched again only when a repository's counts change, not on every snapshot.
@@ -82,7 +85,14 @@ let changesTimer = 0
 function scheduleChanges() {
   clearTimeout(changesTimer)
   changesTimer = setTimeout(async () => {
-    try { state.changes = await api('/ws/changes'); state.loaded = true; renderChanges() } catch (e) { setStatus(e.message, 'err') }
+    try {
+      const next = await api('/ws/changes')
+      state.failed = false
+      if (!state.loaded || JSON.stringify(next) !== JSON.stringify(state.changes)) { state.changes = next; state.loaded = true; renderChanges() }
+    } catch (e) {
+      setStatus(e.message, 'err')
+      if (!state.loaded) { state.failed = true; renderChanges(); changesTimer = setTimeout(scheduleChanges, 5000) }
+    }
   }, 300)
 }
 
@@ -103,7 +113,9 @@ async function netAll(what, url) {
   try {
     const res = await post(url)
     const bad = res.filter(r => !r.ok && !r.skipped), done = res.filter(r => r.ok).length, skipped = res.filter(r => r.skipped).length
-    const detail = bad.map(r => `${r.id}: ${r.message.split('\n').pop()}`).join(' · ')
+    // The server appends "exit status N" after git's own output; show git's last line instead.
+    const why = m => m.split('\n').filter(l => l.trim() && !/^exit status \d+$/.test(l.trim())).pop() || m
+    const detail = bad.map(r => `${r.id}: ${why(r.message)}`).join(' · ')
     setStatus(`${what}: ${done} done${skipped ? `, ${skipped} skipped` : ''}${bad.length ? `, ${bad.length} failed — ${detail}` : ''}`, bad.length ? 'err' : 'ok')
     applySnapshot(await api('/ws/repos'))
   } catch (e) { setStatus(e.message, 'err') }
@@ -125,7 +137,10 @@ $('#ws-changes').addEventListener('click', e => {
   state.folded.has(b.dataset.fold) ? state.folded.delete(b.dataset.fold) : state.folded.add(b.dataset.fold)
   store.set('ws:folded', JSON.stringify([...state.folded]))
   renderChanges()
+  for (const x of $('#ws-changes').querySelectorAll('[data-fold]')) if (x.dataset.fold === b.dataset.fold) x.focus()
 })
+// Line counts of an already-changed file move without any repository count changing, so look again on return.
+document.addEventListener('visibilitychange', () => { if (!document.hidden && state.loaded) scheduleChanges() })
 document.addEventListener('keydown', e => {
   if (e.key === '/' && document.activeElement.tagName !== 'INPUT') { e.preventDefault(); $('#ws-filter').focus() }
   else if (e.key === 'Escape' && document.activeElement.tagName === 'INPUT') document.activeElement.blur()
@@ -145,15 +160,18 @@ async function loadElsewhere() {
     const here = +location.port
     const list = (await api('/ws/instances')).filter(i => i.port !== here)
     $('#ws-else').hidden = !list.length
-    const cnt = r => (r.staged || 0) + (r.unstaged || 0) + (r.untracked || 0) + (r.conflicts || 0)
-    $('#ws-else-list').innerHTML = list.map(i => {
+    const cnt = r => r.files || 0
+    const html = list.map(i => {
       if (!(i.repos || i.details)) return `<a class="ws-row else" href="http://127.0.0.1:${i.port}/" title="${esc(i.root)}"><span class="nm"><b>${esc(basename(i.root))}</b></span><span class="mono">${esc(i.branch || '')}</span><span class="faint mono">:${i.port}</span>${num(i.changes)}</a>`
       const details = (i.details && i.details.length ? i.details : Object.entries(i.repos || {}).map(([id, root]) => ({ id, root, branch: '' })))
         .slice().sort((a, b) => String(a.id).localeCompare(String(b.id)))
       const rows = details.map(d => `<a class="ws-row else" href="http://127.0.0.1:${i.port}/r/${encodeURIComponent(d.id)}/" title="${esc(d.root)}"><span class="nm"><b>${esc(basename(d.root))}</b></span><span class="mono">${esc(d.branch || '')}</span><span class="faint mono">:${i.port}</span>${num(cnt(d) || 0)}</a>`).join('')
       return `<div class="ws-gh faint">${esc(basename(i.root))} · workspace · ${details.length} ${details.length === 1 ? 'repository' : 'repositories'}</div>${rows}`
     }).join('')
+    // Rebuilding an unchanged list would drop keyboard focus and swallow a click in progress.
+    if (html !== elseHTML) { elseHTML = html; $('#ws-else-list').innerHTML = html }
   } catch {}
 }
+let elseHTML = ''
 loadElsewhere()
 setInterval(() => { if (!document.hidden) loadElsewhere() }, 8000)

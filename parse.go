@@ -169,6 +169,7 @@ func markMerged(bs []Branch, s string) {
 func parseMergedRemotes(s, keep string) []string {
 	out := []string{}
 	skip := map[string]bool{}
+	hasHead := map[string]bool{}
 	var names []string
 	for _, line := range strings.Split(s, "\n") {
 		ref, sym, _ := strings.Cut(line, "\t")
@@ -179,11 +180,17 @@ func parseMergedRemotes(s, keep string) []string {
 		if sym != "" || strings.HasSuffix(name, "/HEAD") {
 			skip[name] = true
 			skip[strings.TrimPrefix(sym, "refs/remotes/")] = true
+			r, _, _ := strings.Cut(name, "/")
+			hasHead[r] = true
 			continue
 		}
 		names = append(names, name)
 	}
 	for _, n := range names {
+		// No HEAD alias listed (a remote added by hand, never cloned): guess main/master as the default.
+		if r, b, _ := strings.Cut(n, "/"); !hasHead[r] && (b == "main" || b == "master") {
+			continue
+		}
 		if !skip[n] && n != keep {
 			out = append(out, n)
 		}

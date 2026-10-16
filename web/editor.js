@@ -67,7 +67,7 @@ function onKeyDown(e) {
     })
   }
   if (MC.active()) return
-  if (e.key === 'Enter' && !mod && !e.shiftKey && !e.altKey) return done(() => apply(E.enterEdit(t, s, en, unitFor(t0))))
+  if (e.key === 'Enter' && !mod && !e.shiftKey && !e.altKey) return done(() => apply(E.enterEdit(t, s, en, unitFor(t0), t0.path)))
   if (!mod && !e.altKey && cfg().autoClose !== false && autoClose(e, t, s, en)) { e.preventDefault(); e.stopPropagation(); return }
   if (mod && !e.shiftKey && !e.altKey && e.key === '/') return done(() => { const ed1 = E.toggleComment(t, s, en, t0.path); if (ed1) apply(ed1); else ctx.setStatus('No comment syntax known for this file type') })
   if (e.altKey && !mod && (e.code === 'ArrowUp' || e.code === 'ArrowDown')) return done(() => apply(e.shiftKey ? E.duplicateLines(t, s, en, e.code === 'ArrowDown' ? 1 : -1) : E.moveLines(t, s, en, e.code === 'ArrowDown' ? 1 : -1)))
@@ -97,12 +97,13 @@ function autoClose(e, t, s, en) {
 }
 
 // ---------- save-time cleanups and autosave ----------
-export function beforeSave() {
+export function beforeSave(auto = false) {
   const e = ed(), t = tab()
   if (!t || !inEditor()) return
   let text = e.value
-  if (cfg().trimTrailing) text = text.replace(/[ \t]+$/gm, '')
-  if (cfg().finalNewline && text && !text.endsWith('\n')) text += '\n'
+  // a timed autosave must not eat the space the user is still typing
+  if (cfg().trimTrailing && !auto) text = text.replace(/[ \t]+$/gm, '')
+  if (cfg().finalNewline && !auto && text &&!text.endsWith('\n')) text += '\n'
   if (text !== e.value) applyText(e, text)
 }
 
@@ -110,18 +111,18 @@ let autoTimer = 0
 function scheduleAutosave() {
   clearTimeout(autoTimer)
   if (cfg().autosave !== 'delay') return
-  autoTimer = setTimeout(() => { const t = tab(); if (t && !t.conflict && t.content !== t.saved && inEditor()) ctx.saveFile() }, 1500)
+  autoTimer = setTimeout(() => { const t = tab(); if (t && !t.conflict && t.content !== t.saved && inEditor() && !t.saving) ctx.saveFile(false, true) }, 1500)
 }
 function saveOnBlur() {
   if (cfg().autosave !== 'blur') return
   const t = tab()
-  if (t && !t.conflict && t.content !== t.saved && inEditor()) ctx.saveFile()
+  if (t && !t.conflict && t.content !== t.saved && inEditor() && !t.saving) ctx.saveFile()
 }
 
 // ---------- JSON ----------
 export function formatJSON(minify = false) {
   const e = ed(), t = tab()
-  if (!t || !/\.(json|jsonc|webmanifest)$/i.test(t.path)) return
+  if (!t || !/\.(json|webmanifest)$/i.test(t.path)) return
   try {
     const v = JSON.parse(e.value)
     const indent = minify ? 0 : (unitFor(t) === '\t' ? '\t' : unitFor(t).length)
@@ -135,10 +136,11 @@ export async function convertEol() {
   const t = tab()
   if (!t || t.binary) return
   const to = t.eol === '\r\n' ? '\n' : '\r\n'
-  const ok = await ctx.ask({ title: `Convert line endings to ${to === '\n' ? 'LF' : 'CRLF'}`, ok: 'Convert and save', html: `<p>${ctx.esc(t.path)} is saved with ${to === '\n' ? 'LF' : 'CRLF'} line endings. This writes the file now.</p>` })
+  const ok = await ctx.ask({ title: `Convert line endings to ${to === '\n' ? 'LF' : 'CRLF'}`, ok: 'Convert and save', html: `<p>${ctx.esc(t.path)} currently uses ${to === '\n' ? 'CRLF' : 'LF'} line endings. It will be converted to ${to === '\n' ? 'LF' : 'CRLF'} and saved now.</p>` })
   if (!ok) return
+  const prev = t.eol
   t.eol = to
-  await ctx.saveFile()
+  if (await ctx.saveFile() === false) t.eol = prev
   ctx.renderEditor?.()
 }
 
@@ -188,11 +190,11 @@ function paintOccurrences() {
   const [s, en] = [ed().selectionStart, ed().selectionEnd]
   let word = ''
   if (inEditor() && cfg().occurrences !== false && !ctx.find.open && s === en) {
-    const text = ed().value, a = text.slice(0, s).match(/[\w$]*$/)[0], b = text.slice(s).match(/^[\w$]*/)[0]
+    const text = ed().value, a = text.slice(0, s).match(/[\p{L}\p{N}_$]*$/u)[0], b = text.slice(s).match(/^[\p{L}\p{N}_$]*/u)[0]
     word = a + b
   }
   if (word.length < 2 || /^\d+$/.test(word)) { el.classList.remove('active'); el.innerHTML = ''; return }
-  const re = new RegExp(`(?<![\\w$])${word.replace(/[$]/g, '\\$')}(?![\\w$])`, 'g')
+  const re = new RegExp(`(?<![\\p{L}\\p{N}_$])${word.replace(/[$]/g, '\\$')}(?![\\p{L}\\p{N}_$])`, 'gu')
   const lines = ctx.tabLines(t), [first, last] = rowsInView()
   let h = '', any = 0
   for (let i = first; i < last; i++) {
@@ -207,7 +209,7 @@ function paintOccurrences() {
 }
 
 // Breadcrumbs name the declaration the caret is in; sticky headers repeat the ones scrolled out of sight.
-function scopesAt(i) { return E.enclosingScopes(ctx.tabLines(tab()), i) }
+function scopesAt(i) { return E.enclosingScopes(ctx.tabLines(tab()), i, 4, /\.(md|markdown|mdx)$/i.test(tab().path || '')) }
 
 function paintScopes() {
   const crumb = ctx.$('#crumb-sym'), sticky = ctx.$('#sticky'), t = tab()
@@ -243,10 +245,16 @@ function drawMinimap() {
   const marks = t.marks?.kinds || []
   for (let i = 0, y = 0; i < n; i += step, y += per) {
     const l = lines[i]
-    if (!l.trim()) continue
+    // a sampled row stands for `step` lines: let a change in any of them show
+    let mk = marks[i]
+    for (let j = i + 1; j < Math.min(n, i + step); j++) if (marks[j] === 'add' || (marks[j] && !mk)) mk = marks[j]
+    if (!l.trim()) {
+      if (mk) { g.globalAlpha = 0.95; g.fillStyle = mk === 'add' ? add : mod; g.fillRect(4, y, 6, Math.max(1, per - 0.4)) }
+      continue
+    }
     const lead = l.match(/^\s*/)[0].replace(/\t/g, '    ').length
-    g.globalAlpha = marks[i] ? 0.95 : 0.45
-    g.fillStyle = marks[i] === 'add' ? add : marks[i] ? mod : base
+    g.globalAlpha = mk ? 0.95 : 0.45
+    g.fillStyle = mk === 'add' ? add : mk ? mod : base
     g.fillRect(4 + Math.min(40, lead) * 0.5, y, Math.min(70, Math.max(2, (l.trimEnd().length - lead) * 0.5)), Math.max(1, per - 0.4))
   }
   mmFor = { n, per, H }
@@ -295,8 +303,13 @@ export function onRender() {
   const eol = ctx.$('#eol')
   if (eol) { eol.hidden = !editing; if (editing) eol.textContent = t.eol === '\r\n' ? 'CRLF' : 'LF' }
   const fmt = ctx.$('#json-format')
-  if (fmt) fmt.hidden = !(editing && /\.(json|jsonc|webmanifest)$/i.test(t.path))
+  if (fmt) fmt.hidden = !(editing && /\.(json|webmanifest)$/i.test(t.path))
   paintTab()
+  clearTimeout(mmTimer)
+  mmTimer = setTimeout(drawMinimap, 60)
+}
+
+export function onResize() {
   clearTimeout(mmTimer)
   mmTimer = setTimeout(drawMinimap, 60)
 }
@@ -311,9 +324,14 @@ export function onInput() {
 // Decorates one highlighted row: tabs and the spaces at either end of a line, drawn faintly.
 export function decorateRow(html) {
   if (!cfg().whitespace) return html
-  return html.replace(/(^|>)([^<]+)/g, (m, pre, text) => pre + text
-    .replace(/\t/g, '<span class="ws-t">\t</span>')
-    .replace(/^ +| +$/g, s => `<span class="ws-s">${s}</span>`))
+  // A run of text between tags only holds a line end when nothing but tags comes before (or after) it.
+  return html.replace(/(^|>)([^<]+)/g, (m, pre, text, off) => {
+    const head = /^(<[^>]*>)*$/.test(html.slice(0, off + pre.length))
+    const tail = /^(<\/[^>]*>)*$/.test(html.slice(off + m.length))
+    return pre + text
+      .replace(/\t/g, '<span class="ws-t">\t</span>')
+      .replace(/^ +| +$/g, s => (head && text.startsWith(s)) || (tail && text.endsWith(s)) ? `<span class="ws-s">${s}</span>` : s)
+  })
 }
 
 export function initEditor() {
@@ -338,7 +356,7 @@ export function initEditor() {
   ctx.$('#crumb-sym')?.addEventListener('click', jump)
   const mm = ctx.$('#minimap')
   let drag = false
-  mm?.addEventListener('mousedown', ev => { drag = true; minimapScroll(ev) })
+  mm?.addEventListener('mousedown', ev => { ev.preventDefault(); drag = true; minimapScroll(ev) })
   window.addEventListener('mousemove', ev => { if (drag) minimapScroll(ev) })
   window.addEventListener('mouseup', () => { drag = false })
   applySettings()

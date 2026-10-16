@@ -25,6 +25,7 @@ export function offsetOf(text, line, character) {
 
 // ---------- go to definition ----------
 const jumps = []
+let lookupSeq = 0
 const ed = () => ctx.$('#editor')
 const MESSAGES = {
   none: 'No language server for this kind of file',
@@ -37,10 +38,12 @@ export async function goToDefinition() {
   if (!tab || tab.binary || ctx.state.mode !== 'file' || !e.classList.contains('active')) return
   const text = e.value, here = e.selectionStart
   const { line, character } = position(text, here)
+  const seq = ++lookupSeq
   ctx.setStatus('Looking up the definition…')
   let res
-  try { res = await ctx.post('/api/lsp/definition', { path: tab.path, content: text, line, character }) } catch (err) { return ctx.setStatus(err.message, 'err') }
-  if (tab !== ctx.activeTab()) return
+  try { res = await ctx.post('/api/lsp/definition', { path: tab.path, content: text, line, character }) } catch (err) { return seq === lookupSeq ? ctx.setStatus(err.message, 'err') : undefined }
+  // A newer lookup supersedes this one, so a slow first answer cannot move the caret after the second.
+  if (tab !== ctx.activeTab() || seq !== lookupSeq) return
   if (res.status === 'missing') return ctx.setStatus(`${res.message} is not installed, so there is no definition lookup for this language`, 'err')
   if (res.status !== 'ok') return ctx.setStatus(res.message || MESSAGES[res.status] || 'Definition lookup failed', res.status === 'error' ? 'err' : '')
   const locs = res.locations || []
@@ -53,9 +56,12 @@ export async function goToDefinition() {
     const at = offsetOf(text, loc.line, loc.character)
     if (at >= here - word && at <= here + wordEnd) return ctx.setStatus('This is the definition')
   }
-  jumps.push({ path: tab.path, caret: here, scroll: e.scrollTop })
-  if (jumps.length > 50) jumps.shift()
+  const from = { path: tab.path, caret: here, scroll: e.scrollTop }
   await ctx.openFile(loc.path, { line: loc.line + 1 })
+  // openFile reports a failed open on the status bar and stays put; do not jump within the wrong file.
+  if (ctx.activeTab()?.path !== loc.path) return
+  jumps.push(from)
+  if (jumps.length > 50) jumps.shift()
   const e2 = ed(), off = offsetOf(e2.value, loc.line, loc.character)
   e2.setSelectionRange(off, off)
   e2.focus({ preventScroll: true })
@@ -68,6 +74,7 @@ export async function goBack() {
   const j = jumps.pop()
   if (!j) return ctx.setStatus('Nowhere to go back to')
   await ctx.openFile(j.path)
+  if (ctx.activeTab()?.path !== j.path) return void jumps.push(j)
   const e = ed()
   const at = Math.min(j.caret, e.value.length)
   e.setSelectionRange(at, at)
@@ -159,7 +166,9 @@ async function request(tab, attempt) {
     if (err.name === 'AbortError') return
     return retry(tab, attempt)
   }
-  if (res.status === 'none' || res.status === 'missing' || res.status === 'unsupported') return void unsupported.add(extOf(tab.path))
+  // A missing server is not remembered: installing it should not need a page reload.
+  if (res.status === 'missing') return
+  if (res.status === 'none' || res.status === 'unsupported') return void unsupported.add(extOf(tab.path))
   if (res.status !== 'ok') return retry(tab, attempt)
   // A server that is still indexing can answer with nothing; try again shortly.
   if (!res.tokens?.length && attempt < 3) return retry(tab, attempt)

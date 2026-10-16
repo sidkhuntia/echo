@@ -47,7 +47,7 @@ export function indentUnit({ indent = 'auto', tabSize = 0 } = {}, detected = nul
 export function indentLines(t, s, e, unit, outdent = false) {
   const [a, b] = lineSpan(t, s, e)
   const lines = t.slice(a, b).split('\n')
-  const trailing = lines.at(-1) === '' ? lines.pop() !== undefined : false
+  const trailing = lines.length > 1 && lines.at(-1) === '' ? lines.pop() !== undefined : false
   let firstDelta = 0, total = 0
   const out = lines.map((l, i) => {
     let r = l
@@ -67,12 +67,14 @@ const OPEN = { '{': '}', '(': ')', '[': ']' }
 
 // enterEdit decides what Enter inserts: a newline plus the current line's indentation, one level
 // deeper after an opening bracket or colon, and the closing bracket on its own line between a pair.
-export function enterEdit(t, s, e, unit) {
+export function enterEdit(t, s, e, unit, path = '') {
   const ls = lineStart(t, s)
   const before = t.slice(ls, s)
   const base = before.match(/^[ \t]*/)[0]
   const prev = before.trimEnd().slice(-1), next = t[e]
-  const opens = OPEN[prev] !== undefined || (prev === ':' && /\b(if|else|elif|for|while|def|class|try|except|finally|with|case|switch)\b|^\s*(\w+)\s*:\s*$/.test(before))
+  // A trailing colon is prose in Markdown and text files, so it does not indent there.
+  const prose = /\.(md|markdown|mdx|txt|text|rst|adoc)$/i.test(path)
+  const opens = OPEN[prev] !== undefined || (prev === ':' && !prose && /\b(if|else|elif|for|while|def|class|try|except|finally|with|case|switch)\b|^\s*(\w+)\s*:\s*$/.test(before))
   if (OPEN[prev] && next === OPEN[prev]) {
     const mid = '\n' + base + unit, text = mid + '\n' + base
     return { start: s, end: e, text, selStart: s + mid.length, selEnd: s + mid.length }
@@ -101,7 +103,7 @@ export function toggleComment(t, s, e, path) {
   if (!st) return null
   const [a, b] = lineSpan(t, s, e)
   const lines = t.slice(a, b).split('\n')
-  const trailing = lines.at(-1) === '' && lines.pop() !== undefined
+  const trailing = lines.length > 1 && lines.at(-1) === '' && lines.pop() !== undefined
   const [open, close] = st.line ? [st.line, ''] : st.block
   const live = lines.filter(l => l.trim())
   const all = live.length && live.every(l => l.trimStart().startsWith(open))
@@ -147,7 +149,8 @@ export function moveLines(t, s, e, dir) {
   const blockNl = block.endsWith('\n')
   const text = next.replace(/\n$/, '') + '\n' + (blockNl ? block : block)
   const fixed = nb === t.length && !t.endsWith('\n') ? next + '\n' + block.replace(/\n$/, '') : text
-  return { start: a, end: nb, text: fixed, selStart: s + next.length, selEnd: e + next.length }
+  const shift = next.replace(/\n$/, '').length + 1 // the moved block starts after the next line and its newline
+  return { start: a, end: nb, text: fixed, selStart: s + shift, selEnd: e + shift }
 }
 
 // duplicateLines copies the selected lines below (dir 1) or above (-1) themselves.
@@ -185,7 +188,7 @@ export function matchBracket(t, pos) {
         if (t[k] === ch) depth++
         else if (t[k] === OPEN[ch] && --depth === 0) return k
       }
-      return -1
+      continue
     }
     if (CLOSE[ch] !== undefined) {
       let depth = 0
@@ -193,18 +196,22 @@ export function matchBracket(t, pos) {
         if (t[k] === ch) depth++
         else if (t[k] === CLOSE[ch] && --depth === 0) return k
       }
-      return -1
+      continue
     }
   }
   return -1
 }
 
 // ---------- scopes ----------
-const SYMBOL = /^\s*(?:(?:export\s+)?(?:default\s+)?(?:async\s+)?function\*?\s+[\w$]+|(?:export\s+)?(?:const|let|var)\s+[\w$]+\s*=\s*(?:async\s*)?(?:\([^)]*\)|[\w$]+)\s*=>|(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:pub\s+)?(?:class|struct|enum|trait|interface|impl|module|namespace|object)\s+[\w$]+|func\s+(?:\([^)]*\)\s*)?[\w.]+|(?:async\s+)?def\s+\w+|(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+\w+|type\s+\w+\s+(?:struct|interface)|#{1,6}\s+\S|[\w.$]+\s*\([^)]*\)\s*\{\s*$)/
+const SYMBOL = /^\s*(?:(?:export\s+)?(?:default\s+)?(?:async\s+)?function\*?\s+[\w$]+|(?:export\s+)?(?:const|let|var)\s+[\w$]+\s*=\s*(?:async\s*)?(?:\([^)]*\)|[\w$]+)\s*=>|(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:pub\s+)?(?:class|struct|enum|trait|interface|impl|module|namespace|object)\s+[\w$]+|func\s+(?:\([^)]*\)\s*)?[\w.]+|(?:async\s+)?def\s+\w+|(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+\w+|type\s+\w+\s+(?:struct|interface)|[\w.$]+\s*\([^)]*\)\s*\{\s*$)/
+
+const MD_HEAD = /^\s*#{1,6}\s+\S/
 
 // enclosingScopes lists the scope headers above a line, outermost first: each is the nearest earlier
 // line that looks like a declaration and is indented less than the line below it. Lines hold the file's lines.
-export function enclosingScopes(lines, idx, max = 4) {
+// Markdown headings count as declarations only when markdown is set; elsewhere '#' starts a comment.
+export function enclosingScopes(lines, idx, max = 4, markdown = false) {
+  const isSym = l => SYMBOL.test(l) || (markdown && MD_HEAD.test(l))
   const indentOf = l => l.replace(/\t/g, '    ').match(/^ */)[0].length
   const out = []
   let want = lines[idx]?.trim() ? indentOf(lines[idx]) : Infinity
@@ -215,10 +222,10 @@ export function enclosingScopes(lines, idx, max = 4) {
     const l = lines[i]
     if (!l.trim()) continue
     const ind = indentOf(l)
-    if (ind < want) { if (SYMBOL.test(l)) out.unshift({ line: i, text: l.trim() }); want = ind }
+    if (ind < want) { if (isSym(l)) out.unshift({ line: i, text: l.trim() }); want = ind }
   }
   // The line itself counts when it is a declaration.
-  if (lines[idx] && SYMBOL.test(lines[idx]) && out.length < max) out.push({ line: idx, text: lines[idx].trim() })
+  if (lines[idx] && isSym(lines[idx]) && out.length < max) out.push({ line: idx, text: lines[idx].trim() })
   return out
 }
 

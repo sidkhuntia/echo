@@ -9,20 +9,22 @@ export async function rebaseUI(onto) {
   let plan
   try { plan = await c.api('/api/rebase/plan?onto=' + encodeURIComponent(onto)) } catch (e) { return c.setStatus(e.message, 'err') }
   if (!plan.length) return c.setStatus('Nothing to rebase: no commits between there and HEAD', 'err')
-  const items = plan.map(p => ({ cmd: 'pick', hash: p.hash, short: p.short, subject: p.subject, message: p.subject }))
+  const items = plan.map(p => ({ cmd: 'pick', hash: p.hash, short: p.short, subject: p.subject, message: p.message || p.subject }))
   const body = document.createElement('div')
-  const draw = () => {
+  // Redrawing replaces the controls, so put focus back on the one the user was using.
+  const draw = (focus) => {
     body.innerHTML = `<p class="note">Oldest first. Move commits with the arrows; change what happens to each. The first commit cannot be squashed or fixed up.</p>`
       + items.map((it, i) => `<div class="rb-row${it.cmd === 'drop' ? ' dropped' : ''}" data-i="${i}">
-        <select class="field" data-cmd>${CMDS.map(([v, l]) => `<option value="${v}"${v === it.cmd ? ' selected' : ''}>${l}</option>`).join('')}</select>
+        <select class="field" data-cmd aria-label="Action for ${c.esc(it.short)}">${CMDS.map(([v, l]) => `<option value="${v}"${v === it.cmd ? ' selected' : ''}>${l}</option>`).join('')}</select>
         <span class="mono">${c.esc(it.short)}</span><span class="msg">${c.esc(it.subject)}</span>
-        <span><button class="btn quiet sm" data-mv="-1" title="Move up"${i === 0 ? ' disabled' : ''}>↑</button><button class="btn quiet sm" data-mv="1" title="Move down"${i === items.length - 1 ? ' disabled' : ''}>↓</button></span>
-        ${it.cmd === 'reword' ? `<input class="field rb-msg" data-msg value="${c.esc(it.message)}" aria-label="New message">` : ''}</div>`).join('')
+        <span><button class="btn quiet sm" data-mv="-1" title="Move up" aria-label="Move ${c.esc(it.short)} up"${i === 0 ? ' disabled' : ''}>↑</button><button class="btn quiet sm" data-mv="1" title="Move down" aria-label="Move ${c.esc(it.short)} down"${i === items.length - 1 ? ' disabled' : ''}>↓</button></span>
+        ${it.cmd === 'reword' ? `<textarea class="field rb-msg" data-msg rows="4" aria-label="New message for ${c.esc(it.short)}">${c.esc(it.message)}</textarea>` : ''}</div>`).join('')
+    if (focus) (body.querySelector(`.rb-row[data-i="${focus[0]}"] ${focus[1]}`) || body.querySelector(`.rb-row[data-i="${focus[0]}"] [data-mv]:not([disabled])`))?.focus()
   }
   draw()
   body.addEventListener('change', e => {
     const row = e.target.closest('.rb-row'), it = row && items[+row.dataset.i]
-    if (e.target.matches('[data-cmd]')) { it.cmd = e.target.value; draw() }
+    if (e.target.matches('[data-cmd]')) { it.cmd = e.target.value; draw([+row.dataset.i, '[data-cmd]']) }
   })
   body.addEventListener('input', e => { if (e.target.matches('[data-msg]')) items[+e.target.closest('.rb-row').dataset.i].message = e.target.value })
   body.addEventListener('click', e => {
@@ -31,7 +33,7 @@ export async function rebaseUI(onto) {
     const i = +b.closest('.rb-row').dataset.i, j = i + +b.dataset.mv
     if (j < 0 || j >= items.length) return
     ;[items[i], items[j]] = [items[j], items[i]]
-    draw()
+    draw([j, `[data-mv="${b.dataset.mv}"]:not([disabled])`])
   })
   openModal({
     title: 'Interactive rebase', kicker: `onto ${onto.slice(0, 12)}`, wide: true, body,
@@ -39,7 +41,9 @@ export async function rebaseUI(onto) {
       const first = items.find(x => x.cmd !== 'drop')
       if (first && (first.cmd === 'squash' || first.cmd === 'fixup')) { c.setStatus('The oldest remaining commit cannot be squashed or fixed up', 'err'); return false }
       if (items.some(x => x.cmd === 'reword' && !x.message.trim())) { c.setStatus('A reworded commit needs a message', 'err'); return false }
-      await c.gitAction({ action: 'rebase:interactive', from: onto, todo: items.map(x => ({ cmd: x.cmd, hash: x.hash, message: x.cmd === 'reword' ? x.message : '' })) })
+      // Stay open on failure so the reordered plan and typed messages survive a refused start.
+      const ok = await c.gitAction({ action: 'rebase:interactive', from: onto, todo: items.map(x => ({ cmd: x.cmd, hash: x.hash, message: x.cmd === 'reword' ? x.message : '' })) })
+      if (!ok) return false
     } }],
   })
 }

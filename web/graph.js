@@ -27,8 +27,11 @@ export function layoutGraph(commits) {
 export const graphWidth = rows => LANE * Math.min(16, Math.max(1, ...rows.map(r => Math.max(r.before.length, r.after.length, r.col + 1))))
 export const laneX = j => LANE / 2 + j * LANE
 
+// Lanes past the capped width share the last visible column so their dots and lines stay inside the viewBox.
+const laneIn = (j, w) => laneX(Math.min(j, Math.max(0, Math.round(w / LANE) - 1)))
+
 export function graphSVG(r, h, w) {
-  const m = h / 2, cx = laneX(r.col)
+  const laneX = j => laneIn(j, w), m = h / 2, cx = laneX(r.col)
   const seg = (d, color) => `<path d="${d}" class="g${color % HUES}"/>`
   const curve = (x1, y1, x2, y2) => `M${x1} ${y1}C${x1} ${(y1 + y2) / 2} ${x2} ${(y1 + y2) / 2} ${x2} ${y2}`
   let p = ''
@@ -44,7 +47,7 @@ export function graphSVG(r, h, w) {
 
 // railSVG carries the lanes below a row through a block of any height (the expanded History detail).
 export function railSVG(lanes, w) {
-  const p = lanes.map((l, j) => l ? `<path d="M${laneX(j)} 0V10" class="g${l.color % HUES}" vector-effect="non-scaling-stroke"/>` : '').join('')
+  const p = lanes.map((l, j) => l ? `<path d="M${laneIn(j, w)} 0V10" class="g${l.color % HUES}" vector-effect="non-scaling-stroke"/>` : '').join('')
   return `<svg class="graph rail" width="${w}" viewBox="0 0 ${w} 10" preserveAspectRatio="none" aria-hidden="true">${p}</svg>`
 }
 

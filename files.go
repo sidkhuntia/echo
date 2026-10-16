@@ -75,14 +75,25 @@ func (a *App) tree() []TreeNode {
 		}
 	}
 	var out []TreeNode
-	_ = filepath.WalkDir(a.root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || p == a.root {
+	// WalkDir does not follow a symlinked root, so it walks the real location.
+	walkRoot := a.root
+	if real, err := filepath.EvalSymlinks(a.root); err == nil {
+		walkRoot = real
+	}
+	_ = filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || p == walkRoot {
 			return nil
 		}
-		rel, _ := filepath.Rel(a.root, p)
+		rel, _ := filepath.Rel(walkRoot, p)
 		rel = filepath.ToSlash(rel)
-		if d.Name() == ".git" || d.Type()&fs.ModeSymlink != 0 && d.IsDir() {
-			return filepath.SkipDir
+		if d.Name() == ".git" {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil // a worktree's or submodule's .git file: skipping it must not skip its siblings
+		}
+		if d.Type()&fs.ModeSymlink != 0 && linksToDir(p) {
+			return nil
 		}
 		if d.IsDir() {
 			if a.skipRel != nil && a.skipRel(rel) {
@@ -102,6 +113,15 @@ func (a *App) tree() []TreeNode {
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// linksToDir reports whether p is a symlink that resolves to a directory: not a file to open.
+func linksToDir(p string) bool {
+	if fi, err := os.Lstat(p); err != nil || fi.Mode()&fs.ModeSymlink == 0 {
+		return false
+	}
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }
 
 func isEmptyDir(p string) (bool, error) {
@@ -137,7 +157,8 @@ func (a *App) gitTree() ([]TreeNode, error) {
 		}
 		seen[rel] = true
 		// Deleted tracked files and submodules are listed by Git but are not files to open.
-		if info, err := os.Lstat(filepath.Join(a.root, filepath.FromSlash(rel))); err != nil || info.IsDir() {
+		abs := filepath.Join(a.root, filepath.FromSlash(rel))
+		if info, err := os.Lstat(abs); err != nil || info.IsDir() || linksToDir(abs) {
 			continue
 		}
 		out = append(out, TreeNode{Name: path.Base(rel), Path: rel})
@@ -203,7 +224,7 @@ func (a *App) listDir(rel string) ([]TreeNode, error) {
 	}
 	out := []TreeNode{}
 	for _, e := range ents {
-		if e.Name() == ".git" || e.IsDir() && e.Type()&fs.ModeSymlink != 0 {
+		if e.Name() == ".git" || e.Type()&fs.ModeSymlink != 0 && linksToDir(filepath.Join(p, e.Name())) {
 			continue
 		}
 		if len(out) >= maxDirEntries {
@@ -253,11 +274,14 @@ func (a *App) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sig, _ := readSig(bytes.NewReader(data))
+	// Text that is not UTF-8 (Latin-1, CP1252) cannot round-trip through the editor: a save would
+	// rewrite every invalid byte, so it is treated like binary and never loaded.
+	binary := sig.binary || !utf8.Valid(data)
 	content := string(data)
-	if sig.binary {
+	if binary {
 		content = ""
 	}
-	writeJSON(w, map[string]any{"path": filepath.ToSlash(rel), "content": content, "hash": sig.hash, "binary": sig.binary})
+	writeJSON(w, map[string]any{"path": filepath.ToSlash(rel), "content": content, "hash": sig.hash, "binary": binary})
 }
 
 // handleRaw serves a file's bytes, for images in rendered Markdown. The sandbox policy keeps an
@@ -351,6 +375,10 @@ func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// Write through a symlink, not over it: a rename onto the link would replace it with a file.
+		if real, e := filepath.EvalSymlinks(path); e == nil {
+			path = real
+		}
 		// One save at a time per process, so the check below and the write are not split by another save.
 		a.writeMu.Lock()
 		defer a.writeMu.Unlock()
@@ -436,9 +464,12 @@ func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// A rename or copy never replaces what is already at the destination.
-		if _, err := os.Lstat(newPath); err == nil {
-			http.Error(w, "something already exists at "+req.NewPath, http.StatusConflict)
-			return
+		// Renaming only the case of a name is allowed: on a case-insensitive volume the destination is the source.
+		if dst, err := os.Lstat(newPath); err == nil {
+			if src, serr := os.Lstat(path); req.Action != "rename" || serr != nil || !os.SameFile(src, dst) {
+				http.Error(w, "something already exists at "+req.NewPath, http.StatusConflict)
+				return
+			}
 		}
 		if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -470,6 +501,9 @@ func (a *App) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 // writeFileAtomic replaces a file in one rename, so an agent or a crash never sees a half-written
 // file. The existing file's permission bits are kept.
 func writeFileAtomic(path string, data []byte) error {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real // write through a symlink instead of replacing the link
+	}
 	mode := os.FileMode(0o644)
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
@@ -751,6 +785,9 @@ func (a *App) withinRoot(p string) error {
 			r, err := filepath.Rel(root, real)
 			if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 				return errors.New("path escapes workspace through a symlink")
+			}
+			if inGitDir(r) {
+				return errors.New("the .git directory cannot be reached through a symlink")
 			}
 			return nil
 		}

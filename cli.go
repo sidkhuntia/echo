@@ -191,6 +191,13 @@ func resolveTarget(arg string, list []Instance) (Instance, error) {
 			return in, nil
 		}
 	}
+	for _, in := range list { // a repository served by a workspace
+		for _, r := range in.Repos {
+			if r == root {
+				return in, nil
+			}
+		}
+	}
 	return Instance{}, fmt.Errorf("no echo is running for %s (see: echo-desk ls)", root)
 }
 
@@ -227,12 +234,17 @@ func stopCmd(args []string) error {
 			fmt.Println("no echo servers are running")
 			return nil
 		}
+		failed := 0
 		for _, in := range list {
 			if stopInstance(in.Port) {
 				fmt.Printf("stopped %s (port %d)\n", in.Root, in.Port)
 			} else {
 				fmt.Printf("could not stop port %d\n", in.Port)
+				failed++
 			}
+		}
+		if failed > 0 {
+			return fmt.Errorf("could not stop %d of %d server(s)", failed, len(list))
 		}
 		return nil
 	}
@@ -300,11 +312,11 @@ func latestRelease() (string, error) {
 
 // spin shows a downloading animation on stderr while a silent network step runs, so
 // `echo-desk update` no longer sits quiet for seconds. It returns a stop function that
-// finishes the line. Off a terminal it just prints the message once.
-func spin(msg string) func() {
+// finishes the line with "done" or "failed". Off a terminal it just prints the message once.
+func spin(msg string) func(ok bool) {
 	if f, err := os.Stderr.Stat(); err != nil || f.Mode()&os.ModeCharDevice == 0 {
 		fmt.Fprintln(os.Stderr, msg+"…")
-		return func() {}
+		return func(bool) {}
 	}
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	done := make(chan struct{})
@@ -322,9 +334,13 @@ func spin(msg string) func() {
 			}
 		}
 	}()
-	return func() {
+	return func(ok bool) {
 		close(done)
-		fmt.Fprintf(os.Stderr, "\r%s done\n", msg)
+		res := "done"
+		if !ok {
+			res = "failed"
+		}
+		fmt.Fprintf(os.Stderr, "\r%s %s\n", msg, res)
 	}
 }
 
@@ -333,7 +349,7 @@ func spin(msg string) func() {
 func updateCmd() error {
 	stop := spin("Checking for the latest release")
 	latest, err := latestRelease()
-	stop()
+	stop(err == nil)
 	if err != nil {
 		return err
 	}
@@ -351,22 +367,18 @@ func updateCmd() error {
 		exe = real
 	}
 	var cmd *exec.Cmd
-	var stopSpin func()
 	if strings.Contains(exe, "/Cellar/") {
 		// brew prints its own progress; a spinner would garble it.
 		fmt.Println("upgrading via Homebrew…")
 		cmd = exec.Command("brew", "upgrade", "sidkhuntia/tap/echo-desk")
 	} else {
-		cmd = exec.Command("sh", "-c", "curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/sidkhuntia/echo/main/install.sh | sh")
+		// Download to a file first: in a pipe, a failed curl would hand sh an empty script that exits 0.
+		// The script prints its own progress, so no spinner here.
+		cmd = exec.Command("sh", "-c", `t=$(mktemp) || exit 1; curl -fsSL --proto '=https' --tlsv1.2 -o "$t" https://raw.githubusercontent.com/sidkhuntia/echo/main/install.sh && sh "$t"; rc=$?; rm -f "$t"; exit $rc`)
 		cmd.Env = append(os.Environ(), "INSTALL_DIR="+filepath.Dir(exe), "VERSION="+latest)
-		// The install script's curls are silent, so this is the quiet stretch.
-		stopSpin = spin(fmt.Sprintf("Downloading echo %s", latest))
 	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	err = cmd.Run()
-	if stopSpin != nil {
-		stopSpin()
-	}
 	if err != nil {
 		return fmt.Errorf("update failed: %w", err)
 	}

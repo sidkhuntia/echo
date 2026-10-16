@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -336,7 +337,13 @@ func (a *App) handleGit(w http.ResponseWriter, r *http.Request) {
 		out, err = a.gitCombined(args...)
 	}
 	if err != nil {
-		http.Error(w, strings.TrimSpace(out+"\n"+err.Error()), http.StatusBadGateway)
+		// Git's own lines say why; "exit status 1" is only noise after them.
+		msg := strings.TrimSpace(out)
+		var ee *exec.ExitError
+		if msg == "" || !errors.As(err, &ee) {
+			msg = strings.TrimSpace(out + "\n" + err.Error())
+		}
+		http.Error(w, msg, http.StatusBadGateway)
 		return
 	}
 	resp := map[string]any{"ok": true, "output": out}
@@ -449,7 +456,7 @@ func (a *App) gitArgs(req gitRequest) ([]string, error) {
 		case "branch:detach":
 			return []string{"switch", "--detach", req.From}, nil
 		case "branch:delete":
-			// -d, not -D: Git refuses to delete a branch whose commits are not merged anywhere.
+			// -d, not -D: Git refuses unless the branch is merged into HEAD or its upstream.
 			return []string{"branch", "-d", req.From}, nil
 		}
 		if req.Action == "merge" {
@@ -508,7 +515,7 @@ func (a *App) forcePush(ctx context.Context, lease bool) (string, error) {
 	if lease {
 		flag = "--force-with-lease"
 	}
-	return a.gitNet(ctx, "push", flag, f[0], "HEAD:"+f[1])
+	return a.gitNet(ctx, "push", flag, f[0], "refs/heads/"+branch+":"+f[1])
 }
 
 // network runs the actions that talk to a remote. Pull respects the user's pull.rebase/pull.ff
@@ -736,7 +743,8 @@ func (a *App) handleDiff(w http.ResponseWriter, r *http.Request) {
 	if n, err := strconv.Atoi(q.Get("context")); err == nil && n >= 0 && n <= 100000 {
 		context = "--unified=" + strconv.Itoa(n)
 	}
-	flags := []string{"--no-ext-diff", "--no-color", renames, context}
+	// Explicit prefixes: diff.mnemonicPrefix or diff.noprefix in the user's config would break the parser.
+	flags := []string{"--no-ext-diff", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", renames, context}
 	if q.Get("ignoreWhitespace") == "1" {
 		flags = append(flags, "--ignore-all-space")
 	}
@@ -784,6 +792,14 @@ func (a *App) handleDiff(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tail = append(tail, only)
+		// A rename only pairs up when both names are in the pathspec; without the old one the file reads as all added.
+		if old := q.Get("oldPath"); old != "" && old != only {
+			if _, err := a.safePath(old); err != nil {
+				badRequest(w, err)
+				return
+			}
+			tail = append(tail, old)
+		}
 	}
 	out, err := a.git(append(funcnameArgs(), append(args, tail...)...)...)
 	if err != nil {
@@ -827,14 +843,23 @@ func (a *App) handleLog(w http.ResponseWriter, r *http.Request) {
 	text := strings.TrimSpace(q.Get("q"))
 	author := strings.TrimSpace(q.Get("author"))
 	hash := ""
-	if isHex(text) {
+	// Short hex words like "dead" or "face" are searches; only an abbreviation of 7+ is a jump.
+	if len(text) >= 7 && isHex(text) {
 		hash, _ = a.resolveCommit(text)
 	}
 	if hash != "" {
-		// A hash is a jump, not a search: show exactly that commit.
-		revs, skip, limit = []string{hash}, 0, 0
-		args = append(args, "--no-walk")
-	} else if text != "" {
+		// A hash is a jump, not a search: show exactly that commit, whatever the other filters say.
+		out, err := a.git("log", "--no-walk", logFormat, hash, "--")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		commits := parseCommits(out)
+		a.markUnpushed(commits)
+		writeJSON(w, map[string]any{"commits": commits, "more": false})
+		return
+	}
+	if text != "" {
 		args = append(args, "--grep="+text)
 	}
 	if author != "" {
@@ -850,7 +875,15 @@ func (a *App) handleLog(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "invalid "+f[0]+" date", http.StatusBadRequest)
 				return
 			}
-			args = append(args, "--"+f[0]+"="+f[1])
+			day := f[1]
+			if bareDate.MatchString(day) { // git would fill in the current time of day
+				if f[0] == "since" {
+					day += " 00:00:00"
+				} else {
+					day += " 23:59:59"
+				}
+			}
+			args = append(args, "--"+f[0]+"="+day)
 		}
 	}
 	switch q.Get("merges") {
@@ -928,7 +961,10 @@ func (a *App) handleBlame(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	cmd := a.gitCmd("blame", "--porcelain", "--contents", "-", "--", req.Path)
+	// A dropped connection or a stuck blame must not leave git running behind the page.
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	cmd := a.gitCmdContext(ctx, "blame", "--porcelain", "--contents", "-", "--", req.Path)
 	cmd.Stdin = strings.NewReader(req.Content)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -1151,7 +1187,7 @@ func (a *App) untrackedDiff(only string) string {
 			continue
 		}
 		// --no-index exits 1 when the files differ, so the error is expected; stdout is the diff.
-		d, _ := a.git(append(funcnameArgs(), "diff", "--no-index", "--no-color", "--no-ext-diff", "--", "/dev/null", rel)...)
+		d, _ := a.git(append(funcnameArgs(), "diff", "--no-index", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "--", "/dev/null", rel)...)
 		b.WriteString(d)
 	}
 	return b.String()
@@ -1167,7 +1203,9 @@ func (a *App) gitCmdContext(ctx context.Context, args ...string) *exec.Cmd {
 	cmd.Dir = a.root
 	// Paths from the page are file names, never patterns: without this a file called [id].tsx also
 	// matches i.tsx and d.tsx, and a discard of one would revert all three.
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_LITERAL_PATHSPECS=1")
+	// GIT_EDITOR beats core.editor, so an exported one would open an editor behind the page on a
+	// merge, rebase or cherry-pick continue.
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_LITERAL_PATHSPECS=1", "GIT_EDITOR=true")
 	return cmd
 }
 
@@ -1201,6 +1239,8 @@ func (a *App) gitNet(ctx context.Context, args ...string) (string, error) {
 			cmd.Env = append(cmd.Env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
 		}
 	}
+	// Killing git on timeout is not enough if ssh or a credential helper still holds the output pipe.
+	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		err = fmt.Errorf("git %s timed out after %s", args[0], netTimeout)
@@ -1272,6 +1312,14 @@ func (a *App) computeRefs() refsPart {
 	}
 	if out, err := a.git("remote"); err == nil {
 		p.remotes = parseLines(out)
+		// A remote's HEAD alias shortens to the bare remote name ("origin"); it is not a branch.
+		kept := p.branches[:0]
+		for _, b := range p.branches {
+			if !slices.Contains(p.remotes, b) {
+				kept = append(kept, b)
+			}
+		}
+		p.branches = kept
 	}
 	p.lastDiscard = a.lastDiscard()
 	if out, err := a.git("for-each-ref", "--format=%(refname)", "refs/remotes", "refs/tags"); err == nil {

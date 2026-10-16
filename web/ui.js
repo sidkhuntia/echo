@@ -6,6 +6,8 @@ import { nextInDialog } from './focus.js'
 let current = null
 // The control that had focus before the modal opened; closing gives focus back to it.
 let returnFocus = null
+// The control that had focus before the context menu opened.
+let menuOpener = null
 const FOCUSABLE = 'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'
 
 // openModal shows a card with a body and action buttons. `body` is an element or trusted HTML.
@@ -27,16 +29,25 @@ export function openModal({ title, kicker = '', body = '', wide = false, actions
     const b = document.createElement('button')
     b.className = 'btn' + (a.primary ? ' primary' : '') + (a.danger ? ' danger' : '')
     b.textContent = a.label
-    b.onclick = async () => { if ((await a.run?.(m)) !== false) closeModal() }
+    b.onclick = async () => {
+      if (b.disabled) return
+      b.disabled = true
+      let keep = false
+      try { keep = (await a.run?.(m)) === false } catch (e) { keep = true; ctx.setStatus?.(String(e?.message || e), 'err') }
+      if (b.isConnected) b.disabled = false
+      // Only close our own modal: an action may have opened another one.
+      if (!keep && current === m) closeModal()
+    }
     acts.append(b)
     m.buttons[a.label] = b
   }
   if (!actions.length) acts.hidden = true
   root.hidden = false
-  root.onmousedown = e => { if (e.target === root) closeModal() }
+  // A stray click on the backdrop must not throw away typed text (Esc and Cancel still close).
+  root.onmousedown = e => { if (e.target === root && ![...bodyEl.querySelectorAll('textarea')].some(t => t.value.trim())) closeModal() }
   root.querySelector('[data-xclose]').onclick = closeModal
   current = m
-  const first = bodyEl.querySelector('input, textarea, select') || acts.querySelector('.primary')
+  const first = bodyEl.querySelector('input, textarea, select') || acts.querySelector('.primary') || acts.querySelector('button') || root.querySelector('[data-xclose]')
   first?.focus()
   return m
 }
@@ -64,6 +75,7 @@ document.addEventListener('keydown', e => {
 // popMenu shows a context menu at a point. items: { label, run, danger?, kbd?, sep? }.
 export function popMenu(items, x, y, head = '') {
   const m = ctx.$('#xmenu')
+  if (!m.contains(document.activeElement)) menuOpener = document.activeElement
   m.innerHTML = (head ? `<div class="menu-head"><span>${ctx.esc(head)}</span></div>` : '') + items.map((it, i) => it.sep ? '<div class="menu-sep"></div>' : `<button class="menu-item${it.danger ? ' danger' : ''}" data-i="${i}" role="menuitem"${it.disabled ? ' disabled' : ''}>${ctx.esc(it.label)}${it.kbd ? `<kbd>${ctx.esc(it.kbd)}</kbd>` : ''}</button>`).join('')
   m.hidden = false
   m.style.left = Math.max(8, Math.min(x, innerWidth - m.offsetWidth - 8)) + 'px'
@@ -72,6 +84,8 @@ export function popMenu(items, x, y, head = '') {
     const b = e.target.closest('.menu-item')
     if (!b || b.disabled) return
     m.hidden = true
+    // Hand focus back first, so a modal the action opens remembers the real opener, not <body>.
+    if (menuOpener?.isConnected) menuOpener.focus({ preventScroll: true })
     // After this click has finished bubbling: a popover the action opens would otherwise be closed by the same click.
     const run = items[+b.dataset.i].run
     setTimeout(() => run?.(), 0)
@@ -81,5 +95,16 @@ export function popMenu(items, x, y, head = '') {
 
 export const closeMenu = () => { ctx.$('#xmenu').hidden = true }
 document.addEventListener('mousedown', e => { const m = ctx.$('#xmenu'); if (m && !m.hidden && !e.target.closest('#xmenu')) m.hidden = true })
-document.addEventListener('keydown', e => { const m = ctx.$('#xmenu'); if (m && !m.hidden && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); m.hidden = true } }, true)
+document.addEventListener('keydown', e => {
+  const m = ctx.$('#xmenu')
+  if (!m || m.hidden) return
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); m.hidden = true; menuOpener?.isConnected && menuOpener.focus({ preventScroll: true }) }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault()
+    const items = [...m.querySelectorAll('.menu-item:not(:disabled)')]
+    if (!items.length) return
+    const i = items.indexOf(document.activeElement), d = e.key === 'ArrowDown' ? 1 : -1
+    items[i < 0 ? (d > 0 ? 0 : items.length - 1) : (i + d + items.length) % items.length].focus()
+  } else if (e.key === 'Tab') { m.hidden = true; menuOpener?.isConnected && menuOpener.focus({ preventScroll: true }) }
+}, true)
 window.addEventListener('blur', closeMenu)

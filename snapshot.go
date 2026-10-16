@@ -62,8 +62,20 @@ func (a *App) snapshotPaths(paths []string) (string, error) {
 			return "", err
 		}
 	}
-	if _, err := a.gitEnv(env, append([]string{"add", "-f", "-A", "--"}, paths...)...); err != nil {
-		return "", err
+	// A path that is on neither the disk nor in HEAD (a staged new file deleted again, or a file a commit
+	// restore is about to bring back) has nothing to record, and git add would refuse it.
+	var add []string
+	for _, p := range paths {
+		if _, err := os.Lstat(filepath.Join(a.root, filepath.FromSlash(p))); err == nil {
+			add = append(add, p)
+		} else if out, err := a.gitEnv(env, "ls-files", "--", p); err == nil && strings.TrimSpace(out) != "" {
+			add = append(add, p)
+		}
+	}
+	if len(add) > 0 {
+		if _, err := a.gitEnv(env, append([]string{"add", "-f", "-A", "--"}, add...)...); err != nil {
+			return "", err
+		}
 	}
 	tree, err := a.gitEnv(env, "write-tree")
 	if err != nil {
@@ -117,7 +129,14 @@ func (a *App) snapshotPathList(ref string) []string {
 	if err != nil {
 		return nil
 	}
-	return parseLines(strings.TrimSpace(out))
+	// Names are kept verbatim: a path may legally start or end with a space, so parseLines would mangle it.
+	var paths []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSuffix(line, "\r"); line != "" {
+			paths = append(paths, line)
+		}
+	}
+	return paths
 }
 
 // restoreDiscard puts back the files of the newest snapshot, then drops that snapshot.
@@ -139,6 +158,8 @@ func (a *App) restoreDiscard() (string, error) {
 			return out, err
 		}
 	}
-	_, _ = a.git("update-ref", "-d", ref)
+	if _, err := a.git("update-ref", "-d", ref); err != nil {
+		return "", fmt.Errorf("restored %d file(s) but could not drop the snapshot: %w", len(present), err)
+	}
 	return fmt.Sprintf("Restored %d file(s)", len(present)), nil
 }

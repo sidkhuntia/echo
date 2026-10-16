@@ -25,6 +25,7 @@ export function reviewPrompt({ repo = '', branch = '', notes }) {
   lines.push('')
   lines.push('How to work:')
   lines.push('- Go through the comments in the order listed. Each one gives a file and a line (or a run of lines) in the CURRENT working tree, and quotes the code I was looking at. If the file has changed since, find the quoted code rather than trusting the number. A comment on a whole file is a to-do about that file.')
+  if (sorted.some(n => n.side === 'old')) lines.push('- A comment marked (removed line) points at code I deleted. Its number is a line of the ORIGINAL file and the quote is no longer in the working tree, so do not search for it or edit that line number. From the comment, decide whether the deletion should be undone (re-add the code where it belongs) or is fine, and ask if unclear.')
   lines.push('- Change only what a comment asks for. Do not refactor, reformat or touch unrelated code.')
   lines.push('- If a comment is a question, answer it in your reply and change code only if the answer requires it.')
   lines.push('- If you disagree with a comment, or it is ambiguous, say so and ask instead of guessing.')

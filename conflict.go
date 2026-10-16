@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -176,17 +175,17 @@ func (a *App) resolveSide(side string, paths []string) (string, error) {
 	}
 	stages := a.unmergedStages(paths)
 	var checkout, keep, drop []string
+	var skipped strings.Builder
 	for _, p := range paths {
 		var nums []int
 		for _, s := range stages[p] {
 			nums = append(nums, s.Stage)
 		}
-		// No unmerged stages: the file may already carry markers from an
-		// earlier merge tool, or the status raced. Fall through to checkout,
-		// which reports what git itself thinks.
+		// No unmerged stages: already resolved elsewhere, or the status raced.
+		// checkout would fail on it and abort the rest of the batch, so skip it.
 		kind := conflictKind(nums)
 		if len(nums) == 0 {
-			checkout = append(checkout, p)
+			skipped.WriteString(p + ": already resolved, skipped\n")
 			continue
 		}
 		switch kind {
@@ -209,6 +208,7 @@ func (a *App) resolveSide(side string, paths []string) (string, error) {
 		}
 	}
 	var out strings.Builder
+	out.WriteString(skipped.String())
 	flag := "--ours"
 	if side == "theirs" {
 		flag = "--theirs"
@@ -227,17 +227,15 @@ func (a *App) resolveSide(side string, paths []string) (string, error) {
 		}
 	}
 	if len(keep) > 0 {
-		// The wanted version is already in the working tree; staging marks it resolved.
-		if _, err := os.Stat(filepath.Join(a.root, filepath.FromSlash(keep[0]))); len(keep) == 1 && err != nil && os.IsNotExist(err) {
-			// The file is gone from disk (deleted outside echo after the merge).
-			// Staging the deletion is what "keep the deletion" means.
-			if o, err := a.gitCombinedPaths(keep, "rm", "--"); err != nil {
-				out.WriteString(o)
-				return out.String(), err
-			} else {
-				out.WriteString(o)
-			}
-		} else if o, err := a.gitCombinedPaths(keep, "add", "--"); err != nil {
+		// The kept side's stage always exists; checking it out restores the file
+		// even if it was deleted from disk after the merge, then add marks it resolved.
+		if o, err := a.gitCombinedPaths(keep, "checkout", flag, "--"); err != nil {
+			out.WriteString(o)
+			return out.String(), err
+		} else {
+			out.WriteString(o)
+		}
+		if o, err := a.gitCombinedPaths(keep, "add", "--"); err != nil {
 			out.WriteString(o)
 			return out.String(), err
 		} else {

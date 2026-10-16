@@ -20,10 +20,17 @@ export function parseDiff(text) {
       files.push(f); h = null
       continue
     }
-    if (!f) continue
+    // A conflicted file in a plain `git diff` is a combined diff: list the file, but its @@@ hunks are not parsed.
+    if (line.startsWith('diff --cc ') || line.startsWith('diff --combined ')) {
+      finish()
+      f = { path: unquote(line.slice(line.indexOf(' ', 7) + 1)), hunks: [], added: 0, deleted: 0, lines: 0, isNew: false, isDeleted: false, binary: false, note: '', combined: true }
+      files.push(f); h = null
+      continue
+    }
+    if (!f || f.combined) continue
     if (line.startsWith('@@')) {
       const m = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/)
-      if (!m) continue
+      if (!m) { h = null; continue }
       o = +m[1]; n = +m[2]
       h = { range: line.slice(0, line.indexOf('@@', 2) + 2), context: m[3], lines: [], oStart: o, nStart: n, add: 0, del: 0 }
       f.hunks.push(h)

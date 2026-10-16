@@ -6,8 +6,10 @@ import { splitLines, lineDiff } from './linediff.js'
 import { ctx } from './ctx.js'
 import * as R from './review.js'
 import * as Ops from './ops.js'
+import { findConflicts, findIncomplete, conflictLines } from './conflicts.js'
 import * as G from './gitui.js'
 import { popMenu } from './ui.js'
+import { nextInDialog } from './focus.js'
 import { hunkAfterAction } from './hunkfocus.js'
 import { rebaseUI } from './rebase.js'
 import { compareUI } from './compare.js'
@@ -22,6 +24,7 @@ import { wordRanges, pairRuns, injectMarks } from './wordiff.js'
 import { layoutGraph, graphWidth, graphSVG, railSVG, LOG_H, HIST_H } from './graph.js'
 import { BASE, WS_ID, withBase, storeKey } from './base.js'
 import * as TD from './tabdrag.js'
+import * as MC from './multicursor.js'
 
 const $ = s => document.querySelector(s)
 const state = {
@@ -118,6 +121,8 @@ function ask({ title, kicker = '', html = '', tone = '', ok = 'OK', input = null
   $('#dialog-ok').textContent = ok
   $('#dialog-field').hidden = !input
   if (input) { $('#dialog-label').textContent = input.label; field.value = input.value || ''; field.placeholder = input.placeholder || '' }
+  // Cancel holds focus on cautious dialogs, so Enter presses it rather than confirming.
+  $('.dialog-keys').innerHTML = tone && !input ? '<kbd>esc</kbd> cancel <kbd>↵</kbd> pick' : '<kbd>esc</kbd> cancel <kbd>↵</kbd> confirm'
   el.hidden = false
   return new Promise(resolve => {
     const done = v => {
@@ -146,9 +151,9 @@ $('#dialog').addEventListener('mousedown', e => { if (e.target === $('#dialog'))
 
 // ---------- change codes ----------
 function codeLetter(c) {
+  if (conflicted(c)) return 'U'
   if (c.code === '??') return 'A'
-  const y = c.code[1] !== ' ' ? c.code[1] : c.code[0]
-  return y === 'U' ? 'U' : y
+  return c.code[1] !== ' ' ? c.code[1] : c.code[0]
 }
 const codeWord = { M: 'modified', A: 'new', D: 'deleted', R: 'renamed', C: 'copied', U: 'conflict', T: 'type' }
 const badge = (letter, word = codeWord[letter]) => `<span class="st ${letter}" title="${word || letter}">${letter}</span>`
@@ -168,6 +173,8 @@ function applyStatus(s) {
   if (first && !s.git) setRail('files')
   state.treeStale = true
   document.body.classList.toggle('no-git-repo', !s.git)
+  $('#insp').inert = !s.git
+  $('#git-rail').inert = !s.git
   $('#commit-dock').hidden = state.rail !== 'changes' || !s.git
   renderGit(); renderQueue()
   if (state.rail === 'files') ensureTree().then(renderTree)
@@ -220,7 +227,7 @@ async function ensureTree() {
 function setRail(rail) {
   if (rail === 'logside') rail = 'changes'
   state.rail = rail
-  document.querySelectorAll('.rail-switch button').forEach(b => b.classList.toggle('on', b.dataset.rail === rail))
+  document.querySelectorAll('.rail-switch button').forEach(b => { b.classList.toggle('on', b.dataset.rail === rail); b.setAttribute('aria-selected', String(b.dataset.rail === rail)) })
   $('#tree-panel').classList.toggle('rail-files', rail === 'files')
   $('#queue').hidden = rail !== 'changes'
   $('#files-pane').hidden = rail !== 'files'
@@ -268,7 +275,7 @@ async function runSearch() {
 // searchRegex rebuilds the query in JavaScript to mark matches; git grep reports only where a line matched.
 function searchRegex({ q, case: exact, word, regex }) {
   let src = regex ? q : q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  if (word) src = `\\b(?:${src})\\b`
+  if (word) src = `(?<![A-Za-z0-9_])(?:${src})(?![A-Za-z0-9_])`
   try { return new RegExp(src, exact ? 'g' : 'gi') } catch { return null }
 }
 
@@ -285,8 +292,8 @@ function markMatches(text, re) {
 
 function renderSearch() {
   const s = state.search, box = $('#search-results'), meta = $('#search-meta')
-  if (s.err) { meta.textContent = ''; box.innerHTML = `<div class="empty"><b>Search failed</b>${esc(s.err)}</div>`; return }
   $('#replace-files').disabled = !s.res?.matches.length
+  if (s.err) { meta.textContent = ''; box.innerHTML = `<div class="empty"><b>Search failed</b>${esc(s.err)}</div>`; return }
   if (!s.res) { meta.textContent = ''; box.innerHTML = ''; return }
   const files = new Map()
   for (const m of s.res.matches) files.has(m.path) ? files.get(m.path).push(m) : files.set(m.path, [m])
@@ -363,13 +370,17 @@ function renderQueue() {
     q.innerHTML = `<div class="empty"><b>Not a Git repository</b>Browsing and editing still work; Git actions are off.</div>`
     return
   }
+  if (!all.length && state.status?.error) {
+    q.innerHTML = `<div class="empty"><b>Can’t read changes</b>${esc(state.status.error)}</div>`
+    return
+  }
   if (!all.length) {
     q.innerHTML = `<div class="empty"><b>No changes</b>The working tree matches HEAD.</div>`
     return
   }
   const filter = $('#file-filter').value.toLowerCase()
   const list = all.filter(c => !filter || c.path.toLowerCase().includes(filter))
-  const shown = new Set(GROUPS.flatMap(g => list.filter(g.has).map(c => qkey(g.sec, c.path))))
+  const shown = new Set(GROUPS.filter(g => !state.qClosed.has(g.sec)).flatMap(g => list.filter(g.has).map(c => qkey(g.sec, c.path))))
   for (const k of state.qsel) if (!shown.has(k)) state.qsel.delete(k)
   const size = st => st && !st.binary ? st.added + st.deleted : 0
   const most = Math.max(1, ...list.flatMap(c => [size(c.index), size(c.work)]))
@@ -418,7 +429,7 @@ function pickBar() {
 
 // Returns true when the click only changed the selection, so the caller skips opening the diff.
 function pick(e, sec, path) {
-  const k = qkey(sec, path), rows = [...document.querySelectorAll(`.qrow[data-sec="${sec}"]`)].map(r => r.dataset.path)
+  const had = state.qsel.size, k = qkey(sec, path), rows =[...document.querySelectorAll(`.qrow[data-sec="${sec}"]`)].map(r => r.dataset.path)
   if (e.shiftKey && state.qanchor && state.qanchor.startsWith(sec + '\t') && rows.includes(state.qanchor.slice(sec.length + 1))) {
     const a = rows.indexOf(state.qanchor.slice(sec.length + 1)), b = rows.indexOf(path)
     state.qsel = new Set(rows.slice(Math.min(a, b), Math.max(a, b) + 1).map(p => qkey(sec, p)))
@@ -426,7 +437,7 @@ function pick(e, sec, path) {
     if (pickedSec() !== sec) state.qsel.clear()
     state.qsel.has(k) ? state.qsel.delete(k) : state.qsel.add(k)
     state.qanchor = k
-  } else { state.qsel = new Set([k]); state.qanchor = k; return false }
+  } else { state.qsel = new Set([k]); state.qanchor = k; if (had) renderQueue(); return false }
   renderQueue()
   return true
 }
@@ -507,7 +518,7 @@ const treePaths = () => {
 // A folder opens by default when it holds a change or the open file; a choice the user made wins.
 const dirIsOpen = (d, filter, open) => filter ? true : state.dirOpen.has(d.path) ? state.dirOpen.get(d.path) : d.changed > 0 || (open || '').startsWith(d.path + '/')
 const allDirs = (node, out = []) => {
-  for (const [, d] of node.dirs) if (!d.ignored) { out.push(d); allDirs(d, out) }
+  for (const [, d] of node.dirs) if (!d.ignored || state.dirOpen.get(d.path) === true) { out.push(d); allDirs(d, out) }
   return out
 }
 
@@ -550,6 +561,8 @@ function paintTreeWindow(force = false) {
   const box = $('#tree'), total = treeRows.length
   if (!total) { box.innerHTML = '<div class="empty">No path matches.</div>'; return }
   if (total < TREE_WINDOW_MIN) { if (force) box.innerHTML = treeRows.join(''); return }
+  const maxTop = Math.max(0, total * TREE_ROW - (box.clientHeight || 600))
+  if (box.scrollTop > maxTop) box.scrollTop = maxTop // a shorter list (filter, collapse) must not leave the window past its end
   const first = Math.max(0, Math.floor(box.scrollTop / TREE_ROW) - 20)
   const last = Math.min(total, Math.ceil((box.scrollTop + (box.clientHeight || 600)) / TREE_ROW) + 20)
   if (!force && box.dataset.first === String(first) && box.dataset.last === String(last)) return
@@ -559,13 +572,18 @@ function paintTreeWindow(force = false) {
 let treeFrame
 $('#tree').addEventListener('scroll', () => { cancelAnimationFrame(treeFrame); treeFrame = requestAnimationFrame(() => paintTreeWindow()) })
 
+const loadingDirs = new Set()
 async function toggleDir(path) {
+  if ($('#file-filter').value) return // a filter draws every folder open, so a click would only change what shows after it clears
+  if (loadingDirs.has(path)) { loadingDirs.delete(path); state.dirOpen.set(path, false); renderTree(); return } // a second click cancels the load
   const row = $(`#tree .tnode.dir[data-dir="${CSS.escape(path)}"]`)
   const open = row?.querySelector('.tw').textContent !== '▾'
   state.dirOpen.set(path, open)
   // An ignored folder is listed only when opened, so a huge node_modules costs nothing until asked for.
   if (open && row.classList.contains('ignored') && !state.ignKids.has(path)) {
-    try { state.ignKids.set(path, await api('/api/tree?dir=' + encodeURIComponent(path))) } catch (e) { setStatus(e.message, 'err') }
+    loadingDirs.add(path)
+    try { state.ignKids.set(path, await api('/api/tree?dir=' + encodeURIComponent(path))) } catch (e) { state.dirOpen.set(path, false); setStatus(e.message, 'err') }
+    if (!loadingDirs.delete(path)) return // cancelled meanwhile: already drawn closed
   }
   renderTree()
 }
@@ -605,6 +623,24 @@ function guessStaged(paths, to) {
   state.diffFiles.forEach((f, i) => { if (paths.includes(f.path)) rerenderFile(i) })
 }
 const stage = paths => { if (!paths.length) return; guessStaged(paths, 'staged'); return gitAction({ action: 'add', paths }) }
+// Staging a merge file marks it resolved, so files that still hold conflict markers ask first (as the editor's Mark resolved does).
+async function stageMerge(paths) {
+  const left = []
+  for (const p of paths) {
+    try {
+      const tab = state.tabs.find(t => t.path === p)
+      const text = tab ? tab.content : (await fetchFile(p)).content || ''
+      if (findConflicts(text).length || findIncomplete(text) >= 0) left.push(p)
+    } catch { /* unreadable (deleted by one side): nothing to check */ }
+  }
+  if (left.length) {
+    const ok = await ask({ title: 'Stage with markers left', kicker: 'marks stay', tone: 'warn', ok: 'Stage anyway',
+      html: `<p>${left.length === 1 ? `<b>${esc(left[0])}</b> still holds` : `${plural(left.length, 'file')} still hold`} conflict markers. Staging marks ${left.length === 1 ? 'it' : 'them'} resolved, and the markers will be committed as text.</p>` })
+    if (!ok) return
+  }
+  return stage(paths)
+}
+const stageIn = (sec, paths) => sec === 'merge' ? stageMerge(paths) : stage(paths)
 const unstage = paths => { if (!paths.length) return; guessStaged(paths, 'work'); return gitAction({ action: 'unstage', paths }) }
 // Taking a whole file's side throws away the other side, so it asks first.
 // The server snapshots before resolving, and delete conflicts resolve to
@@ -627,11 +663,11 @@ function advanceFrom(i) {
 async function discard(paths, worktree) {
   if (!paths.length) return
   const rows = paths.map(p => state.changes.get(p)).filter(Boolean)
-  const fresh = rows.filter(c => c.code === '??').length
+  const fresh = rows.filter(c => c.code === '??' || !worktree && c.code[0] === 'A').length
   const ok = await ask({
     title: paths.length === 1 ? `Discard changes to ${basename(paths[0])}` : `Discard changes to ${plural(paths.length, 'file')}`,
     kicker: 'no undo', tone: 'danger', ok: 'Discard',
-    html: `<p class="say">${worktree ? 'Unstaged changes go back to the index.' : 'Staged and unstaged changes go back to HEAD.'}${fresh ? ` ${plural(fresh, 'untracked file')} will be deleted.` : ''}</p>${fileListHTML(rows, worktree ? 'work' : 'staged', 6, true)}`,
+    html: `<p class="say">${worktree ? 'Unstaged changes go back to the index.' : 'Staged and unstaged changes go back to HEAD.'}${fresh ? ` ${plural(fresh, 'new file')} will be deleted.` : ''}</p>${fileListHTML(rows, worktree ? 'work' : 'staged', 6, true)}`,
   })
   if (ok) gitAction({ action: 'discard', paths, worktree })
 }
@@ -643,6 +679,7 @@ function scheduleDiff() { clearTimeout(diffTimer); diffTimer = setTimeout(loadDi
 async function loadDiff() {
   state.diffStale = false
   state.cleanShown = false
+  const seq = ++state.diffSeq // before any early return, so a message also retires an older request still in flight
   const sc = scope()
   const params = new URLSearchParams({ scope: sc, ignoreWhitespace: $('#ignore-ws').checked ? '1' : '0' })
   if (sc === 'range') {
@@ -658,7 +695,6 @@ async function loadDiff() {
   if (state.status && !state.status.git) return diffMessage('No repository here', 'Open files from the sidebar to read or edit them.')
   if (state.config.renames !== false) params.set('renames', '1')
   state.diffParams = params
-  const seq = ++state.diffSeq
   try {
     const data = await api('/api/diff?' + params)
     if (seq !== state.diffSeq) return
@@ -681,13 +717,13 @@ function cleanHTML() {
   return `<div class="quiet-card"><div class="quiet-watch"><span class="live"></span>Watching for changes</div>`
     + (last ? line('Last commit', `<span class="mono">${esc(last.short)}</span> ${esc(last.subject)} <span class="faint">${ago(last.time)}</span>`) : '')
     + (tracked ? line('Branch', t.ahead || t.behind ? `${t.behind ? `<span class="in">↓${t.behind}</span> ` : ''}${t.ahead ? `<span class="out">↑${t.ahead}</span> ` : ''}vs ${esc(t.upstream)}` : `up to date with ${esc(t.upstream)}`) : '')
-    + (tracked && t.ahead ? `<button class="btn sm" data-empty="sync">Push ${plural(t.ahead, 'commit')}</button>` : '')
+    + (tracked && t.ahead ? `<button class="btn sm" data-empty="sync">${t.behind ? 'Pull and push' : `Push ${plural(t.ahead, 'commit')}`}</button>` : '')
     + `</div>`
 }
 
-function diffMessage(title, body, extra = '') {
+function diffMessage(title, body, extra = '', keepAll = false) {
   state.diffFiles = []
-  state.diffAll = []
+  if (!keepAll) state.diffAll = []
   state.current = -1
   state.hunk = -1
   $('#diff-summary').textContent = ''
@@ -768,26 +804,37 @@ async function expandFile(i) {
   const next = !f.ctx || f.ctx === 3 ? 12 : f.ctx === 12 ? 100000 : 3
   const p = new URLSearchParams(state.diffParams)
   p.set('path', f.path); p.set('context', String(next))
+  if (f.renamedFrom) p.set('oldPath', f.renamedFrom)
+  const params = state.diffParams
   try {
     const nf = parseDiff((await api('/api/diff?' + p)).text)[0]
-    if (!nf) return
+    // A reload or another scope took over while this loaded; a filter keystroke can move the index.
+    if (!nf || state.diffParams !== params) return
     nf.ctx = next
-    state.diffFiles[i] = nf
     const j = state.diffAll.findIndex(x => x.path === f.path)
     if (j >= 0) state.diffAll[j] = nf
-    rerenderFile(i)
+    const k = state.diffFiles.findIndex(x => x.path === f.path)
+    if (k < 0) return
+    state.diffFiles[k] = nf
+    rerenderFile(k)
     setStatus(next === 100000 ? `${f.path}: whole file` : `${f.path}: ${next} lines of context`)
   } catch (e) { setStatus(e.message, 'err') }
 }
 
+// The button offers whichever move is left: fold everything while any file is open, else unfold.
+function syncCollapseLabel() {
+  $('#diff-collapse').textContent = state.diffFiles.some(f => !isFolded(f)) ? 'Collapse all' : 'Expand all'
+}
+
 function renderDiff() {
   const files = state.diffFiles
+  syncCollapseLabel()
   const added = files.reduce((s, f) => s + f.added, 0), deleted = files.reduce((s, f) => s + f.deleted, 0)
   const total = state.diffAll?.length ?? files.length
   $('#diff-summary').innerHTML = files.length ? `${files.length}${total !== files.length ? ` of ${total}` : ''} file${total === 1 ? '' : 's'}  <span class="add">+${added}</span> <span class="del">−${deleted}</span>` : ''
   if (!files.length && total) {
     state.cleanShown = false
-    return diffMessage('No file matches the filter', 'Clear the filter above to see all changed files again.')
+    return diffMessage('No file matches the filter', 'Clear the filter above to see all changed files again.', '', true)
   }
   if (!files.length) {
     const why = { head: ['Nothing to review', 'The working tree matches HEAD. When an agent writes something, it shows up here.'], worktree: ['No unstaged changes', 'Everything is staged or clean.'], staged: ['Nothing staged', 'Stage files from the sidebar to build a commit.'] }[scope()] || ['No differences', 'These refs point at the same content.']
@@ -799,8 +846,12 @@ function renderDiff() {
   // A huge diff draws file bodies only as they come near the screen.
   state.lazy = files.reduce((n, f) => n + f.lines, 0) > LAZY_LINES
   files.forEach(f => { if (!state.lazy) f.rendered = true })
+  // The hunks are new, so a line selection made in the old ones points at other lines now.
+  R.review.sel = null
+  delete view.dataset.path // only the Files view sets it, so its scroll offset is not reused here
   view.innerHTML = files.map(fileHTML).join('')
   view.scrollTop = top
+  R.refocusEditor()
   observeLazy()
   state.current = -1
   renderTrace()
@@ -824,9 +875,11 @@ async function wholeFile(i) {
   if (!f || f.ctx === 100000 || f.binary || f.note || !f.hunks.length || !state.diffParams) return
   const p = new URLSearchParams(state.diffParams)
   p.set('path', f.path); p.set('context', '100000')
+  if (f.renamedFrom) p.set('oldPath', f.renamedFrom)
+  const seq = state.diffSeq
   try {
     const nf = parseDiff((await api('/api/diff?' + p)).text)[0]
-    if (!nf || state.diffFiles[i]?.path !== f.path) return
+    if (!nf || !state.fileView || seq !== state.diffSeq || state.diffFiles[i]?.path !== f.path) return
     nf.ctx = 100000
     nf.compact = f.compact || f
     state.diffFiles[i] = nf
@@ -864,7 +917,11 @@ function setFileView(on) {
   try { localStorage.setItem(storeKey('echo:fileView'), on ? '1' : '') } catch {}
   $('#diff').classList.toggle('fileview', on)
   $('#file-nav').hidden = !on
-  document.querySelectorAll('#view-seg button').forEach(b => b.classList.toggle('on', (b.dataset.view === 'file') === on))
+  document.querySelectorAll('#view-seg button').forEach(b => {
+    const sel = (b.dataset.view === 'file') === on
+    b.classList.toggle('on', sel)
+    b.setAttribute('aria-selected', String(sel))
+  })
   const at = state.diffFiles[state.current]?.path || state.filePath
   if (on && at) state.filePath = at
   // Files that were fetched whole go back to their normal hunks, or Hunks would show them as one big hunk.
@@ -950,6 +1007,7 @@ function rerenderFile(i) {
 function toggleFold(i) {
   const f = state.diffFiles[i]
   state.folded.set(f.path, !isFolded(f))
+  syncCollapseLabel()
   rerenderFile(i)
 }
 
@@ -966,12 +1024,13 @@ function blocksHTML(f) {
 const IMAGE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i
 function imageDiffHTML(f) {
   if (!IMAGE.test(f.path)) return ''
-  const sc = scope(), url = rev => `${withBase('/api/raw')}?path=${encodeURIComponent(f.path)}${rev ? '&rev=' + encodeURIComponent(rev) : ''}`
-  const commit = $('#diff-commit').value.trim(), from = $('#diff-from').value.trim(), to = $('#diff-to').value.trim()
+  const sc = scope(), url = (rev, p = f.path) => `${withBase('/api/raw')}?path=${encodeURIComponent(p)}${rev ? '&rev=' + encodeURIComponent(rev) : ''}`
+  // The refs the loaded diff used, not whatever has since been typed into the inputs.
+  const dp = state.diffParams, commit = dp?.get('ref') || '', from = dp?.get('from') || '', to = dp?.get('to') || ''
   const sides = { head: ['head', ''], worktree: ['index', ''], staged: ['head', 'index'], commit: [commit + '^', commit], range: [from, to] }[sc]
   if (!sides) return ''
   const fig = (label, src) => `<figure><figcaption>${label}</figcaption><img src="${esc(src)}" alt="${esc(label)} version of ${esc(f.path)}" loading="lazy"></figure>`
-  return `<div class="dimg">${f.isNew ? '' : fig('before', url(sides[0]))}${f.isDeleted ? '' : fig('after', url(sides[1]))}</div>`
+  return `<div class="dimg">${f.isNew ? '' : fig('before', url(sides[0], f.renamedFrom || f.path))}${f.isDeleted ? '' : fig('after', url(sides[1]))}</div>`
 }
 
 function fileHTML(f, i) {
@@ -1108,10 +1167,18 @@ function splitRows(h, f, hi) {
   return out
 }
 
+function syncLayoutSwitch(m) {
+  document.querySelectorAll('.layout-switch button').forEach(b => {
+    const on = b.dataset.layout === m
+    b.classList.toggle('on', on)
+    b.setAttribute('aria-selected', String(on))
+  })
+}
 function setDiffMode(m) {
   state.config.diffMode = m
-  document.querySelectorAll('.layout-switch button').forEach(b => b.classList.toggle('on', b.dataset.layout === m))
+  syncLayoutSwitch(m)
   const cur = state.current
+  R.keepDraft()
   if (state.diffFiles.length) { renderDiff(); if (cur >= 0) goFile(cur) }
   post('/api/config', { diffMode: m }).catch(e => setStatus(e.message, 'err'))
 }
@@ -1158,11 +1225,14 @@ function updateCurrent() {
   const secs = view.querySelectorAll('.dfile')
   let cur = secs.length ? +secs[0].dataset.i : -1
   secs.forEach(s => { if (offsetIn(s, view) - view.scrollTop <= 40) cur = +s.dataset.i })
+  // A short last hunk can never scroll up to the top, so once the view bottoms out the last one counts.
+  const atEnd = view.scrollTop > 0 && view.scrollTop + view.clientHeight >= view.scrollHeight - 2
+  if (atEnd && secs.length) cur = +secs[secs.length - 1].dataset.i
   // The current hunk is the last one in the current file whose header has reached the top, which is
   // also where j and k leave it.
   const hunks = cur >= 0 ? [...(view.querySelector(`.dfile[data-i="${cur}"]`)?.querySelectorAll('.hunk') || [])] : []
   let hunk = -1
-  for (const h of hunks) { if (hunk >= 0 && offsetIn(h, view) > view.scrollTop + 61) break; hunk = +h.dataset.h }
+  for (const h of hunks) { if (!atEnd && hunk >= 0 && offsetIn(h, view) > view.scrollTop + 61) break; hunk = +h.dataset.h }
   if (cur === state.current && hunk === state.hunk) return
   if (cur !== state.current) { secs.forEach(s => s.classList.toggle('current', +s.dataset.i === cur)); state.current = cur; markQueueCurrent() }
   state.hunk = hunk
@@ -1263,8 +1333,9 @@ async function openFile(path, { line = 0, fromReview = false, find: hit = null }
   let i = state.tabs.findIndex(t => t.path === path)
   if (i < 0) {
     try {
+      const seen = state.changes.get(path)?.hash ?? null // before the await: a refresh landing mid-fetch must not hide a newer disk version
       const data = await fetchFile(path)
-      state.tabs.push({ path, ...fromDisk(data), seen: state.changes.get(path)?.hash ?? null, preview: isMarkdown(path) })
+      state.tabs.push({ path, ...fromDisk(data), seen, preview: isMarkdown(path) })
       i = state.tabs.length - 1
     } catch (e) { return setStatus(e.message, 'err') }
   }
@@ -1304,6 +1375,8 @@ async function closeTab(i, force = false) {
     const ok = await ask({ title: 'Close without saving', kicker: 'unsaved', tone: 'danger', ok: 'Discard edits', html: `<p><b>${esc(t.path)}</b> has changes that were never saved.</p>` })
     if (!ok || state.tabs[i] !== t) return
   }
+  // The caret and scroll of the tab on screen live in the textarea until it is switched away from.
+  if (t === shownTab) { const ed = $('#editor'); t.caret = ed.selectionStart; t.scroll = ed.scrollTop }
   state.closed.unshift({ path: t.path, caret: t.caret || 0, scroll: t.scroll || 0 })
   state.closed.length = Math.min(state.closed.length, 20)
   state.tabs.splice(i, 1)
@@ -1317,11 +1390,16 @@ async function reopenClosedTab() {
   if (!c) return setStatus('No closed tab to reopen')
   await openFile(c.path)
   const t = activeTab()
-  if (t && t.path === c.path) { t.caret = c.caret; t.scroll = c.scroll; renderEditor() }
+  if (t && t.path === c.path) {
+    t.caret = c.caret; t.scroll = c.scroll
+    // openFile already put the tab on screen; forget that so renderEditor applies the saved position.
+    if (shownTab === t) shownTab = null
+    renderEditor()
+  }
 }
 
 function renderTabs() {
-  $('#tabs').innerHTML = state.tabs.map((t, i) => `<div class="tab ${i === state.active && state.mode === 'file' ? 'active' : ''} ${t.content !== t.saved ? 'dirty' : ''}" data-i="${i}" draggable="true" title="${esc(t.path)}"><span>${esc(basename(t.path))}</span><button class="x" data-close="${i}" title="Close"><span>×</span></button></div>`).join('')
+  $('#tabs').innerHTML = state.tabs.map((t, i) => `<div class="tab ${i === state.active && state.mode === 'file' ? 'active' : ''} ${t.content !== t.saved ? 'dirty' : ''}" data-i="${i}" draggable="true" title="${esc(t.path)}"><span>${esc(basename(t.path))}</span><button class="x" data-close="${i}" title="Close" aria-label="Close ${esc(basename(t.path))}"><span aria-hidden="true">×</span></button></div>`).join('')
 }
 
 let shownTab = null
@@ -1333,11 +1411,17 @@ function renderEditor() {
   const editing = text && !preview
   $('#save').hidden = !text
   $('#md-switch').hidden = !text || !isMarkdown(tab.path)
-  document.querySelectorAll('#md-switch button').forEach(b => b.classList.toggle('on', (b.dataset.md === 'preview') === !!preview))
+  document.querySelectorAll('#md-switch button').forEach(b => {
+    const on = (b.dataset.md === 'preview') === !!preview
+    b.classList.toggle('on', on)
+    b.setAttribute('aria-selected', String(on))
+  })
   $('#file-history').hidden = !file || !tab || !state.status?.git
   $('#blame-toggle').hidden = !editing || !state.status?.git
   $('#file-more').hidden = !editing
   $('#blame-toggle').classList.toggle('on', state.blameGutter)
+  $('#blame-toggle').setAttribute('aria-pressed', String(!!state.blameGutter))
+  $('#blame-toggle').setAttribute('aria-pressed', String(!!state.blameGutter))
   $('.stage').classList.toggle('blame-on', editing && state.blameGutter)
   if (editing) ensureBlame(tab)
   paintBlameGhost()
@@ -1355,6 +1439,7 @@ function renderEditor() {
     const ed = $('#editor')
     if (shownTab) Object.assign(shownTab, { caret: ed.selectionStart, scroll: ed.scrollTop })
     shownTab = tab
+    MC.clear() // extra carets are offsets into the outgoing file
     if (ed.value !== tab.content) ed.value = tab.content
     const at = Math.min(tab.caret || 0, ed.value.length)
     ed.setSelectionRange(at, at)
@@ -1363,8 +1448,8 @@ function renderEditor() {
   if (file && !text) {
     $('#highlight').innerHTML = !tab
       ? `<div class="empty"><b>No file open</b>Press <kbd>⌘K</kbd> or pick a file from the sidebar.</div>`
-      : tab.tooLarge ? `<div class="empty"><b>File too large to edit</b>${(tab.size / 1048576).toFixed(1)} MB. <button class="btn sm" data-open-ext>Open in default app</button></div>`
       : Pv.IMAGE.test(tab.path) ? Pv.imageViewHTML(tab)
+      : tab.tooLarge ? `<div class="empty"><b>File too large to edit</b>${(tab.size / 1048576).toFixed(1)} MB. <button class="btn sm" data-open-ext>Open in default app</button></div>`
       : `<div class="empty"><b>Binary file</b>Not shown. <button class="btn sm" data-open-ext>Open in default app</button></div>`
   }
   renderBanner()
@@ -1571,6 +1656,7 @@ async function drawDiagram(code) {
   const id = 'md-diagram-' + ++diagramSeq
   try {
     await paintDiagram(box, src, id)
+    if (pre.dataset.src) box.dataset.src = pre.dataset.src // keeps the note bubble and tint
     diagrams.set(box, src)
     pre.replaceWith(box)
   } catch {
@@ -1636,7 +1722,7 @@ function openDiagram(box) {
 function closeDiagram() {
   if ($('#diagram').hidden) return
   $('#diagram-body').replaceChildren()
-  if (expanded.box?.isConnected) expanded.box.append(expanded.svg)
+  if (expanded.box?.isConnected) { sizeDiagram(expanded.svg, false); expanded.box.append(expanded.svg) }
   $('#diagram').hidden = true
   expanded.box = expanded.svg = null
   expanded.focus?.focus()
@@ -1645,7 +1731,9 @@ function closeDiagram() {
 
 function setDiagramFit(fit) {
   $('#diagram-body').classList.toggle('actual', !fit)
-  sizeDiagram($('#diagram-body').querySelector('svg'), fit)
+  const svg = $('#diagram-body').querySelector('svg')
+  sizeDiagram(svg, fit)
+  if (svg && !fit) svg.style.maxWidth = 'none' // full size may be wider than the card; the body scrolls
   $('#diagram-size').textContent = fit ? 'Full size' : 'Fit'
 }
 
@@ -1653,13 +1741,16 @@ function setDiagramFit(fit) {
 async function repaintDiagrams() {
   for (const [box, src] of diagrams) {
     if (!box.isConnected) { diagrams.delete(box); continue }
+    if (box === expanded.box) continue // its svg is in the card; that branch below repaints it
     try { await paintDiagram(box, src, 'md-diagram-' + ++diagramSeq) } catch {}
   }
   if (expanded.svg?.isConnected) {
     try {
-      const body = $('#diagram-body')
+      const body = $('#diagram-body'), box = expanded.box
       const fit = !body.classList.contains('actual')
-      body.innerHTML = await renderDiagram(expanded.src, 'md-diagram-' + ++diagramSeq)
+      const drawn = await renderDiagram(expanded.src, 'md-diagram-' + ++diagramSeq)
+      if ($('#diagram').hidden || expanded.box !== box) return // closed or swapped while drawing
+      body.innerHTML = drawn
       expanded.svg = body.querySelector('svg')
       setDiagramFit(fit)
     } catch {}
@@ -1728,7 +1819,7 @@ function computeFind(tab) {
     let off = 0
     for (let i = 0; i < lines.length && find.list.length < FIND_MAX; i++) {
       for (const m of lines[i].matchAll(re)) {
-        if (!m[0]) break
+        if (!m[0] || find.list.length >= FIND_MAX) break
         const x = { line: i, s: m.index, e: m.index + m[0].length, off: off + m.index }
         find.list.push(x)
         find.byLine.has(i) ? find.byLine.get(i).push(x) : find.byLine.set(i, [x])
@@ -1810,11 +1901,12 @@ function stepFind(dir) {
 
 $('#find-input').addEventListener('input', e => { find.q = e.target.value; paintFind(); revealMatch() })
 $('#find-input').addEventListener('keydown', e => {
+  if (e.isComposing || e.keyCode === 229) return // Enter or Esc here belongs to the IME
   if (e.key === 'Enter') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1) }
   else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFind() }
 })
-$('#find-prev').onclick = () => stepFind(-1)
-$('#find-next').onclick = () => stepFind(1)
+$('#find-prev').onclick = () => { stepFind(-1); $('#find-input').focus() }
+$('#find-next').onclick = () => { stepFind(1); $('#find-input').focus() }
 $('#find-close').onclick = () => closeFind()
 document.querySelectorAll('#findbar [data-fopt]').forEach(b => b.onclick = () => {
   const o = b.dataset.fopt
@@ -1904,7 +1996,8 @@ function visibleRange(tab) {
   let first = 0
   for (;;) {
     first = wrapAt(y)
-    if (first < wrap.filled - 1 || wrap.filled >= n) break
+    // Keep measuring until the window also covers the viewport bottom, not just its top.
+    if (wrap.filled >= n || (first < wrap.filled - 1 && wrap.top[wrap.filled] > bottom)) break
     wrapMeasure(tab, wrap.filled * 2 + 80)
   }
   let last = first
@@ -1944,7 +2037,7 @@ async function ensureBase(tab) {
 
 async function refreshGutter() {
   const tab = activeTab()
-  if (state.mode !== 'file' || !tab || tab.binary) return paintGutter()
+  if (state.mode !== 'file' || !tab || tab.binary || tab.tooLarge) return paintGutter()
   await ensureBase(tab)
   if (tab !== activeTab()) return
   computeMarks(tab)
@@ -1981,18 +2074,23 @@ function paintGutter() {
   const [first, last] = visibleRange(tab)
   // Conflict markers get their own tick, so a conflict is visible while scrolled.
   const lines = tabLines(tab)
-  const isMark = l => l.startsWith('<<<<<<<') || l.startsWith('=======') || l.startsWith('>>>>>>>') || l.startsWith('|||||||')
+  // Only complete conflict blocks count, so a Markdown ======= underline gets no tick.
+  if (tab.cfFor !== tab.content) { tab.cfFor = tab.content; tab.cfLines = conflictLines(tab.content) }
+  const cfLines = tab.cfLines
   // The blame column labels the first line of each run of lines from the same commit.
   const bl = state.blameGutter && freshBlame(tab)
   const noteLines = R.noteLinesFor(tab.path)
-  let h = ''
+  let h = '', seen = false
   for (let i = first; i < last; i++) {
+    // The first row on screen is labelled even mid-run; rows above the viewport are clipped.
+    const vis = !seen && lineTop(i) - ed.scrollTop + (state.wrap ? wrap.h[i] : LINE) > 0
+    if (vis) seen = true
     const kind = mk?.kinds[i], del = mk?.dels.get(i), end = i === n - 1 ? mk?.dels.get(n) : undefined
-    const cf = i < lines.length && isMark(lines[i])
+    const cf = i < lines.length && cfLines.has(i)
     let who = ''
     if (bl) {
       const k = bl.lines[i], c = bl.commits[k]
-      if (c && (i === first || bl.lines[i - 1] !== k)) who = uncommitted(c) ? '<span class="gbl new">Not committed yet</span>'
+      if (c && (vis || bl.lines[i - 1] !== k)) who = uncommitted(c) ? '<span class="gbl new">Not committed yet</span>'
         : `<span class="gbl" data-hash="${esc(c.hash)}" title="${esc(c.summary)}\n${esc(c.author)}, ${esc(new Date(c.time * 1000).toLocaleString())}\n${esc(c.hash.slice(0, 7))} · click to see the commit">${esc(c.author)} · ${ago(c.time).replace(' ago', '')}</span>`
     }
     const nid = noteLines.get(i + 1)
@@ -2028,12 +2126,14 @@ async function syncTabs() {
     const expected = state.changes.get(tab.path)?.hash ?? null
     if (expected === tab.seen) continue
     tab.seen = expected
-    if (expected && expected === tab.hash) continue
+    if (expected && expected === tab.hash) { if (tab.conflict) { tab.conflict = ''; changed = true } continue }
     let data
-    try { data = await fetchFile(tab.path) } catch {
-      tab.conflict = 'deleted'; changed = true; continue
+    try { data = await fetchFile(tab.path) } catch (e) {
+      // Only a 404 means the file is gone; a network blip is retried on the next status.
+      if (e.status === 404) { tab.conflict = 'deleted'; changed = true } else tab.seen = undefined
+      continue
     }
-    if (data.hash === tab.hash) continue
+    if (data.hash === tab.hash) { if (tab.conflict) { tab.conflict = ''; changed = true } continue }
     if (tab.content === tab.saved) {
       Object.assign(tab, fromDisk(data))
       if (tab === activeTab()) setStatus(`Reloaded ${tab.path} — it changed on disk`)
@@ -2043,12 +2143,16 @@ async function syncTabs() {
   if (changed) { renderTabs(); if (state.mode === 'file') renderEditor() }
 }
 
-async function saveFile(force = false) {
+async function saveFile(force = false, auto = false) {
   const tab = activeTab()
   if (!tab || tab.binary || tab.tooLarge || state.mode !== 'file') return
-  Ed.beforeSave()
-  tab.content = $('#editor').value
+  // In Markdown preview the textarea is hidden and may hold another file's text.
+  if ($('#editor').classList.contains('active')) {
+    Ed.beforeSave(auto)
+    tab.content = $('#editor').value
+  }
   const sent = tab.content
+  tab.saving = true
   try {
     const content = tab.eol === '\r\n' ? sent.replace(/\n/g, '\r\n') : sent
     const res = await post('/api/file', { action: 'save', path: tab.path, content, baseHash: tab.hash, force })
@@ -2056,13 +2160,15 @@ async function saveFile(force = false) {
     state.diffStale = true
     renderTabs(); renderEditor()
     setStatus('Saved ' + tab.path, 'ok')
+    return true
   } catch (e) {
     if (e.status === 409) {
       tab.conflict = /deleted/.test(e.message) ? 'deleted' : 'changed'
       renderEditor()
     }
     setStatus(e.message, 'err')
-  }
+    return false
+  } finally { tab.saving = false }
 }
 
 async function fileAction(action, dir = '') {
@@ -2075,9 +2181,8 @@ async function fileAction(action, dir = '') {
   try {
     await post('/api/file', { action, path, newPath, content: '' })
     const i = state.tabs.findIndex(t => t.path === path)
-    if (i >= 0 && action === 'delete') { state.tabs.splice(i, 1); state.active = Math.min(state.active, state.tabs.length - 1) }
     if (i >= 0 && action === 'rename') state.tabs[i].path = newPath
-    state.selected = action === 'delete' ? '' : newPath || path
+    state.selected = newPath || path
     await refreshAll()
     if (action === 'create') openFile(path)
     else { renderTabs(); renderEditor() }
@@ -2125,6 +2230,8 @@ function changeTally() {
 
 // The tally says what a commit would take; the button and hint say which commit the default is.
 function renderCommit() {
+  // HEAD moved since the message was loaded (checkout, pull, a commit from a terminal): amending would rewrite the wrong commit.
+  if (state.amending && state.amendHash && state.amendHash !== state.status?.head) { state.amending = false; state.amendHash = null }
   const t = changeTally(), all = !!state.config.commitAll
   const ns = t.staged.length, nu = t.unstaged.length
   const bit = (cls, n, word) => n ? `<span class="${cls}"><i></i>${n} ${word}</span>` : ''
@@ -2146,30 +2253,38 @@ function renderCommit() {
   hint.hidden = !words
   hint.textContent = words
   $('#revert-bar').hidden = true
-  $('#commit-menu').innerHTML = (nu && (ns || !all)
+  const menu = (nu && !state.amending && (ns || !all)
     ? `<button class="menu-item" data-c="all" role="menuitem">${ns ? `Stage ${plural(nu, 'more file')} & Commit` : 'Stage all & Commit'}</button>` : '')
     + (state.amending ? '<button class="menu-item" data-c="amend-cancel" role="menuitem">Cancel amend</button>' : '<button class="menu-item" data-c="amend" role="menuitem">Amend last commit (edit message)</button>')
-    + '<button class="menu-item" data-c="amend-keep" role="menuitem" title="Add the staged changes to the last commit and keep its message">Amend, keep message</button>'
+    + `<button class="menu-item" data-c="amend-keep" role="menuitem" ${ns ? '' : 'disabled'} title="${ns ? 'Add the staged changes to the last commit and keep its message' : 'Nothing is staged to add to the last commit'}">Amend, keep message</button>`
     + '<button class="menu-item" data-c="undo" role="menuitem" title="Move the branch back one commit; its changes stay staged">Undo last commit</button>'
+  // Rewriting the open menu drops the focused item; write only on change and put focus back.
+  const m = $('#commit-menu')
+  if (m.dataset.html === menu) return
+  const at = !m.hidden && m.contains(document.activeElement) ? document.activeElement.dataset.c : null
+  m.innerHTML = menu
+  m.dataset.html = menu
+  if (at) (m.querySelector(`[data-c="${at}"]:not(:disabled)`) || m.querySelector('.menu-item:not(:disabled)'))?.focus()
 }
 
 function toggleCommitMenu(open) {
   const m = $('#commit-menu')
   m.hidden = !open
+  $('#commit-more').setAttribute('aria-expanded', !!open)
   if (!open) return
   const r = $('#commit-more').getBoundingClientRect()
   m.style.left = Math.max(8, Math.min(r.right - m.offsetWidth, innerWidth - m.offsetWidth - 8)) + 'px'
   // Below the button when it fits, else above it, and never past the top of the window.
   const h = m.offsetHeight, below = r.bottom + 4
   m.style.top = Math.max(8, below + h > innerHeight - 8 ? r.top - 4 - h : below) + 'px'
-  m.querySelector('.menu-item')?.focus()
+  m.querySelector('.menu-item:not(:disabled)')?.focus()
 }
 
 // Amend replaces the last commit's message, so an empty box is filled with it to edit; choosing Amend
 // again (or a message typed first) rewrites the commit with what the box holds and whatever is staged.
 async function amend() {
   const box = $('#commit-message')
-  if (box.value.trim()) { state.amending = false; return gitAction({ action: 'amend', message: box.value, ...G.commitOpts() }) }
+  if (box.value.trim() && !G.isTemplate(box.value)) { return gitAction({ action: 'amend', message: box.value, ...G.commitOpts() }) }
   const head = state.status?.head
   if (!head) return setStatus('There is no commit to amend yet', 'err')
   try {
@@ -2178,6 +2293,7 @@ async function amend() {
     box.focus()
     // The commit button now amends: it adds what is staged to the last commit with the message in the box.
     state.amending = true
+    state.amendHash = head
     renderCommit()
     setStatus('Edit the message if you like, then press the Amend button')
   } catch (e) { setStatus(e.message, 'err') }
@@ -2188,7 +2304,10 @@ async function undoLastCommit() {
   if (!last) return setStatus('There is no commit to undo', 'err')
   const pushed = state.status?.tracking && state.status.tracking.ahead === 0 && state.status.tracking.upstream
   const ok = await ask({ title: 'Undo the last commit', kicker: 'soft reset', tone: pushed ? 'warn' : '', ok: 'Undo commit', html: `<p><span class="mono">${esc(last.short)}</span> ${esc(last.subject)}</p><p>The branch moves back one commit and its changes stay staged.</p>${pushed ? '<p class="note">This commit looks pushed; pushing the branch afterwards needs a force push.</p>' : ''}` })
-  if (ok) gitAction({ action: 'undo:commit' })
+  if (!ok) return
+  // The box may hold the undone commit's message from an amend; leaving it would make the next Amend rewrite the parent.
+  if (state.amending) { state.amending = false; $('#commit-message').value = ''; G.fillTemplate(); $('#commit-message').dispatchEvent(new Event('input')); renderCommit() }
+  gitAction({ action: 'undo:commit' })
 }
 
 // Committing everything is the one commit that reaches past what the user staged, so it always asks.
@@ -2227,9 +2346,10 @@ function renderGit() {
     a.hidden = !web
     if (web) a.href = web
   })
-  const keep = $('#branch-select').value
+  // A picked branch that no longer exists falls back to HEAD, not to whichever option is first.
+  const keep = (s.branches || []).includes($('#branch-select').value) ? $('#branch-select').value : s.branch
   const local = new Map((s.local || []).map(b => [b.name, b]))
-  $('#branch-select').innerHTML = (s.branches || []).map(b => `<option value="${esc(b)}" ${b === (keep || s.branch) ? 'selected' : ''}>${esc(b)}${counts(local.get(b))}</option>`).join('')
+  $('#branch-select').innerHTML = (s.branches || []).map(b => `<option value="${esc(b)}" ${b === keep ? 'selected' : ''}>${esc(b)}${counts(local.get(b))}</option>`).join('')
   const staged = [...state.changes.values()].filter(c => c.staged).length
   $('#staged-count').textContent = staged ? `${staged} staged` : 'Nothing staged'
   renderCommit()
@@ -2241,7 +2361,7 @@ function renderGit() {
   const key = `${s.head || ''}:${s.refsSig || ''}`
   if (key !== state.refsKey) {
     state.refsKey = key
-    state.contains.clear()
+    state.contains.clear(); containsGen++; inflightContains.clear()
     T.toolsShown()
     loadHistory()
     if (state.log.loaded) loadLog()
@@ -2431,7 +2551,7 @@ function renderBranchPop() {
 // Each repository runs in its own echo process on its own port; the server finds its siblings.
 // A workspace process serves many repositories, so the switcher lists every one of them
 // grouped under its workspace instead of collapsing the workspace to a single row.
-let repos = [], repoSel = 0
+let repos = [], repoSel = 0, repoState = 'loading' // 'loading', 'ok', or the load error
 // Keys: ws:<id> is a repository of this workspace, p:<port> is another echo process's
 // single repository, pr:<port>:<id> is a repository inside another workspace process.
 const hereKey = () => BASE ? 'ws:' + WS_ID : 'p:' + location.port
@@ -2444,6 +2564,7 @@ async function toggleRepoPop(open = $('#repo-pop').hidden) {
   toggleBranchPop(false)
   $('#repo-filter').value = ''
   $('#repo-filter').focus()
+  repos = []; repoSel = 0; repoState = 'loading' // no stale rows from the last open
   renderRepoPop()
   try {
     // Every repository open in echo: this workspace's own, then every repository in every
@@ -2451,9 +2572,11 @@ async function toggleRepoPop(open = $('#repo-pop').hidden) {
     const procs = (await api(BASE ? '/ws/instances' : '/api/instances')).filter(r => !BASE || r.port !== +location.port)
     const own = BASE ? (await api('/ws/repos')).repos.map(r => ({ key: 'ws:' + r.id, group: 'own', root: r.root, branch: r.branch, changes: wsChanged(r), port: +location.port })) : []
     repos = own.concat(expandProcs(procs))
-  } catch (e) { setStatus(e.message, 'err') }
-  // Start on the first other repository, so ⌘⇧O then Enter hops away like an app switcher.
-  repoSel = Math.max(0, repos.findIndex(r => r.key !== hereKey()))
+    repoState = 'ok'
+  } catch (e) { setStatus(e.message, 'err'); repos = []; repoState = e.message || 'failed' }
+  // Start on the first other repository, so ⌘⇧O then Enter hops away like an app switcher
+  // (unless the user already typed a filter, which has its own first match).
+  if (!$('#repo-filter').value) repoSel = Math.max(0, repos.findIndex(r => r.key !== hereKey()))
   if (!$('#repo-pop').hidden) renderRepoPop()
 }
 
@@ -2488,7 +2611,7 @@ const repoMatches = () => {
 function renderRepoPop() {
   const here = hereKey(), list = repoMatches()
   repoSel = Math.min(repoSel, Math.max(0, list.length - 1))
-  const row = (r, i) => `<div class="th rp-row ${r.key === here ? 'on' : ''} ${i === repoSel ? 'sel' : ''}" data-key="${esc(r.key)}" data-i="${i}" title="${esc(r.root)}">
+  const row = (r, i) => `<div class="th rp-row ${r.key === here ? 'on' : ''} ${i === repoSel ? 'sel' : ''}" role="option" id="rp-opt-${i}" aria-selected="${i === repoSel}" data-key="${esc(r.key)}" data-i="${i}" title="${esc(r.root)}">
     <span class="ok">${r.key === here ? '✓' : ''}</span>
     <span class="rp-main"><span class="nm"><b>${esc(basename(r.root))}</b>${r.branch ? `<span class="meta">${esc(r.branch)}</span>` : ''}</span></span>
     <span class="rp-end">${r.changes ? `<span class="rp-n" title="${r.changes} changed files">${r.changes}</span>` : ''}${r.group === 'solo' ? `<span class="port">:${r.port}</span><button class="rp-stop" data-repo-stop="${r.port}" title="Stop this echo process">Stop</button>` : ''}</span></div>`
@@ -2509,7 +2632,9 @@ function renderRepoPop() {
     html += row(r, i)
   })
   $('#repo-list').innerHTML = html
-    || `<div class="bp-more faint">${repos.length ? 'No open repository matches.' : 'Looking for open repositories…'}</div>`
+    || `<div class="bp-more faint">${repos.length ? 'No open repository matches.' : repoState === 'loading' ? 'Looking for open repositories…' : repoState === 'ok' ? 'No open repositories.' : 'Could not list repositories: ' + esc(repoState)}</div>`
+  if (list.length) $('#repo-filter').setAttribute('aria-activedescendant', 'rp-opt-' + repoSel)
+  else $('#repo-filter').removeAttribute('aria-activedescendant')
   $('#repo-list .sel')?.scrollIntoView({ block: 'nearest' })
 }
 
@@ -2536,8 +2661,9 @@ async function stopRepo(port, all) {
   const n = isWS ? repos.filter(r => r.port === port).length : 0
   const ok = await ask({ title: all ? 'Stop every echo process' : `Stop ${what}`, kicker: 'stops echo', tone: 'danger', ok: 'Stop', html: `<p>${all ? 'Every repository open in echo will stop.' : isWS ? `<b>${esc(what)}</b>’s echo process will stop (${n} ${n === 1 ? 'repository' : 'repositories'}).` : `<b>${esc(what)}</b>’s echo process will stop.`}</p><p class="note">Running work is finished first. Reopen a repository with the <code>echo</code> command in its folder.</p>` })
   if (!ok) return
-  try { await post('/api/shutdown', { port: all ? 0 : port, all }) } catch (e) { return setStatus(e.message, 'err') }
-  if (all) return setStatus('echo is stopping.', 'ok')
+  let res
+  try { res = await post(BASE ? '/ws/shutdown' : '/api/shutdown', { port: all ? 0 : port, all }) } catch (e) { return setStatus(e.message, 'err') }
+  if (all) return res?.failed?.length ? setStatus(`echo is stopping, but still running on port ${res.failed.join(', ')}`, 'err') : setStatus('echo is stopping.', 'ok')
   if (port === +location.port) {
     // This tab's own repository is gone: hop to another open one, or close the tab if none is left.
     const next = repos.find(r => r.port && r.port !== port)
@@ -2567,7 +2693,11 @@ function renderWsBar() {
     const tip = [r.root, r.branch, r.ahead ? `${r.ahead} to push` : '', r.behind ? `${r.behind} to pull` : '', r.error].filter(Boolean).join('\n')
     return `<a class="ws-chip ${r.id === WS_ID ? 'on' : ''} ${n ? 'dirty' : ''} ${r.conflicts ? 'conflict' : ''}" href="/r/${encodeURIComponent(r.id)}/" title="${esc(tip)}">${esc(r.name)}${n ? `<em>${n}</em>` : ''}</a>`
   }
-  bar.innerHTML = `<a class="ws-home" href="/" title="Workspace overview: every repository and every change" aria-label="Workspace overview"><svg class="i" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/></svg></a>${wsRepos.map(chip).join('')}<a class="ws-chip files ${WS_ID === '_files' ? 'on' : ''}" href="/r/_files/" title="Files in the workspace folder that are in no repository">Files</a>`
+  const html = `<a class="ws-home" href="/" title="Workspace overview: every repository and every change" aria-label="Workspace overview"><svg class="i" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/></svg></a>${wsRepos.map(chip).join('')}<a class="ws-chip files ${WS_ID === '_files' ? 'on' : ''}" href="/r/_files/" title="Files in the workspace folder that are in no repository">Files</a>`
+  // Most polls change nothing; leave the nodes alone so focus and a press in progress survive.
+  if (!first && html === bar.dataset.html) return
+  bar.dataset.html = html
+  bar.innerHTML = html
   // The bar keeps where it was scrolled to between polls; the first time it brings this repository into view.
   if (first) bar.querySelector('.ws-chip.on')?.scrollIntoView({ block: 'nearest', inline: 'center' })
   else bar.scrollLeft = left
@@ -2588,6 +2718,13 @@ function startWsBar() {
   document.addEventListener('visibilitychange', () => pollWsBar())
   // The session is saved before the page leaves, which a plain link would not do.
   $('#wsbar').addEventListener('click', e => { if (e.target.closest('a') && !e.metaKey && !e.ctrlKey && !e.shiftKey) persistSession(true) })
+  // The bar has no scrollbar, so a wheel mouse scrolls it sideways.
+  $('#wsbar').addEventListener('wheel', e => {
+    const bar = e.currentTarget
+    if (e.deltaX || e.ctrlKey || bar.scrollWidth <= bar.clientWidth) return
+    bar.scrollLeft += e.deltaY
+    e.preventDefault()
+  }, { passive: false })
 }
 
 // ---------- graph ----------
@@ -2642,7 +2779,9 @@ async function loadLog(append = false) {
     if (!append) $('#log-rows').scrollTop = 0
     renderLog()
   } catch (e) {
-    if (seq === L.seq) $('#log-rows').innerHTML = `<div class="empty"><b>Can’t load the log</b><span>${esc(e.message)}</span></div>`
+    // A failed next page keeps the commits already shown; only a first page has nothing to keep.
+    if (seq === L.seq && append) { L.more = false; renderLog(); setStatus('Could not load more commits: ' + e.message, 'err') }
+    else if (seq === L.seq) $('#log-rows').innerHTML = `<div class="empty"><b>Can’t load the log</b><span>${esc(e.message)}</span></div>`
   } finally { if (seq === L.seq) L.loading = false }
 }
 
@@ -2652,6 +2791,8 @@ function renderLog() {
   if (!L.commits.length && !L.groups) {
     view.innerHTML = '<div class="empty"><b>No commits match</b><span>Clear a filter to see more history.</span></div>'
     $('#log-detail').innerHTML = ''
+    L.sel = ''
+    if ($('#insp')?.dataset.insp === 'log') renderInspLog()
     return
   }
   const top = view.scrollTop
@@ -2702,7 +2843,7 @@ function renderInspLog() {
   if (!view) return
   view.innerHTML = L.commits.map((c, i) => `<div class="commit-row ${c.hash === L.sel ? 'open' : ''}${c.unpushed ? ' unpushed' : ''}" data-hash="${esc(c.hash)}" data-short="${esc(c.short)}" title="${esc(c.subject)}">
       <span class="c-graph">${graphSVG(L.rows[i], HIST_H, w)}</span>
-      <div class="c-main"><div class="c-subject">${refChips(c.refs)}${esc(c.subject)}</div>
+      <div class="c-main"><div class="c-subject">${refChips(c.refs)}<span class="c-text">${esc(c.subject)}</span></div>
       <div class="c-meta">${pushMark(c)}<b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time">${ago(c.time)}</span></div></div>
     </div>${c.hash === L.sel ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(L.rows[i].after, w)}</span><div class="c-dbody">${inspLogDetailHTML(c.hash)}</div></div>` : ''}`).join('')
       || `<div class="list-row muted"><span>No commits match</span></div>`
@@ -2729,8 +2870,13 @@ function renderLogRefs() {
   if (sel.dataset.key === key) return
   sel.dataset.key = key
   const keep = sel.value || 'all'
+  // A ref outside the branch group (a tag or remote ref from setLogRef) stays; a branch that is gone resets the list.
+  const extra = sel.selectedOptions[0] && sel.selectedOptions[0].parentElement.tagName !== 'OPTGROUP' && keep !== 'all' && keep !== 'HEAD'
   sel.innerHTML = `<option value="all">All branches</option><option value="HEAD">Current branch</option>${names.length ? `<optgroup label="Branch">${names.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('')}</optgroup>` : ''}`
-  sel.value = [...sel.options].some(o => o.value === keep) ? keep : 'all'
+  if (extra && !names.includes(keep)) sel.add(new Option(keep, keep))
+  const found = [...sel.options].some(o => o.value === keep)
+  sel.value = found ? keep : 'all'
+  if (!found && state.log.loaded) loadLog()
 }
 
 async function loadHistory() {
@@ -2768,7 +2914,7 @@ function renderHistory() {
   const { commits, rows } = state.hist, w = graphWidth(rows)
   $('#history').innerHTML = commits.map((c, i) => `<div class="commit-row ${c.hash === state.expanded ? 'open' : ''}${c.unpushed ? ' unpushed' : ''}" data-hash="${esc(c.hash)}" data-short="${esc(c.short)}" title="${esc(c.subject)}\nClick to expand. Click a file in it to see its diff.">
       <span class="c-graph">${graphSVG(rows[i], HIST_H, w)}</span>
-      <div class="c-main"><div class="c-subject">${refChips(c.refs)}${esc(c.subject)}</div>
+      <div class="c-main"><div class="c-subject">${refChips(c.refs)}<span class="c-text">${esc(c.subject)}</span></div>
       <div class="c-meta">${pushMark(c)}<b>${esc(c.short)}</b><span class="c-author">${esc(c.author)}</span><span class="c-time" title="${esc(new Date(c.time * 1000).toLocaleString())}">${ago(c.time)}</span></div></div>
     </div>${c.hash === state.expanded ? `<div class="c-detail"><span class="c-graph" style="width:${w}px">${railSVG(rows[i].after, w)}</span><div class="c-dbody">${historyDetailHTML(c.hash)}</div></div>` : ''}`).join('')
     || `<div class="list-row muted"><span>${state.hist.error ? `Couldn’t load history (${esc(state.hist.error)}). Retrying…` : 'No commits yet'}</span></div>`
@@ -2813,7 +2959,8 @@ function containsHTML(hash) {
   const n = c.branches.length + c.remotes.length
   const chips = [...c.branches.map(b => chip('loc', b)), ...c.remotes.map(b => chip('rem', b)), ...c.tags.map(t => chip('tag', t))]
   const shown = chips.slice(0, 12).join('') + (chips.length > 12 ? `<span class="faint">+${chips.length - 12} more</span>` : '')
-  return n || c.tags.length ? `<span class="faint">In ${n} branch${n === 1 ? '' : 'es'}</span> ${shown}` : '<span class="faint">Not on any branch</span>'
+  const label = n ? `In ${n} branch${n === 1 ? '' : 'es'}` : 'Not on any branch'
+  return chips.length ? `<span class="faint">${label}</span> ${shown}` : `<span class="faint">${label}</span>`
 }
 
 function commitTreeHTML(d) {
@@ -2830,7 +2977,7 @@ function commitTreeHTML(d) {
     }
     for (const p of node.files) {
       const f = files.get(p)
-      h += `<div class="tnode" data-cfile="${esc(p)}" style="padding-left:${depth * 14}px" title="${esc(p)}\nShow this file in the commit diff"><span class="tw"></span>${badge(f.code)}<span class="nm">${esc(basename(p))}</span><span class="stat">${statHTML(f)}</span></div>`
+      h += `<div class="tnode${state.cfileOpen === d.hash + ':' + p ? ' active' : ''}" data-cfile="${esc(p)}" style="padding-left:${depth * 14}px" title="${esc(p)}\nShow this file in the commit diff"><span class="tw"></span>${badge(f.code)}<span class="nm">${esc(basename(p))}</span><span class="stat">${statHTML(f)}</span></div>`
     }
     return h
   }
@@ -2838,15 +2985,20 @@ function commitTreeHTML(d) {
 }
 
 const inflightDetail = new Set(), inflightContains = new Set()
+let containsGen = 0
 async function loadDetail(hash) {
   const jobs = []
-  if (!state.details.has(hash) && !inflightDetail.has(hash)) {
+  // A failed answer is painted once but refetched on the next expand.
+  if ((!state.details.has(hash) || state.details.get(hash).error) && !inflightDetail.has(hash)) {
     inflightDetail.add(hash)
     jobs.push(api('/api/commit?hash=' + encodeURIComponent(hash)).then(d => state.details.set(hash, d), e => state.details.set(hash, { error: e.message })).finally(() => inflightDetail.delete(hash)))
   }
-  if (!state.contains.has(hash) && !inflightContains.has(hash)) {
+  if ((!state.contains.has(hash) || state.contains.get(hash).error) && !inflightContains.has(hash)) {
     inflightContains.add(hash)
-    jobs.push(api('/api/commit/contains?hash=' + encodeURIComponent(hash)).then(c => state.contains.set(hash, c), e => state.contains.set(hash, { error: e.message })).finally(() => inflightContains.delete(hash)))
+    // A ref move while this runs bumps containsGen; the old answer is then dropped, not cached.
+    const gen = containsGen
+    const put = v => { if (gen === containsGen) state.contains.set(hash, v) }
+    jobs.push(api('/api/commit/contains?hash=' + encodeURIComponent(hash)).then(put, e => put({ error: e.message })).finally(() => { if (gen === containsGen) inflightContains.delete(hash) }))
   }
   // Details and branches arrive separately; repaint as each lands so a slow --contains never blocks the files.
   for (const j of jobs) j.then(() => paintDetail(hash))
@@ -2879,10 +3031,12 @@ async function showCommitDiff(hash, short) {
   state.commit = hash
   renderHistoryCurrent()
   await setMode('diff')
-  if (same) return
+  if (same) return commitLoad
   $('#diff').scrollTop = 0
-  await loadDiff()
+  commitLoad = loadDiff()
+  await commitLoad
 }
+let commitLoad // the commit diff still loading, so a second file click waits for the same list
 
 async function goCommitFile(hash, path) {
   await showCommitDiff(hash, hash.slice(0, 7))
@@ -2959,7 +3113,8 @@ function paintBlameGhost() {
   const top = lineTopAt(tab, line - 1) - ed.scrollTop
   if (!c || top < 0 || top > ed.clientHeight - LINE) { g.hidden = true; return }
   const start = text.lastIndexOf('\n', pos - 1) + 1, nl = text.indexOf('\n', pos)
-  const cols = [...text.slice(start, nl < 0 ? undefined : nl)].reduce((n, ch) => ch === '\t' ? n + 4 - n % 4 : n + 1, 0)
+  const tw = parseInt(getComputedStyle(ed).tabSize, 10) || 4
+  const cols = [...text.slice(start, nl < 0 ? undefined : nl)].reduce((n, ch) => ch === '\t' ? n + tw - n % tw : n + 1, 0)
   if (!charWidth) { const cx = document.createElement('canvas').getContext('2d'); cx.font = getComputedStyle(ed).font; charWidth = cx.measureText('0000000000').width / 10 }
   g.textContent = uncommitted(c) ? 'You · not committed yet' : `${c.author}, ${ago(c.time)} · ${c.summary}`
   // A wrapped line puts the caret somewhere inside the block, so its place is measured, not counted.
@@ -2974,6 +3129,7 @@ async function showCommitInLog(hash) {
   state.log.compare = null
   $('#log-q').value = hash.slice(0, 12)
   $('#log-author').value = ''; $('#log-path').value = ''
+  for (const id of ['#log-since', '#log-until', '#log-merges']) $(id).value = ''
   await setMode('log')
   loadLog()
 }
@@ -3022,6 +3178,9 @@ async function openCompareDiff() {
 function setRangeDots(d) {
   state.rangeDots = d
   $('#range-dots').textContent = d
+  $('#range-dots').title = d === '...'
+    ? 'Three dots: only what “to” added since it forked from “from”, like a pull request. Click for two dots.'
+    : 'Two dots: compare the two tips. Click for three dots: only what “to” added since it forked from “from”, like a pull request.'
 }
 
 // The async Clipboard API can be denied (embedded browsers, permissions); the textarea path still works on a click.
@@ -3059,6 +3218,8 @@ function showToast(title, link) {
   const arm = () => { clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true }, 12000) }
   t.onmouseenter = () => clearTimeout(toastTimer)
   t.onmouseleave = arm
+  t.onfocusin = () => clearTimeout(toastTimer)
+  t.onfocusout = e => { if (!t.contains(e.relatedTarget)) arm() }
   arm()
 }
 $('#toast').addEventListener('click', e => {
@@ -3071,21 +3232,30 @@ $('#toast').addEventListener('click', e => {
 
 const NET = new Set(['fetch', 'pull', 'push', 'push:tag', 'push:lease', 'push:force', 'sync', 'publish', 'branch:delete:remote', 'submodule:update'])
 
+let netInFlight = 0
 async function gitAction(body, button) {
   const net = NET.has(body.action)
-  if (net) { document.body.classList.add('net-busy'); button?.classList.add('busy') }
+  if (net && netInFlight > 0) { setStatus('Another network action is still running', 'err'); return false }
+  if (net) { netInFlight++; document.body.classList.add('net-busy'); button?.classList.add('busy') }
+  const sentMessage = body.message
+  let ok = false
   try {
-    setStatus(`git ${body.action}…`)
+    setStatus(`Running git ${body.action.replace(/:/g, ' ')}…`)
     const out = await post('/api/git', body)
     // Remote output leads with "To <url>" or progress lines; say what happened and keep Git's text in the tooltip.
-    const done = { 'tag:create': 'Tag created', 'push:tag': 'Tag pushed', fetch: 'Fetched all remotes', pull: 'Pulled', push: 'Pushed', 'push:lease': 'Force pushed (with lease)', 'push:force': 'Force pushed', sync: 'Synced', publish: 'Published' }[body.action]
-    setStatus(done ? `${done}\n${out.output || ''}` : out.output || `git ${body.action} done`, 'ok')
+    const done = { 'tag:create': 'Tag created', 'push:tag': 'Tag pushed', fetch: body.remote ? 'Fetched ' + body.remote : 'Fetched all remotes', pull: 'Pulled', push: 'Pushed', 'push:lease': 'Force pushed (with lease)', 'push:force': 'Force pushed', sync: 'Synced', publish: 'Published' }[body.action]
+    setStatus(done ? `${done}\n${out.output || ''}` : out.output || `Done: git ${body.action.replace(/:/g, ' ')}`, 'ok')
     G.showOutput(body.action, out.output, true)
+    if (body.action.startsWith('remote:')) G.resetRemotes()
     if (out.pr) showToast('Branch published', out.pr)
-    if (['commit', 'commit:all', 'amend'].includes(body.action)) { $('#commit-message').value = ''; G.fillTemplate(); $('#commit-message').dispatchEvent(new Event('input')) }
+    if (['commit', 'commit:all', 'amend'].includes(body.action)) { if ($('#commit-message').value === (sentMessage ?? $('#commit-message').value)) $('#commit-message').value = ''; G.fillTemplate(); $('#commit-message').dispatchEvent(new Event('input')) }
+    // Amend mode ends only once the amend went through, so a failing hook leaves the retry an amend.
+    if (body.action === 'amend' || body.action === 'amend:noedit') { state.amending = false; state.amendHash = null }
+    ok = true
   } catch (e) { setStatus(e.message, 'err'); G.showOutput(body.action, e.message, false) }
-  finally { if (net) { document.body.classList.remove('net-busy'); button?.classList.remove('busy') } }
+  finally { if (net) { if (--netInFlight === 0) document.body.classList.remove('net-busy'); button?.classList.remove('busy') } }
   await refreshAll()
+  return ok
 }
 
 // ---------- palette ----------
@@ -3113,12 +3283,13 @@ function highlightHits(s, hits) {
 let paletteReturn = null
 async function openPalette(initial = '') {
   const opening = $('#palette').hidden, back = document.activeElement
-  await ensureTree()
   if (opening) paletteReturn = back
   $('#palette').hidden = false
   $('#palette-input').value = initial
   renderPalette()
   $('#palette-input').focus()
+  // Open at once so keys typed meanwhile land in the palette; repaint when a stale tree arrives.
+  if (state.treeStale) ensureTree().then(() => { if (!$('#palette').hidden) renderPalette() })
 }
 
 function renderPalette() {
@@ -3145,13 +3316,15 @@ function renderPalette() {
 function paintPalette() {
   const { items, sel } = state.palette
   $('#palette-list').innerHTML = items.map((it, i) => {
-    if (it.cmd) return `<div class="pitem cmd ${i === sel ? 'sel' : ''}" data-i="${i}"><span>${highlightHits(it.cmd.title, it.hits)}</span><i>${esc(it.cmd.group)}</i>${it.cmd.kbd ? `<kbd>${esc(it.cmd.kbd)}</kbd>` : ''}</div>`
+    if (it.cmd) return `<div class="pitem cmd ${i === sel ? 'sel' : ''}" role="option" id="pitem-${i}" aria-selected="${i === sel}" data-i="${i}"><span>${highlightHits(it.cmd.title, it.hits)}</span><i>${esc(it.cmd.group)}</i>${it.cmd.kbd ? `<kbd>${esc(it.cmd.kbd)}</kbd>` : ''}</div>`
     const c = state.changes.get(it.p)
     const cut = it.p.lastIndexOf('/') + 1
     const name = highlightHits(it.p.slice(cut), it.hits.filter(h => h >= cut).map(h => h - cut))
     const dir = highlightHits(it.p.slice(0, cut), it.hits.filter(h => h < cut))
-    return `<div class="pitem ${i === sel ? 'sel' : ''}" data-i="${i}"><span>${name}</span><i>${dir}</i>${it.recent ? '<em class="recent-tag">recent</em>' : ''}${c ? codeTag(c) : ''}</div>`
+    return `<div class="pitem ${i === sel ? 'sel' : ''}" role="option" id="pitem-${i}" aria-selected="${i === sel}" data-i="${i}"><span>${name}</span><i>${dir}</i>${it.recent ? '<em class="recent-tag">recent</em>' : ''}${c ? codeTag(c) : ''}</div>`
   }).join('') || '<div class="empty">No match.</div>'
+  if (items.length) $('#palette-input').setAttribute('aria-activedescendant', 'pitem-' + sel)
+  else $('#palette-input').removeAttribute('aria-activedescendant')
   $('#palette-list .sel')?.scrollIntoView({ block: 'nearest' })
 }
 
@@ -3249,7 +3422,7 @@ function toggleThemes(open = $('#theme-pop').hidden) {
   if (!open) return was && applyTheme()
   toggleRepoPop(false)
   $('#theme-filter').value = ''
-  themeSel = Math.max(0, [...THEMES.map(t => t[0]), 'system'].indexOf(themeId()))
+  themeSel = Math.max(0, ['system', ...THEMES.map(t => t[0])].indexOf(themeId()))
   renderThemes()
   $('#theme-filter').focus()
 }
@@ -3257,7 +3430,7 @@ function toggleThemes(open = $('#theme-pop').hidden) {
 function setInspector(tab) {
   $('#insp').dataset.insp = tab
   T.toolsShown()
-  document.querySelectorAll('.insp-switch button').forEach(b => b.classList.toggle('on', b.dataset.insp === tab))
+  document.querySelectorAll('.insp-switch button').forEach(b => { const on = b.dataset.insp === tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on) })
   if (tab === 'log') renderInspLog()
   markRail()
 }
@@ -3302,21 +3475,33 @@ function openSettings() {
 }
 function showSettingsPane(pane) {
   document.querySelectorAll('#settings [data-pane]').forEach(el => {
-    if (el.closest('.set-nav')) el.classList.toggle('on', el.dataset.pane === pane)
-    else el.hidden = el.dataset.pane !== pane
+    if (el.closest('.set-nav')) {
+      const on = el.dataset.pane === pane
+      el.classList.toggle('on', on)
+      if (on) el.setAttribute('aria-current', 'page')
+      else el.removeAttribute('aria-current')
+    } else el.hidden = el.dataset.pane !== pane
   })
 }
 function renderSettings() {
   const cur = { gitPinned: gitPinned() ? '1' : '0', swapPanels: state.config.swapPanels ? '1' : '0', showRail: state.config.showRail ? '1' : '0', diffMode: state.config.diffMode }
-  document.querySelectorAll('#settings [data-set]').forEach(b => b.classList.toggle('on', cur[b.dataset.set] === b.dataset.val))
+  document.querySelectorAll('#settings [data-set]').forEach(b => {
+    const on = cur[b.dataset.set] === b.dataset.val
+    b.classList.toggle('on', on)
+    b.setAttribute('aria-pressed', on)
+  })
+  $('#vim-mode').checked = !!state.config.vim // the palette can toggle it while Settings is closed
   // Plain settings: an element with data-cfg shows and edits the config key it names.
   document.querySelectorAll('#settings [data-cfg]').forEach(el => {
     const v = state.config[el.dataset.cfg]
     if (el.type === 'checkbox') el.checked = !!v
-    else el.value = v ?? ''
+    else {
+      el.value = v ?? ''
+      if (el.tagName === 'SELECT' && el.selectedIndex === -1) el.selectedIndex = 0 // unset key: show the first option
+    }
   })
   const id = themeId()
-  const card = (tid, name, sw) => `<button class="set-theme ${id === tid ? 'on' : ''}" data-theme-id="${tid}" title="${esc(name)}">${swatchHTML(sw)}<span>${esc(name)}</span></button>`
+  const card = (tid, name, sw) => `<button class="set-theme ${id === tid ? 'on' : ''}" aria-pressed="${id === tid}" data-theme-id="${tid}" title="${esc(name)}">${swatchHTML(sw)}<span>${esc(name)}</span></button>`
   const group = kind => `<h5>${kind === 'light' ? 'Light' : 'Dark'}</h5><div class="set-grid">${THEMES.filter(t => t[2] === kind).map(t => card(t[0], t[1], t[0])).join('')}</div>`
   $('#set-themes').innerHTML = `<div class="set-grid">${card('system', 'System', osLight.matches ? 'echo-paper' : 'echo-ink')}</div>` + group('dark') + group('light')
 }
@@ -3333,6 +3518,7 @@ $('#queue').addEventListener('click', e => {
   if (bar) {
     const paths = pickedIn(pickedSec())
     state.qsel.clear()
+    renderQueue() // a cancelled stash prompt leaves nothing refreshing the bar
     if (bar === 'stage') stage(paths)
     else if (bar === 'unstage') unstage(paths)
     else if (bar === 'stash') G.stashFiles(paths)
@@ -3343,7 +3529,7 @@ $('#queue').addEventListener('click', e => {
   const group = e.target.closest('.qgroup')
   if (group) {
     const sec = group.dataset.sec
-    if (act === 'stage-all') stage(groupPaths(sec))
+    if (act === 'stage-all') stageIn(sec, groupPaths(sec))
     else if (act === 'unstage-all') unstage(groupPaths(sec))
     else if (act === 'discard-all') discardAll()
     else { state.qClosed.has(sec) ? state.qClosed.delete(sec) : state.qClosed.add(sec); renderQueue() }
@@ -3354,10 +3540,10 @@ $('#queue').addEventListener('click', e => {
   const { path, sec } = row.dataset
   // A row's own button acts on the whole pick when the row is part of it.
   const batch = () => state.qsel.size > 1 && state.qsel.has(qkey(sec, path)) ? pickedIn(sec) : [path]
-  if (act === 'stage') stage(batch())
+  if (act === 'stage') stageIn(sec, batch())
   else if (act === 'unstage') unstage(batch())
   else if (act === 'ours' || act === 'theirs') resolveWhole(batch(), act)
-  else if (act === 'discard') discard([path], true)
+  else if (act === 'discard') discard(batch(), true)
   else if (act === 'open') openFile(path)
   else if (!pick(e, sec, path)) goTo(path, sec)
 })
@@ -3372,7 +3558,7 @@ $('#queue').addEventListener('contextmenu', e => {
   const { path, sec } = row.dataset, c = state.changes.get(path)
   const paths = state.qsel.size > 1 && state.qsel.has(qkey(sec, path)) ? pickedIn(sec) : [path]
   popMenu([
-    sec === 'staged' ? { label: 'Unstage', run: () => unstage(paths) } : { label: sec === 'merge' ? 'Mark resolved (stage)' : 'Stage', run: () => stage(paths) },
+    sec === 'staged' ? { label: 'Unstage', run: () => unstage(paths) } : { label: sec === 'merge' ? 'Mark resolved (stage)' : 'Stage', run: () => stageIn(sec, paths) },
     ...(c?.code === '??' ? [{ label: 'Add intent to add (git add -N)', run: () => G.intentToAdd(paths) }] : []),
     ...(sec === 'work' ? [{ label: c?.code === '??' ? 'Delete untracked file…' : 'Discard changes…', danger: true, run: () => discard(paths, true) }] : []),
     { sep: true },
@@ -3482,12 +3668,13 @@ $('#diff').addEventListener('click', e => {
 // What a file header keeps out of sight: opening it, its history, more context, and discarding.
 function fileMenu(i, anchor) {
   const f = state.diffFiles[i], r = anchor.getBoundingClientRect(), sc = scope()
+  const live = LIVE.includes(sc) && state.changes.has(f.path)
   popMenu([
     !f.isDeleted && { label: 'Open file', kbd: 'o', run: () => openFile(f.path, { fromReview: true }) },
     state.status?.git && { label: 'File history', run: () => openFileHistory(f.path) },
-    f.hunks.length && { label: `Context lines: ${f.ctx === 100000 ? 'whole file' : f.ctx || 3} — show more`, run: () => expandFile(i) },
-    state.changes.has(f.path) && { sep: true },
-    state.changes.has(f.path) && { label: sc === 'worktree' ? 'Discard unstaged changes' : 'Discard all changes to this file', danger: true, run: () => discard([f.path], sc === 'worktree') },
+    f.hunks.length && { label: f.ctx === 100000 ? 'Context lines: whole file — back to 3 lines' : `Context lines: ${f.ctx || 3} — show more`, run: () => expandFile(i) },
+    live && { sep: true },
+    live && { label: sc === 'worktree' ? 'Discard unstaged changes' : 'Discard all changes to this file', danger: true, run: () => discard([f.path], sc === 'worktree') },
   ].filter(Boolean), r.right - 220, r.bottom + 4)
 }
 $('#diff').addEventListener('click', e => { if (e.target.closest('[data-empty="sync"]')) $('#sync').click() })
@@ -3522,7 +3709,7 @@ $('#tabs').addEventListener('click', e => {
   const close = e.target.closest('[data-close]')
   if (close) return closeTab(+close.dataset.close)
   const tab = e.target.closest('.tab')
-  if (tab) { state.active = +tab.dataset.i; state.returnTo = ''; setMode('file'); renderTree() }
+  if (tab) { state.active = +tab.dataset.i; state.selected = state.tabs[state.active]?.path || state.selected; state.returnTo = ''; setMode('file'); renderTree() }
 })
 document.querySelectorAll('#md-switch button').forEach(b => b.onclick = () => setPreview(b.dataset.md === 'preview'))
 $('#md').addEventListener('click', e => {
@@ -3543,7 +3730,7 @@ $('#banner').addEventListener('click', async e => {
   const act = e.target.closest('[data-banner]')?.dataset.banner
   const tab = activeTab()
   if (!act || !tab) return
-  if (act === 'close') { tab.content = tab.saved; closeTab(state.active) }
+  if (act === 'close') closeTab(state.active)
   if (act === 'reload') { try { await reloadTab(tab); renderTabs(); renderEditor(); setStatus('took disk version of ' + tab.path) } catch (err) { setStatus(err.message, 'err') } }
   if (act === 'overwrite') saveFile(true)
 })
@@ -3584,8 +3771,11 @@ $('#sync-more').onclick = e => {
   const r = e.currentTarget.getBoundingClientRect(), s = state.status || {}
   popMenu([
     { label: `Fetch all remotes${s.fetchedAt ? ` · last ${ago(s.fetchedAt)}` : ''}`, run: () => gitAction({ action: 'fetch' }, $('#sync')) },
-    { label: 'Pull', run: () => gitAction({ action: 'pull' }, $('#sync')) },
-    { label: 'Push', run: () => gitAction({ action: 'push' }, $('#sync')) },
+    // Without an upstream there is nothing to pull and a plain push fails; a detached HEAD offers fetch only.
+    ...(upstream() ? [
+      { label: 'Pull', run: () => gitAction({ action: 'pull' }, $('#sync')) },
+      { label: 'Push', run: () => gitAction({ action: 'push' }, $('#sync')) },
+    ] : s.tracking ? [{ label: 'Publish', run: () => gitAction({ action: 'publish' }, $('#sync')) }] : []),
   ], r.left, r.bottom + 6)
 }
 
@@ -3593,7 +3783,7 @@ $('#sync-more').onclick = e => {
 $('#view-open').onclick = e => {
   e.stopPropagation()
   const r = e.currentTarget.getBoundingClientRect(), on = v => (v ? '✓  ' : '    ')
-  const cfg = (k, label) => ({ label: on(state.config[k] !== false) + label, run: () => { state.config[k] = state.config[k] === false; post('/api/config', { [k]: state.config[k] }); for (const f of state.diffAll || []) for (const h of f.hunks) h.colored = false; loadDiff() } })
+  const cfg = (k, label) => ({ label: on(state.config[k] !== false) + label, run: () => { const was = state.config[k]; state.config[k] = was === false; post('/api/config', { [k]: state.config[k] }).catch(e => { state.config[k] = was; setStatus(e.message, 'err'); for (const f of state.diffAll || []) for (const h of f.hunks) h.colored = false; loadDiff() }); for (const f of state.diffAll || []) for (const h of f.hunks) h.colored = false; loadDiff() } })
   popMenu([
     { label: on($('#ignore-ws').checked) + 'Hide whitespace changes', run: () => { $('#ignore-ws').checked = !$('#ignore-ws').checked; loadDiff() } },
     { label: on(state.wrap) + 'Wrap long lines', run: () => { const b = $('#word-wrap'); b.checked = !b.checked; b.dispatchEvent(new Event('change')) } },
@@ -3619,7 +3809,7 @@ $('#theme-filter').addEventListener('keydown', e => {
 })
 $('#theme-list').addEventListener('mousemove', e => {
   const row = e.target.closest('.th'), rows = [...document.querySelectorAll('#theme-list .th')], i = rows.indexOf(row)
-  if (i >= 0 && i !== themeSel) { themeSel = i; rows.forEach((r, j) => r.classList.toggle('sel', j === i)) }
+  if (i >= 0 && i !== themeSel) { themeSel = i; previewTheme() }
 })
 $('#theme-list').onclick = e => { const t = e.target.closest('[data-theme-id]'); if (t) setTheme(t.dataset.themeId) }
 // Picking a theme re-renders the list, so a detached click target still counts as inside the picker.
@@ -3664,13 +3854,13 @@ const commitAct = (act, hash) => ({
 }[act]?.())
 
 // Right-click a file in a commit: view it as it was, or put that version back in the working tree.
-function commitFileContext(e, hash) {
+function commitFileContext(e, hash, inLog) {
   const row = e.target.closest('.tnode[data-cfile]')
   if (!row || !hash) return false
   e.preventDefault()
   const path = row.dataset.cfile
   popMenu([
-    { label: 'Show this file in the diff', run: () => goCommitFile(hash, path) },
+    { label: 'Show this file in the diff', run: () => { state.fromLog = inLog; goCommitFile(hash, path).then(() => { state.fromLog = inLog; if (inLog) showInspLog() }) } },
     { label: 'View the file at this commit', run: () => viewAtCommit(hash, path) },
     { label: 'Restore it to the working tree…', danger: true, run: () => restoreFromCommit(hash, path) },
     { label: 'Show history of this file', run: () => openFileHistory(path) },
@@ -3695,11 +3885,12 @@ async function restoreFromCommit(hash, path) {
 function commitContext(e, hash, subject) {
   e.preventDefault()
   G.commitMenu(hash, subject, e.clientX, e.clientY, {
+    isHead: hash === state.status?.head,
     diff: () => showCommitDiff(hash, hash.slice(0, 7)), revert: () => revertCommit(hash), soft: resetHere,
     irebase: () => ctx.rebaseUI?.(hash + '^'), compare: () => ctx.compareUI?.('HEAD', hash),
   })
 }
-$('#log-detail').addEventListener('contextmenu', e => commitFileContext(e, state.log.sel))
+$('#log-detail').addEventListener('contextmenu', e => commitFileContext(e, state.log.sel, true))
 $('#log-rows').addEventListener('contextmenu', e => { const r = e.target.closest('.lrow'); if (r) commitContext(e, r.dataset.hash, r.querySelector('.ltext')?.textContent || '') })
 $('#history').addEventListener('contextmenu', e => { if (commitFileContext(e, e.target.closest('.c-detail')?.previousElementSibling?.dataset.hash)) return; const r = e.target.closest('.commit-row'); if (r) commitContext(e, r.dataset.hash, r.title.split('\n')[0]) })
 
@@ -3727,6 +3918,7 @@ function detailClick(e, hash, inLog) {
   } else if (hit('[data-cfile]')) {
     document.querySelectorAll('.c-files .tnode.active').forEach(n => n.classList.remove('active'))
     hit('[data-cfile]').classList.add('active')
+    state.cfileOpen = hash + ':' + hit('[data-cfile]').dataset.cfile
     state.fromLog = inLog
     goCommitFile(hash, hit('[data-cfile]').dataset.cfile).then(() => { state.fromLog = inLog; if (inLog) showInspLog() })
   } else if (hit('[data-diff]')) openLogDiff()
@@ -3739,9 +3931,11 @@ $('#history').addEventListener('click', e => {
   const row = e.target.closest('.commit-row')
   if (row) selectCommit(row.dataset.hash, row.dataset.short)
 })
-$('#revert-bar').addEventListener('click', e => {
+$('#revert-bar').addEventListener('click', async e => {
   const b = e.target.closest('[data-revert]')
-  if (b) gitAction({ action: b.dataset.revert })
+  if (!b) return
+  if (b.dataset.revert === 'revert:abort' && !await ask({ title: 'Abort the revert', kicker: 'goes back', tone: 'warn', ok: 'Abort', html: '<p>The revert stops and the repository returns to how it was before it started. Resolutions you made so far are dropped.</p>' })) return
+  gitAction({ action: b.dataset.revert })
 })
 $('#log-detail').addEventListener('click', e => detailClick(e, state.log.sel, true))
 $('#insp-log').addEventListener('click', e => {
@@ -3846,12 +4040,14 @@ document.addEventListener('click', e => {
 // Only these two stash verbs are reachable from a row, whatever data-act the markup carries.
 // A Map, not an object, so a key like "constructor" cannot reach the prototype.
 const STASH_ACT = new Map([['apply', 'stash:apply'], ['pop', 'stash:pop'], ['drop', 'stash:drop']])
-$('#stashes').addEventListener('click', e => {
+$('#stashes').addEventListener('click', async e => {
   const b = e.target.closest('button[data-ref]')
   if (b?.dataset.act === 'show') return G.stashShow(b.dataset.ref)
   if (b?.dataset.act === 'stbranch') return G.stashBranch(b.dataset.ref)
   const action = b && STASH_ACT.get(b.dataset.act)
-  if (action) gitAction({ action, stashRef: b.dataset.ref })
+  if (!action) return
+  if (b.dataset.act === 'drop' && !await ask({ title: 'Drop this stash', kicker: 'discards', tone: 'danger', ok: 'Drop', html: `<p><b>${esc(b.dataset.ref)}</b> is removed. Its changes can only be recovered from the reflog.</p>` })) return
+  gitAction({ action, stashRef: b.dataset.ref })
 })
 
 $('#editor').addEventListener('input', () => {
@@ -3873,7 +4069,7 @@ $('#editor').addEventListener('input', () => {
 let marksTimer, gutterFrame
 // Repaint the gutter and colors when the editor changes size (window resize, panels, a first paint
 // made before layout settled); both draw only the rows that fit.
-new ResizeObserver(() => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(() => { paintGutter(); paintSyntax(); paintFind() }) }).observe($('#editor'))
+new ResizeObserver(() => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(() => { paintGutter(); paintSyntax(); paintFind(); Ed.onResize() }) }).observe($('#editor'))
 $('#editor').addEventListener('scroll', () => { cancelAnimationFrame(gutterFrame); gutterFrame = requestAnimationFrame(() => { paintGutter(); paintSyntax(); paintFind(); paintBlameGhost() }) })
 let ghostFrame, blameTimer
 for (const ev of ['keyup', 'mouseup', 'focus']) $('#editor').addEventListener(ev, () => { cancelAnimationFrame(ghostFrame); ghostFrame = requestAnimationFrame(paintBlameGhost) })
@@ -3940,13 +4136,22 @@ $('#log-compare').addEventListener('click', e => {
   else { state.log.compare = null; loadLog() }
 })
 $('#inline-blame').onchange = async () => {
+  const prev = state.config.blame
   state.config.blame = $('#inline-blame').checked ? 'line' : 'off'
   renderEditor()
-  try { await post('/api/config', { blame: state.config.blame }); setStatus('Settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
+  try { await post('/api/config', { blame: state.config.blame }); setStatus('Settings saved', 'ok') } catch (e) {
+    state.config.blame = prev
+    $('#inline-blame').checked = blameInline()
+    renderEditor()
+    setStatus(e.message, 'err')
+  }
 }
 $('#new-file').onclick = () => fileAction('create')
 $('#rename-file').onclick = () => fileAction('rename')
-$('#delete-file').onclick = () => fileAction('delete')
+$('#delete-file').onclick = () => {
+  const p = state.selected || activeTab()?.path
+  if (p) FO.remove(p, false); else setStatus('Select a file first')
+}
 $('#save').onclick = () => saveFile()
 // The editor's secondary actions live in one menu. The buttons stay in the page (the editor shows and hides
 // them by file type); the menu lists the ones that apply and presses them.
@@ -3966,8 +4171,10 @@ $('#git-close').onclick = () => toggleGit(false)
 $('#git-pin').onclick = () => { saveSetting({ gitPinned: !gitPinned() }); applyLayout(true) }
 $('#settings-open').onclick = openSettings
 document.querySelector('[data-open-settings]').onclick = openSettings
+let settingsDown = null // a drag that starts in the card and ends on the backdrop must not close it
+$('#settings').addEventListener('mousedown', e => { settingsDown = e.target })
 $('#settings').addEventListener('click', e => {
-  if (e.target === $('#settings') || e.target.closest('[data-close]')) { $('#settings').hidden = true; return }
+  if ((e.target === $('#settings') && settingsDown === $('#settings')) || e.target.closest('[data-close]')) { $('#settings').hidden = true; return }
   const t = e.target.closest('[data-theme-id]')
   if (t) { setTheme(t.dataset.themeId).then(renderSettings); renderSettings(); return }
   const nav = e.target.closest('.set-nav [data-pane]')
@@ -4040,6 +4247,7 @@ const scheduleWidthSave = () => {
 // A panel on the left grows with the pointer, one on the right against it; Swap trades the sides.
 const gripSign = side => (side === 'tree') === !state.config.swapPanels ? 1 : -1
 const dragGrip = (side, e) => {
+  if (e.button !== 0) return // a right-click's pointerup can be swallowed by the context menu, leaving the drag stuck
   const grip = $(`#grip-${side}`), sign = gripSign(side)
   const from = e.clientX, start = state.widths[side]
   const move = ev => { state.widths[side] = clampWidth(side, start + sign * (ev.clientX - from)); applyWidths() }
@@ -4073,7 +4281,11 @@ for (const side of ['tree', 'git']) {
   }
 }
 $('#commit').onclick = () => doCommit(!!state.config.commitAll && !changeTally().staged.length)
-$('#commit-more').onclick = e => { e.stopPropagation(); toggleCommitMenu($('#commit-menu').hidden) }
+$('#commit-more').onclick = () => { toggleCommitMenu($('#commit-menu').hidden) }
+$('#commit-menu').addEventListener('keydown', e => {
+  const items = [...document.querySelectorAll('#commit-menu .menu-item:not(:disabled)')], i = items.indexOf(document.activeElement)
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus() }
+})
 $('#commit-menu').addEventListener('click', e => {
   const act = e.target.closest('[data-c]')?.dataset.c
   toggleCommitMenu(false)
@@ -4081,7 +4293,7 @@ $('#commit-menu').addEventListener('click', e => {
   else if (act === 'all') doCommit(true)
   else if (act === 'amend') amend()
   else if (act === 'amend-cancel') { state.amending = false; $('#commit-message').value = ''; G.fillTemplate(); $('#commit-message').dispatchEvent(new Event('input')); renderCommit() }
-  else if (act === 'amend-keep') { state.amending = false; gitAction({ action: 'amend:noedit', ...G.commitOpts() }) }
+  else if (act === 'amend-keep') { gitAction({ action: 'amend:noedit', ...G.commitOpts() }) }
   else if (act === 'undo') undoLastCommit()
 })
 document.addEventListener('click', e => { if (!e.target.closest('#commit-menu, #commit-more')) toggleCommitMenu(false) })
@@ -4090,8 +4302,14 @@ $('#commit-all').onchange = async () => {
   renderCommit()
   try { await post('/api/config', { commitAll: state.config.commitAll }); setStatus('Settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
 }
-$('#switch-branch').onclick = () => gitAction({ action: 'branch:switch', from: $('#branch-select').value })
-$('#create-branch').onclick = () => gitAction({ action: 'branch:create', from: $('#new-branch').value.trim() }).then(() => { $('#new-branch').value = '' })
+$('#switch-branch').onclick = () => {
+  // git switch refuses a remote-tracking name; mirror the rail: switch to the local twin or track it.
+  const v = $('#branch-select').value, s = state.status
+  if (!(s.remote || []).includes(v) || (s.local || []).some(b => b.name === v)) return gitAction({ action: 'branch:switch', from: v })
+  const short = v.slice(v.indexOf('/') + 1)
+  return gitAction((s.local || []).some(b => b.name === short) ? { action: 'branch:switch', from: short } : { action: 'branch:track', from: v })
+}
+$('#create-branch').onclick = () => gitAction({ action: 'branch:create', from: $('#new-branch').value.trim() }).then(ok => { if (ok) $('#new-branch').value = '' })
 const upstream = () => { const t = state.status?.tracking; return !!(t && t.upstream && !t.gone) }
 $('#fetch').onclick = () => gitAction({ action: 'fetch' }, $('#fetch'))
 $('#sync').onclick = () => gitAction({ action: upstream() ? 'sync' : 'publish' }, $('#sync'))
@@ -4123,7 +4341,7 @@ function togglePushMenu(open) {
   m.style.top = r.bottom + 4 + 'px'
   m.querySelector('.menu-item').focus()
 }
-$('#push-more').onclick = e => { e.stopPropagation(); togglePushMenu($('#push-menu').hidden) }
+$('#push-more').onclick = () => { togglePushMenu($('#push-menu').hidden) }
 $('#push-menu').addEventListener('click', e => {
   const p = e.target.closest('[data-p]')?.dataset.p
   togglePushMenu(false)
@@ -4135,7 +4353,7 @@ document.addEventListener('click', e => { if (!e.target.closest('#push-menu, #pu
 setInterval(renderTracking, 30000)
 $('#merge').onclick = () => G.integrate($('#branch-select').value, 'merge')
 $('#rebase').onclick = () => G.integrate($('#branch-select').value, 'rebase')
-$('#stash-create').onclick = () => gitAction({ action: 'stash:create', message: $('#stash-message').value }).then(() => { $('#stash-message').value = '' })
+$('#stash-create').onclick = () => gitAction({ action: 'stash:create', message: $('#stash-message').value }).then(ok => { if (ok) $('#stash-message').value = '' })
 $('#file-filter').oninput = () => { renderQueue(); renderTree(); renderBranches() }
 $('#diff-scope').onchange = () => { syncScopeInputs(); $('#diff').scrollTop = 0; loadDiff() }
 const setScope = v => { $('#diff-scope').value = v; $('#diff-scope').dispatchEvent(new Event('change')) }
@@ -4153,12 +4371,18 @@ $('#diff-status').onchange = () => {
 $('#diff-collapse').onclick = () => {
   const collapse = state.diffFiles.some(f => !isFolded(f))
   for (const f of state.diffFiles) state.folded.set(f.path, collapse)
-  $('#diff-collapse').textContent = collapse ? 'Expand all' : 'Collapse all'
   renderDiff()
 }
 document.querySelectorAll('.layout-switch button').forEach(b => b.onclick = () => setDiffMode(b.dataset.layout))
 for (const id of ['#diff-from', '#diff-to', '#diff-commit']) $(id).addEventListener('keydown', e => { if (e.key === 'Enter') loadDiff() })
-$('#help-open').onclick = () => { $('#help').hidden = false }
+// Tab cycles through the open modal's controls instead of reaching the page behind it.
+function trapTab(e, sel) {
+  e.preventDefault()
+  const items = [...document.querySelectorAll(sel + ' button, ' + sel + ' input')].filter(el => !el.disabled && !el.closest('[hidden]'))
+  nextInDialog(items, document.activeElement, e.shiftKey)?.focus()
+}
+function openHelp() { $('#help').hidden = false; $('#help [data-close]').focus() }
+$('#help-open').onclick = openHelp
 $('#help').onclick = e => { if (e.target === $('#help') || e.target.dataset.close !== undefined) $('#help').hidden = true }
 $('#gutter-base').onchange = () => {
   state.config.gutterBase = $('#gutter-base').value
@@ -4167,6 +4391,7 @@ $('#gutter-base').onchange = () => {
 }
 $('#vim-mode').onchange = async () => {
   state.config.vim = $('#vim-mode').checked
+  ctx.onConfig?.('vim') // repaint the mode badge and caret now
   try { await post('/api/config', { vim: state.config.vim }); setStatus('Settings saved', 'ok') } catch (e) { setStatus(e.message, 'err') }
 }
 $('#palette').onclick = e => {
@@ -4176,24 +4401,36 @@ $('#palette').onclick = e => {
 }
 $('#palette-input').oninput = renderPalette
 $('#palette-input').addEventListener('keydown', e => {
+  if (e.isComposing || e.keyCode === 229) return // an IME's Enter confirms the candidate, not the row
   const p = state.palette
   if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) { e.preventDefault(); p.sel = Math.min(p.items.length - 1, p.sel + 1); paintPalette() }
   else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')) { e.preventDefault(); p.sel = Math.max(0, p.sel - 1); paintPalette() }
   else if (e.key === 'Enter') { e.preventDefault(); choosePalette(p.sel) }
   else if (e.key === 'Escape') { e.preventDefault(); closePalette() }
+  // ⌘P and ⌘K are the palette's own shortcuts: keep them from reaching the browser (Print) and close it.
+  else if (mod(e) && !e.altKey && !e.shiftKey && ['k', 'p'].includes(e.key.toLowerCase())) { e.preventDefault(); closePalette() }
   // The input is the palette's only control, so Tab has nowhere to go inside it and must not reach the page behind.
   else if (e.key === 'Tab') e.preventDefault()
 })
 
 document.addEventListener('keydown', e => {
-  if (dlg) { if (e.key === 'Escape') { e.preventDefault(); dlg.done(null) } return }
+  if (dlg) {
+    if (e.key === 'Escape') { e.preventDefault(); dlg.done(null) }
+    else if (e.key === 'Tab') trapTab(e, '#dialog')
+    return
+  }
+  if (e.key === 'Tab' && !$('#diagram').hidden) { trapTab(e, '#diagram'); return }
+  if (e.key === 'Tab' && !$('#help').hidden) { trapTab(e, '#help'); return }
   if (e.key === 'Escape' && !$('#file-menu').hidden) { e.preventDefault(); closeFileMenu(); return }
   // e.code, because ⌥N is a dead key on macOS. ⌘N itself belongs to the browser.
   if (mod(e) && e.altKey && e.code === 'KeyN') { e.preventDefault(); const d = state.selected || activeTab()?.path || ''; fileAction('create', d.includes('/') ? d.slice(0, d.lastIndexOf('/')) : ''); return }
   if (e.key === 'Escape' && state.qsel.size && !typing(e)) { e.preventDefault(); state.qsel.clear(); renderQueue(); return }
+  if (e.key === 'Escape' && !$('#pull-menu').hidden) { e.preventDefault(); G.togglePullMenu(false); $('#pull-more').focus(); return }
   if (e.key === 'Escape' && !$('#push-menu').hidden) { e.preventDefault(); togglePushMenu(false); $('#push-more').focus(); return }
   if (e.key === 'Escape' && !$('#commit-menu').hidden) { e.preventDefault(); toggleCommitMenu(false); $('#commit-more').focus(); return }
   if (!$('#palette').hidden) return
+  // The expanded diagram owns the keyboard: Esc closes it, nothing else reaches the page behind.
+  if (!$('#diagram').hidden) { if (e.key === 'Escape') { e.preventDefault(); closeDiagram() } return }
   if (!$('#settings').hidden && !mod(e) && e.key !== 'Escape') return
   if (mod(e)) {
     const k = e.key.toLowerCase()
@@ -4208,8 +4445,8 @@ document.addEventListener('keydown', e => {
     }
     else if (e.altKey && e.code === 'KeyM') { if (inEditor()) { e.preventDefault(); R.addEditorNote() } }
     else if (e.altKey && e.code === 'KeyT') { e.preventDefault(); reopenClosedTab() }
-    else if (k === 'f' && e.altKey) { if (inEditor()) { e.preventDefault(); const sel = editorSelection(); showFind(sel || null); Rp.toggleReplace(true) } }
-    else if (k === 'f' && !e.altKey) { if (inEditor()) { e.preventDefault(); const sel = editorSelection(); showFind(sel || null) } }
+    else if (e.altKey && e.code === 'KeyF') { if (inEditor()) { e.preventDefault(); const sel = editorSelection(); showFind(sel || null, sel ? { ...find.opts, regex: false } : undefined); Rp.toggleReplace(true) } }
+    else if (k === 'f' && !e.altKey) { if (inEditor()) { e.preventDefault(); const sel = editorSelection(); showFind(sel || null, sel ? { ...find.opts, regex: false } : undefined) } }
     else if (k === 'g' && find.open && inEditor()) { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1) }
     else if (k === 'p' && e.shiftKey) { e.preventDefault(); openPalette('>') }
     else if (k === 'k' || k === 'p') { e.preventDefault(); openPalette() }
@@ -4226,33 +4463,39 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && e.target.id === 'editor' && state.returnTo && state.returnTo === activeTab()?.path) { e.preventDefault(); backToReview(); return }
   // Keys inside the branch popup and menu belong to their buttons (Enter activates the focused item).
   if (e.key !== 'Escape' && e.target.closest?.('#ref-menu, #branch-pop')) return
-  if (e.key === 'Escape' && (!$('#ref-menu').hidden || !$('#branch-pop').hidden)) { e.preventDefault(); if (!$('#ref-menu').hidden) closeRefMenu(); else toggleBranchPop(false); return }
+  if (e.key === 'Escape' && (!$('#ref-menu').hidden || !$('#branch-pop').hidden)) { e.preventDefault(); if (!$('#ref-menu').hidden) closeRefMenu(); else { toggleBranchPop(false); $('#branch').focus() } return }
   if (e.key === 'Escape' && !$('#settings').hidden) { e.preventDefault(); $('#settings').hidden = true; if (typing(e)) e.target.blur(); return }
   if (e.key === 'Escape' && gitOpen() && !gitPinned() && $('#help').hidden && (!typing(e) || e.target.closest('#git-panel'))) { e.preventDefault(); toggleGit(false); return }
   if (e.key === 'Escape' && state.mode === 'diff' && state.fromLog && !typing(e) && $('#help').hidden) { e.preventDefault(); setMode('log'); return }
-  if (e.key === 'Escape' && !$('#diagram').hidden) { e.preventDefault(); closeDiagram(); return }
-  if (e.key === 'Escape') { $('#help').hidden = true; toggleThemes(false); toggleRepoPop(false); if (typing(e)) e.target.blur(); return }
+  if (e.key === 'Escape') {
+    const inRepo = !!e.target.closest?.('#repo-pop')
+    $('#help').hidden = true; toggleThemes(false); toggleRepoPop(false)
+    if (inRepo) $('#repo').focus() // the filter just hid; hand focus back to the button that opened it
+    else if (typing(e)) e.target.blur()
+    return
+  }
   if (typing(e) || e.altKey) return
   if (state.mode === 'log') {
     const k = { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[e.key]
     if (k) { e.preventDefault(); stepLog(k) }
-    else if (e.key === 'Enter') { e.preventDefault(); openLogDiff() }
-    else if (e.key === '?') $('#help').hidden = false
+    else if (e.key === 'Enter' && !e.target.closest?.('button, a, [role=button]')) { e.preventDefault(); openLogDiff() }
+    else if (e.key === '?') openHelp()
     return
   }
   const vimStep = dir => { if (state.config.vim && state.mode === 'file') $('#editor').scrollBy(0, dir * 60) }
   switch (e.key) {
-    case '?': $('#help').hidden = false; break
+    case '?': openHelp(); break
     case 'n': stepFile(1); break
     case 'p': stepFile(-1); break
     case 'j': state.mode === 'diff' ? stepHunk(1) : vimStep(1); break
     case 'k': state.mode === 'diff' ? stepHunk(-1) : vimStep(-1); break
     case 'e': if (state.mode === 'diff') openCurrentHunk(); break
     case 's': case 'u': {
-      const f = state.mode === 'diff' ? state.diffFiles[state.current] : null, c = f && state.changes.get(f.path)
+      // Only for live scopes: a commit or range diff shows nothing the working tree could stage.
+      const sc = scope(), f = state.mode === 'diff' && LIVE.includes(sc) ? state.diffFiles[state.current] : null, c = f && state.changes.get(f.path)
       if (!c) break
-      if (e.key === 's' && c.work) { stage([f.path]); advanceFrom(state.current) }
-      else if (e.key === 'u' && c.index) unstage([f.path])
+      if (e.key === 's' && c.work && sc !== 'staged') { stage([f.path]); advanceFrom(state.current) }
+      else if (e.key === 'u' && c.index && sc !== 'worktree') unstage([f.path])
       break
     }
     case 'o': { const p = currentPath(); if (p && state.mode === 'diff' && !state.diffFiles[state.current]?.isDeleted) openFile(p, { fromReview: true }); break }
@@ -4276,7 +4519,7 @@ async function loadConfig() {
   applyLayout()
   $('#gutter-base').value = gutterBase()
   $('#inline-blame').checked = blameInline()
-  document.querySelectorAll('.layout-switch button').forEach(b => b.classList.toggle('on', b.dataset.layout === state.config.diffMode))
+  syncLayoutSwitch(state.config.diffMode)
   if (state.diffFiles.length) renderDiff()
   applyTheme()
   Ed.applySettings()
@@ -4302,7 +4545,8 @@ function snapshotSession() {
   const ed = $('#editor'), editing = state.mode === 'file' && !!activeTab()
   let room = DRAFT_MAX, kept = true
   const tabs = state.tabs.map((t, i) => {
-    const live = editing && i === state.active
+    // The textarea holds this tab's text only while it is showing it, not in Markdown preview.
+    const live = editing && i === state.active && t === shownTab && ed.classList.contains('active')
     const content = live ? ed.value : t.content
     const o = { path: t.path, preview: !!t.preview, mdScroll: t.mdScroll || 0, caret: live ? ed.selectionStart : t.caret || 0, scroll: live ? ed.scrollTop : t.scroll || 0 }
     if (!t.binary && content !== t.saved) {
@@ -4332,7 +4576,9 @@ let mirrorTimer = 0
 function mirrorSession(snap, final) {
   const body = JSON.stringify({ session: snap })
   clearTimeout(mirrorTimer)
-  if (final && navigator.sendBeacon) return void navigator.sendBeacon(withBase('/api/drafts'), new Blob([body], { type: 'application/json' }))
+  // A beacon over the browser's quota (about 64 KB) returns false; fall back to a keepalive fetch.
+  if (final && navigator.sendBeacon && navigator.sendBeacon(withBase('/api/drafts'), new Blob([body], { type: 'application/json' }))) return
+  if (final) return void fetch(withBase('/api/drafts'), { method: 'POST', headers: { 'content-type': 'application/json' }, body, keepalive: body.length < 60000 }).catch(() => {})
   mirrorTimer = setTimeout(() => fetch(withBase('/api/drafts'), { method: 'POST', headers: { 'content-type': 'application/json' }, body }).catch(() => {}), 1500)
 }
 
@@ -4380,13 +4626,15 @@ function restoreInputs(s) {
 }
 
 async function restoreTabs(s) {
-  const got = await Promise.all((s.tabs || []).map(async t => { try { return [t, await fetchFile(t.path)] } catch { return [t, null] } }))
-  for (const [t, data] of got) {
+  const got = await Promise.all((s.tabs || []).map(async t => { try { return [t, await fetchFile(t.path)] } catch (e) { return [t, null, e] } }))
+  for (const [t, data, err] of got) {
     const d = t.draft
     if (!data && !d) continue
+    // Only a missing file is a deletion; an unreadable one keeps the draft behind the changed-on-disk banner.
+    const gone = err?.status === 404
     const tab = { path: t.path, seen: state.changes.get(t.path)?.hash ?? null, preview: isMarkdown(t.path) && !!t.preview, mdScroll: t.mdScroll, caret: t.caret, scroll: t.scroll }
     if (data) Object.assign(tab, fromDisk(data))
-    else Object.assign(tab, { content: '', saved: null, eol: '\n', hash: d.hash, binary: false, conflict: 'deleted' })
+    else Object.assign(tab, { content: '', saved: null, eol: '\n', hash: d.hash, binary: false, conflict: gone ? 'deleted' : 'changed' })
     if (d && !tab.binary) {
       tab.content = d.content
       // The file moved on while away: keep the base the edit was made on, so saving asks before overwriting.
@@ -4447,12 +4695,13 @@ async function boot() {
     }
   } catch (e) { setStatus(e.message, 'err') }
   booting = false
-  sessionReady = true
+  // A boot that failed before the status loaded has nothing true to save over the last session.
+  if (state.status) sessionReady = true
   if (pendingStatus) applyStatus(pendingStatus)
   persistSession()
 }
 syncScopeInputs()
-Object.assign(ctx, { noteLinesFor: R.noteLinesFor, currentPath, rerenderAll: () => { if (state.diffFiles.length) renderDiff() }, undoLastCommit, openPalette, reopenClosedTab, openFileHistory, closeTab, showFind, stepFind, renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, lineTopAt, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind(); paintPreviewNotes() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => { Ed.applySettings(); TD.applyTabOrder(); applyWsBar() }, rebaseUI, compareUI, showCommitDiff, startCompare, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
+Object.assign(ctx, { resetHere, noteLinesFor: R.noteLinesFor, currentPath, rerenderAll: () => { if (state.diffFiles.length) renderDiff() }, undoLastCommit, openPalette, reopenClosedTab, openFileHistory, closeTab, showFind, stepFind, renderTabs, openFile, searchRegex, revealMatch, closeFind, runSearch, visibleRange, lineTop, lineTopAt, tabLines, lineCount, find, hunkLabel, placeCaret, renderEditor, paintAll: () => { paintGutter(); paintSyntax(); paintFind(); paintPreviewNotes() }, resetMetrics: () => { charWidth = 0; wrap.tab = null }, onConfig: () => { Ed.applySettings(); TD.applyTabOrder(); applyWsBar() }, rebaseUI, compareUI, showCommitDiff, startCompare, setRangeDots, setMode, setLogRef, setInspector, toggleGit, setRail, saveFile, setPreview, state, $, api, post, ask, setStatus, scope, gitAction, copyText, goHunk, goTo, rerenderFile, esc, plural, ago, basename, dirname, openFile, refreshAll, activeTab, loadDiff, renderDiff })
 R.initReview()
 Ops.initOps()
 Pv.initPreview()
@@ -4464,6 +4713,12 @@ T.initTools()
 G.init()
 TD.initTabDrag()
 boot()
+// Tabs are marked selected by the .on class alone; mirror it into aria-selected so screen readers hear the state.
+const tabSync = new MutationObserver(ms => ms.forEach(m => m.target.setAttribute('aria-selected', String(m.target.classList.contains('on')))))
+document.querySelectorAll('[role=tab]').forEach(b => {
+  b.setAttribute('aria-selected', String(b.classList.contains('on')))
+  tabSync.observe(b, { attributes: true, attributeFilter: ['class'] })
+})
 // Geist Mono can arrive after the first paint; the editor's measured character width and wrap
 // heights belong to whichever font was showing, so they are measured again once it is in.
 document.fonts?.ready.then(() => { charWidth = 0; wrap.tab = null; if (state.mode === 'file') renderEditor() })

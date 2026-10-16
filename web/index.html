@@ -36,20 +36,20 @@
     <button id="help-open" class="btn quiet icon" hidden title="Shortcuts (?)">?</button>
   </div>
   <div id="repo-pop" class="pop repo-pop" hidden>
-    <input id="repo-filter" class="field" placeholder="Search open repositories" autocomplete="off" spellcheck="false">
+    <input id="repo-filter" class="field" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="repo-list" aria-label="Search open repositories" placeholder="Search open repositories" autocomplete="off" spellcheck="false">
     <h5>Open in echo</h5>
-    <div id="repo-list"></div>
+    <div id="repo-list" role="listbox" aria-label="Open repositories"></div>
     <div class="repo-foot"><a id="repo-home" class="btn sm quiet" href="/">Workspace overview</a><span class="repo-more">Open another: run <code>echo-desk</code> in its folder<br></span><span class="faint"><kbd>↑</kbd><kbd>↓</kbd> choose · <kbd>↵</kbd> switch · <kbd>⌘↵</kbd> new tab</span>
       <div class="repo-stop"><button class="btn sm quiet" data-repo-quit>Quit all echo processes</button></div>
     </div>
   </div>
   <div id="branch-pop" class="pop branch-pop" hidden>
-    <input id="branch-filter" class="field" placeholder="Search branches and tags" autocomplete="off" spellcheck="false">
+    <input id="branch-filter" class="field" aria-label="Search branches and tags" placeholder="Search branches and tags" autocomplete="off" spellcheck="false">
     <button id="bp-new" class="th"><span class="ok">＋</span>New branch…</button>
     <div id="branch-list"></div>
   </div>
   <div id="theme-pop" class="pop" hidden>
-    <input id="theme-filter" class="field" placeholder="Search themes" autocomplete="off" spellcheck="false">
+    <input id="theme-filter" class="field" aria-label="Search themes" placeholder="Search themes" autocomplete="off" spellcheck="false">
     <div id="theme-list"></div>
   </div>
 </header>
@@ -60,7 +60,7 @@
     <div id="grip-tree" class="grip" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"></div>
     <div class="pane-head">
       <div class="seg rail-switch" role="tablist">
-        <button data-rail="changes" class="on" role="tab">Changes <span id="change-count" class="count"></span></button>
+        <button data-rail="changes" class="on" role="tab" aria-selected="true">Changes <span id="change-count" class="count"></span></button>
         <button data-rail="files" role="tab">Files</button>
         <button data-rail="branches" class="ico" role="tab" title="Branches" aria-label="Branches"><svg class="i" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="6" r="1.6"/><path d="M4.5 5v6M11.5 7.6c0 2.4-7 1.6-7 3.3"/></svg></button>
         <button data-rail="notes" class="ico" role="tab" title="Review notes for the agent" aria-label="Review notes"><svg class="i" viewBox="0 0 16 16"><path d="M3.5 2.5h9v8l-3 3h-6z"/><path d="M9.5 13.5v-3h3M5.5 6h5M5.5 8.5h3"/></svg><span id="note-count" class="count"></span></button>
@@ -105,9 +105,9 @@
       <div class="search-box">
         <input id="search-input" class="field" placeholder="Search file contents" autocomplete="off" spellcheck="false">
         <span class="search-opts">
-          <button class="btn quiet icon xs" data-opt="case" title="Match case" aria-pressed="false">Aa</button>
-          <button class="btn quiet icon xs" data-opt="word" title="Match whole word" aria-pressed="false"><u>ab</u></button>
-          <button class="btn quiet icon xs" data-opt="regex" title="Use regular expression" aria-pressed="false">.*</button>
+          <button class="btn quiet icon xs" data-opt="case" aria-label="Match case" title="Match case" aria-pressed="false">Aa</button>
+          <button class="btn quiet icon xs" data-opt="word" aria-label="Match whole word" title="Match whole word" aria-pressed="false"><u>ab</u></button>
+          <button class="btn quiet icon xs" data-opt="regex" aria-label="Use regular expression" title="Use regular expression" aria-pressed="false">.*</button>
         </span>
       </div>
       <div class="replace-row"><input id="replace-files-input" class="field" placeholder="Replace with…" autocomplete="off" spellcheck="false" aria-label="Replace in files"><button id="replace-files" class="btn sm" disabled title="Replace every match listed below, in files that have no unsaved edits">Replace all</button></div>
@@ -153,8 +153,8 @@
         <button id="diff-collapse" class="btn quiet sm" title="Collapse or expand every file" hidden>Collapse all</button>
         <div id="file-nav" class="seg" hidden><button id="file-prev" title="Previous file (p)" aria-label="Previous file"><svg class="i" viewBox="0 0 16 16"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg></button><button id="file-next" title="Next file (n)" aria-label="Next file"><svg class="i" viewBox="0 0 16 16"><path d="M6 3.5 10.5 8 6 12.5"/></svg></button></div>
         <div id="view-seg" class="seg" role="tablist" title="Review by hunk, or one whole file at a time">
-          <button data-view="hunks" class="on" role="tab" title="Every changed file as hunks, with hunk actions">Hunks</button>
-          <button data-view="file" role="tab" title="One changed file at a time, whole file, no hunks">Files</button>
+          <button data-view="hunks" class="on" role="tab" aria-selected="true"title="Every changed file as hunks, with hunk actions">Hunks</button>
+          <button data-view="file" role="tab" aria-selected="false"title="One changed file at a time, whole file, no hunks">Files</button>
         </div>
         <div class="seg layout-switch" role="tablist" title="Diff layout">
           <button data-layout="unified" class="on" role="tab" title="Stacked: old and new lines in one column" aria-label="Stacked layout"><svg class="i" viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h10"/></svg></button>
@@ -183,7 +183,7 @@
         <button id="note-add" class="btn quiet sm" hidden title="Add a note for the agent on the selected lines (⌘⌥M)">Note</button>
         <button id="open-ext" class="btn quiet sm" hidden title="Open this file in another app">Open in…</button>
         <button id="file-history" class="btn quiet sm" hidden title="Commits that changed this file, across renames">History</button>
-        <button id="blame-toggle" class="btn quiet sm" hidden title="Show who last changed each line; click an entry to see its commit">Blame</button>
+        <button id="blame-toggle" class="btn quiet sm" aria-pressed="false" hidden title="Show who last changed each line; click an entry to see its commit">Blame</button>
         <button id="file-more" class="btn quiet icon" aria-haspopup="menu" aria-label="File actions" title="Line endings, note, open in…, history, blame" hidden><svg class="i" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="12.5" cy="8" r="1"/></svg></button>
         <button id="save" class="btn primary" hidden disabled>Save <kbd>⌘S</kbd></button>
       </div>
@@ -195,7 +195,7 @@
       <button id="log-clear" class="btn quiet sm">Clear filters</button>
     </div>
     <div id="file-crumb" class="crumb" hidden><span id="file-path" class="file-path"></span><span id="crumb-sym" class="crumb-sym"></span></div>
-    <div id="banner" class="banner" hidden></div>
+    <div id="banner" class="banner" role="alert" hidden></div>
     <div id="conflict-bar" class="banner conflict-bar" hidden></div>
     <div class="stage">
       <div id="diff" class="diff-view active"></div>
@@ -207,7 +207,7 @@
         <aside id="log-detail" class="log-detail"></aside>
       </div>
       <div id="highlight" class="code-view"></div>
-      <div id="md" class="md-view"></div>
+      <div id="md" class="md-view" tabindex="0" role="region" aria-label="Markdown preview"></div>
       <aside id="side" class="side-pane" hidden>
         <div class="side-head"><span id="side-title" class="side-title"></span><span class="side-acts"><button class="btn quiet sm" data-side="swap" title="Make this the main editor">Swap</button><button class="btn quiet icon xs" data-side="close" title="Close the side view" aria-label="Close side view">×</button></span></div>
         <div id="side-code" class="side-code"></div>
@@ -217,7 +217,7 @@
       <div id="notebands" class="syntax notebands" aria-hidden="true"></div>
       <div id="wrap-mirror" class="wrap-mirror" aria-hidden="true"></div>
       <div id="gutter" class="gutter" aria-hidden="true"></div>
-      <textarea id="editor" class="editor" spellcheck="false" wrap="off"></textarea>
+      <textarea id="editor" class="editor" aria-label="File contents" spellcheck="false" wrap="off"></textarea>
       <div id="occ" class="syntax findmarks occ" aria-hidden="true"></div>
       <div id="findmarks" class="syntax findmarks" aria-hidden="true"></div>
       <div id="vimcur" class="syntax findmarks vim" aria-hidden="true"></div>
@@ -229,9 +229,9 @@
       <div id="findbar" class="findbar" role="search" hidden>
         <button id="find-toggle-replace" class="btn quiet icon xs" title="Replace (⌘⌥F)" aria-label="Toggle replace" aria-pressed="false">⇅</button>
         <input id="find-input" class="field" placeholder="Find" autocomplete="off" spellcheck="false" aria-label="Find in file">
-        <button class="btn quiet icon xs" data-fopt="case" title="Match case" aria-pressed="false">Aa</button>
-        <button class="btn quiet icon xs" data-fopt="word" title="Match whole word" aria-pressed="false"><u>ab</u></button>
-        <button class="btn quiet icon xs" data-fopt="regex" title="Use regular expression" aria-pressed="false">.*</button>
+        <button class="btn quiet icon xs" data-fopt="case" title="Match case" aria-label="Match case" aria-pressed="false">Aa</button>
+        <button class="btn quiet icon xs" data-fopt="word" title="Match whole word" aria-label="Match whole word" aria-pressed="false"><u>ab</u></button>
+        <button class="btn quiet icon xs" data-fopt="regex" title="Use regular expression" aria-label="Use regular expression" aria-pressed="false">.*</button>
         <span id="find-count" class="find-count" aria-live="polite"></span>
         <button id="find-prev" class="btn quiet icon xs" title="Previous match (⇧↵)" aria-label="Previous match">↑</button>
         <button id="find-next" class="btn quiet icon xs" title="Next match (↵)" aria-label="Next match">↓</button>
@@ -245,10 +245,10 @@
     <div id="grip-git" class="grip" role="separator" aria-orientation="vertical" aria-label="Resize Git panel" tabindex="0"></div>
     <div class="pane-head">
       <div class="seg insp-switch" role="tablist">
-        <button data-insp="history" class="on" role="tab">History</button>
-        <button data-insp="log" role="tab" title="Log: the commits you opened a diff from">Log</button>
-        <button data-insp="commit" role="tab" title="Branch, sync and stash">Sync</button>
-        <button data-insp="tools" role="tab" title="Remotes, worktrees, submodules, reflog, compare">Tools</button>
+        <button data-insp="history" class="on" role="tab" aria-selected="true">History</button>
+        <button data-insp="log" role="tab" aria-selected="false" title="Log: the commits you opened a diff from">Log</button>
+        <button data-insp="commit" role="tab" aria-selected="false" title="Branch, sync and stash">Sync</button>
+        <button data-insp="tools" role="tab" aria-selected="false" title="Remotes, worktrees, submodules, reflog, compare">Tools</button>
       </div>
       <span id="staged-count" class="dim"></span>
       <button id="git-pin" class="btn quiet icon xs" title="Pin the Git panel beside the review" aria-label="Pin Git panel" aria-pressed="false"><svg class="i" viewBox="0 0 16 16"><path d="M6 2.5h4M7 2.5v4L4.5 9h7L9 6.5v-4M8 9v4.5"/></svg></button>
@@ -258,8 +258,8 @@
 
       <details class="sec fold-sec" data-for="commit" data-fold="branch">
         <summary><span>Branch &amp; sync</span><span id="sum-branch" class="sum"></span></summary>
-        <div class="hrow join"><select id="branch-select" class="field"></select><button id="switch-branch" class="btn">Switch</button></div>
-        <div class="hrow join"><input id="new-branch" class="field" placeholder="New branch name" autocomplete="off" spellcheck="false"><button id="create-branch" class="btn">Create</button></div>
+        <div class="hrow join"><select id="branch-select" class="field" aria-label="Branch to switch to"></select><button id="switch-branch" class="btn">Switch</button></div>
+        <div class="hrow join"><input id="new-branch" class="field" aria-label="New branch name" placeholder="New branch name" autocomplete="off" spellcheck="false"><button id="create-branch" class="btn">Create</button></div>
         <div class="sync">
           <div class="btn-split pull-split">
             <button id="pull" class="btn net"><svg class="i" viewBox="0 0 16 16"><path d="M8 2.5v9M4.5 8 8 11.5 11.5 8M3.5 13.5h9"/></svg><span id="pull-label">Pull</span></button>
@@ -276,7 +276,7 @@
       </details>
       <details class="sec fold-sec" data-for="commit" data-fold="stash">
         <summary><span>Stash</span><span id="sum-stash" class="sum"></span></summary>
-        <div class="hrow join"><input id="stash-message" class="field" placeholder="Message (optional)" autocomplete="off"><button id="stash-create" class="btn">Stash</button></div>
+        <div class="hrow join"><input id="stash-message" class="field" aria-label="Stash message" placeholder="Message (optional)" autocomplete="off"><button id="stash-create" class="btn">Stash</button></div>
         <div id="stashes"></div>
       </details>
       <section class="sec" data-for="tools"><div id="tools"></div></section>
@@ -300,7 +300,7 @@
 
 <footer class="statusbar">
   <span class="live"></span>
-  <span id="status"></span>
+  <span id="status" role="status" aria-live="polite"></span>
   <span id="pos" class="pos"></span>
   <span id="vim-mode-badge" class="vim-badge" hidden></span>
   <input id="vim-cmd" class="vim-cmd" placeholder=":" hidden autocomplete="off" spellcheck="false" aria-label="Editor command">
@@ -333,18 +333,18 @@
 
 <div id="palette" class="modal" hidden>
   <div class="palette-card">
-    <input id="palette-input" placeholder="Go to file…" autocomplete="off" spellcheck="false">
-    <div id="palette-list" class="palette-list"></div>
+    <input id="palette-input" role="combobox" aria-controls="palette-list" aria-expanded="true" aria-autocomplete="list" aria-label="Go to file or run a command" placeholder="Go to file…" autocomplete="off" spellcheck="false">
+    <div id="palette-list" class="palette-list" role="listbox"></div>
   </div>
 </div>
 
 <div id="diagram" class="modal diagram-modal" hidden>
-  <div class="modal-card diagram-card">
+  <div class="modal-card diagram-card" role="dialog" aria-modal="true" aria-labelledby="diagram-title">
     <div class="modal-head">
-      <span>Diagram</span>
+      <span id="diagram-title">Diagram</span>
       <span class="diagram-tools">
         <button id="diagram-size" class="btn quiet sm" title="Show at full size, or fit to the window">Fit</button>
-        <button class="btn quiet icon" data-close title="Close (Esc)">×</button>
+        <button class="btn quiet icon" data-close title="Close (Esc)" aria-label="Close diagram">×</button>
       </span>
     </div>
     <div id="diagram-body" class="diagram-body"></div>
@@ -352,8 +352,8 @@
 </div>
 
 <div id="help" class="modal" hidden>
-  <div class="modal-card">
-    <div class="modal-head"><span>Keyboard shortcuts</span><button class="btn quiet icon" data-close>×</button></div>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <div class="modal-head"><span id="help-title">Keyboard shortcuts</span><button class="btn quiet icon" data-close title="Close (Esc)" aria-label="Close">×</button></div>
     <dl class="keys">
       <dt><kbd>⌘K</kbd> <kbd>⌘P</kbd></dt><dd>Go to file (recent files first)</dd>
       <dt><kbd>⌘⇧P</kbd></dt><dd>Command palette: every action by name</dd>
@@ -434,13 +434,13 @@
       <section class="set-sec" data-pane="editor" hidden>
         <h4>Editor</h4>
         <div class="set-row"><span class="set-text"><b>Change bars compare against</b><small>HEAD draws staged lines hollow; the index shows only unstaged changes.</small></span>
-          <select id="gutter-base" class="field"><option value="head">HEAD</option><option value="index">Index</option></select></div>
+          <select id="gutter-base" class="field" aria-label="Change bars compare against"><option value="head">HEAD</option><option value="index">Index</option></select></div>
         <div class="set-row"><span class="set-text"><b>Font size</b><small>The editor's text size. Line height stays fixed.</small></span>
-          <select class="field" data-cfg="fontSize" data-type="int"><option>11</option><option>12</option><option>13</option><option>14</option><option>15</option><option>16</option></select></div>
+          <select class="field" aria-label="Font size" data-cfg="fontSize" data-type="int"><option>11</option><option>12</option><option>13</option><option>14</option><option>15</option><option>16</option></select></div>
         <div class="set-row"><span class="set-text"><b>Indentation</b><small>Auto follows what the file already uses.</small></span>
-          <span class="set-pair"><select class="field" data-cfg="indent"><option value="auto">Auto</option><option value="spaces">Spaces</option><option value="tabs">Tabs</option></select><select class="field" data-cfg="tabSize" data-type="int"><option value="0">Detect</option><option value="2">2</option><option value="4">4</option><option value="8">8</option></select></span></div>
+          <span class="set-pair"><select class="field" aria-label="Indentation style" data-cfg="indent"><option value="auto">Auto</option><option value="spaces">Spaces</option><option value="tabs">Tabs</option></select><select class="field" aria-label="Tab size" data-cfg="tabSize" data-type="int"><option value="0">Detect</option><option value="2">2</option><option value="4">4</option><option value="8">8</option></select></span></div>
         <div class="set-row"><span class="set-text"><b>Ruler</b><small>A vertical line at this column.</small></span>
-          <select class="field" data-cfg="ruler" data-type="int"><option value="0">None</option><option value="72">72</option><option value="80">80</option><option value="100">100</option><option value="120">120</option></select></div>
+          <select class="field" aria-label="Ruler column" data-cfg="ruler" data-type="int"><option value="0">None</option><option value="72">72</option><option value="80">80</option><option value="100">100</option><option value="120">120</option></select></div>
         <label class="set-row"><span class="set-text"><b>Show whitespace</b><small>Tabs and the spaces at the ends of lines, drawn faintly.</small></span><span class="toggle"><input type="checkbox" data-cfg="whitespace"><span class="sw"></span></span></label>
         <label class="set-row"><span class="set-text"><b>Indent guides</b><small>Vertical lines at each indentation level.</small></span><span class="toggle"><input type="checkbox" data-cfg="indentGuides"><span class="sw"></span></span></label>
         <label class="set-row"><span class="set-text"><b>Minimap</b><small>A thin overview of the file at the right edge.</small></span><span class="toggle"><input type="checkbox" data-cfg="minimap"><span class="sw"></span></span></label>
@@ -450,9 +450,9 @@
         <label class="set-row"><span class="set-text"><b>Trim trailing whitespace on save</b></span><span class="toggle"><input type="checkbox" data-cfg="trimTrailing"><span class="sw"></span></span></label>
         <label class="set-row"><span class="set-text"><b>End files with a newline on save</b></span><span class="toggle"><input type="checkbox" data-cfg="finalNewline"><span class="sw"></span></span></label>
         <div class="set-row"><span class="set-text"><b>Autosave</b><small>Off saves only with ⌘S.</small></span>
-          <select class="field" data-cfg="autosave"><option value="off">Off</option><option value="delay">After a pause</option><option value="blur">When focus leaves</option></select></div>
+          <select class="field" aria-label="Autosave" data-cfg="autosave"><option value="off">Off</option><option value="delay">After a pause</option><option value="blur">When focus leaves</option></select></div>
         <div class="set-row"><span class="set-text"><b>Open in</b><small>The editor the Open in… button and menus use. It must be on your PATH.</small></span>
-          <select class="field" data-cfg="externalEditor"><option value="">System default</option><option value="code">VS Code</option><option value="cursor">Cursor</option><option value="zed">Zed</option><option value="subl">Sublime Text</option></select></div>
+          <select class="field" aria-label="Open in" data-cfg="externalEditor"><option value="">System default</option><option value="code">VS Code</option><option value="cursor">Cursor</option><option value="zed">Zed</option><option value="subl">Sublime Text</option></select></div>
         <label class="set-row"><span class="set-text"><b>Inline blame</b><small>Who last changed the caret line, shown at the end of it.</small></span><span class="toggle"><input id="inline-blame" type="checkbox"><span class="sw"></span></span></label>
         <label class="set-row"><span class="set-text"><b>Vim mode</b><small>Modal editing in the editor: motions, operators, visual mode, <kbd>.</kbd> repeat, <kbd>/</kbd> search and <kbd>:w</kbd> <kbd>:q</kbd>. <kbd>j</kbd> and <kbd>k</kbd> still scroll when the editor is not focused.</small></span><span class="toggle"><input id="vim-mode" type="checkbox"><span class="sw"></span></span></label>
       </section>
