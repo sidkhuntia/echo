@@ -34,6 +34,8 @@ type lspServer struct {
 	Langs map[string]string
 	// Init is the server's initializationOptions; gopls, for one, sends no semantic tokens until asked.
 	Init any
+	// Env returns extra environment for the server process, such as a JAVA_HOME it can run on.
+	Env func() []string
 }
 
 // lspServers is the catalog, in preference order: a file uses the first installed server that
@@ -48,6 +50,9 @@ var lspServers = []lspServer{
 	{ID: "rust-analyzer", Cmd: []string{"rust-analyzer"}, Langs: map[string]string{".rs": "rust"}},
 	{ID: "clangd", Cmd: []string{"clangd"}, Langs: map[string]string{
 		".c": "c", ".h": "c", ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hh": "cpp", ".m": "objective-c", ".mm": "objective-cpp"}},
+	// jdtls (Eclipse JDT) needs Java 21 or newer whatever the project targets, and keeps its
+	// per-repository workspace in the user's cache, so nothing lands in the working tree.
+	{ID: "jdtls", Cmd: []string{"jdtls"}, Langs: map[string]string{".java": "java"}, Env: func() []string { return javaHomeEnv(21) }},
 }
 
 const (
@@ -113,6 +118,85 @@ func pickServer(rel string) (s lspServer, installed, known bool) {
 		}
 	}
 	return list[0], false, true
+}
+
+// lspEnv is the environment a server runs in: ours with the wider PATH, and extra entries
+// (KEY=value) replacing inherited ones.
+func lspEnv(extra ...string) []string {
+	skip := map[string]bool{"PATH": true}
+	for _, kv := range extra {
+		k, _, _ := strings.Cut(kv, "=")
+		skip[k] = true
+	}
+	env := []string{}
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); !skip[k] {
+			env = append(env, kv)
+		}
+	}
+	return append(append(env, extra...), "PATH="+searchPath())
+}
+
+// javaHomeEnv finds a JDK of at least version min when the inherited JAVA_HOME is older. Shells
+// often pin JAVA_HOME to a project's JDK (17, say) while jdtls itself needs 21, so only the server
+// process gets the newer one; the project still builds against whatever it configures.
+func javaHomeEnv(min int) []string {
+	if cur := os.Getenv("JAVA_HOME"); cur == "" || javaMajor(cur) >= min {
+		return nil
+	}
+	if out, err := exec.Command("/usr/libexec/java_home", "-v", fmt.Sprintf("%d+", min)).Output(); err == nil {
+		if home := strings.TrimSpace(string(out)); javaMajor(home) >= min {
+			return []string{"JAVA_HOME=" + home}
+		}
+	}
+	for _, home := range []string{"/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home", "/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home"} {
+		if javaMajor(home) >= min {
+			return []string{"JAVA_HOME=" + home}
+		}
+	}
+	return nil
+}
+
+// javaMajor reads a JDK's major version from its release file (JAVA_VERSION="17.0.2"), or 0.
+func javaMajor(home string) int {
+	data, err := os.ReadFile(filepath.Join(home, "release"))
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if v, ok := strings.CutPrefix(line, "JAVA_VERSION="); ok {
+			v = strings.Trim(strings.TrimSpace(v), `"`)
+			v = strings.TrimPrefix(v, "1.") // 1.8 is Java 8
+			if f := strings.FieldsFunc(v, func(r rune) bool { return r < '0' || r > '9' }); len(f) > 0 {
+				n, _ := strconv.Atoi(f[0])
+				return n
+			}
+			return 0
+		}
+	}
+	return 0
+}
+
+// tail keeps the last few KB a server wrote to stderr, to explain why it failed.
+type tail struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (t *tail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > 4096 {
+		t.buf = t.buf[len(t.buf)-4096:]
+	}
+	return len(p), nil
+}
+
+func (t *tail) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return string(t.buf)
 }
 
 // lspClient is one running language server for this repository.
@@ -276,7 +360,13 @@ func startLSP(root string, s lspServer) (*lspClient, error) {
 	}
 	cmd := exec.Command(bin, s.Cmd[1:]...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "PATH="+searchPath())
+	var extra []string
+	if s.Env != nil {
+		extra = s.Env()
+	}
+	cmd.Env = lspEnv(extra...)
+	stderr := &tail{}
+	cmd.Stderr = stderr
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -321,6 +411,11 @@ func startLSP(root string, s lspServer) (*lspClient, error) {
 	res, err := c.call(ctx, "initialize", init)
 	if err != nil {
 		c.kill()
+		// The last stderr line is usually the reason ("jdtls requires at least Java 21"); lead with it.
+		if why := strings.TrimSpace(stderr.String()); why != "" {
+			lines := strings.Split(why, "\n")
+			return nil, fmt.Errorf("%s did not start: %s", s.Cmd[0], strings.TrimSpace(lines[len(lines)-1]))
+		}
 		return nil, fmt.Errorf("%s did not start: %v", s.Cmd[0], err)
 	}
 	var caps struct {

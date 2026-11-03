@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.2 (2026-11-03)
+
+- Fixed: Java files failed with "jdtls did not start: language server exited" when `JAVA_HOME` pointed at a JDK older than 21, which jdtls needs. echo now runs jdtls on an installed JDK 21+ without changing your `JAVA_HOME`, and a server that fails to start shows its actual reason (the last line of its error output).
+
 ## 0.11.1 (2026-10-16)
 
 - Built with Go 1.26.9. The 0.11.0 tag never published: its build stopped at the vulnerability scan, which reported ten standard-library issues (`net/http`, `crypto/tls`, `mime/multipart`) fixed in Go 1.26.9. Everything else is the 0.11.0 below.
